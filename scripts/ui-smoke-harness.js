@@ -3,6 +3,7 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const {offscreen, smokeScenarios} = require("./ui-smoke-groups");
 
 function availablePort() {
   return new Promise((resolve, reject) => {
@@ -62,6 +63,12 @@ function runElectron(environment) {
 }
 
 async function main() {
+  const uiScenario = process.env.TERMA_UI_SCENARIO || process.argv[2] || "";
+  const scenarios = smokeScenarios({
+    group:process.env.TERMA_UI_GROUP || "",
+    scenario:uiScenario,
+    baseOnly:process.env.TERMA_UI_BASE_ONLY === "1"
+  });
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-ui-smoke-"));
   const dataDirectory = path.join(root, "data");
   fs.mkdirSync(dataDirectory, {recursive:true});
@@ -69,7 +76,7 @@ async function main() {
     language:"zh-CN",
     language_onboarding_version:1
   }), "utf8");
-  if(process.env.TERMA_UI_SCENARIO === 'web-files-real') {
+  if(uiScenario === 'web-files-real') {
     const documents=path.join(dataDirectory,'files','Documentation');
     fs.mkdirSync(documents,{recursive:true});
     for(const name of ['README.md','LICENSE'])fs.copyFileSync(path.join(__dirname,'..',name),path.join(documents,name));
@@ -81,6 +88,7 @@ async function main() {
     cwd: path.resolve(__dirname, ".."),
     env: {
       ...process.env,
+      TERMA_UI_SCENARIO:uiScenario,
       TERMA_DATA_DIR: dataDirectory,
       TERMA_SSH_DIR: path.join(root, ".ssh")
     },
@@ -93,10 +101,20 @@ async function main() {
     await waitForServer(url, server);
     const environment = {
       ...process.env,
+    TERMA_UI_SCENARIO:uiScenario,
       TERMA_CHECK_URL:url,
       TERMA_UI_USER_DATA:path.join(root, "electron-user-data")
     };
-    await runElectron(environment);
+    for (const scenario of scenarios) {
+      console.log(`[ui-smoke] scenario ${scenario}`);
+      await runElectron({
+        ...environment,
+        TERMA_UI_SCENARIO:scenario,
+        TERMA_AUTOMATIONS_VIEWPORT:scenario === "m6-automations" ? "" : environment.TERMA_AUTOMATIONS_VIEWPORT,
+        TERMA_UI_OFFSCREEN:offscreen.has(scenario) ? "1" : environment.TERMA_UI_OFFSCREEN,
+        TERMA_UI_USER_DATA:path.join(root, `${scenario}-user-data`)
+      });
+    }
   } catch (error) {
     if (serverOutput.length) console.error(serverOutput.join("").slice(-12000));
     throw error;

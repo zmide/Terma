@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { Server } = require("ssh2");
-const { decodeRemotePosixCommand } = require("./remote-posix-test-helper");
+const { receiveRemotePosixCommand } = require("./remote-posix-test-helper");
 
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-sftp-download-check-"));
 process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
@@ -28,36 +28,37 @@ const sshServer = new Server({ hostKeys:[hostKey] }, client => {
     const session = accept();
     session.on("exec", (acceptExec, _reject, info) => {
       const stream = acceptExec();
-      const command = decodeRemotePosixCommand(info?.command);
-      const supported = command.includes("wc -c") || command.includes("cat --") || command.includes("tail -c") || (command.includes("tar") && command.includes(" -C ")) || command.includes("rm -f --");
-      const growing = command.includes("growing.log");
-      const archiveMarker = command.match(/(__TERMA_ARCHIVE_[a-f0-9]+__:)/i)?.[1] || "";
-      if (command.includes("tar") && command.includes(" -C ") && archiveMarker) {
-        archiveCreateCommand = command;
-        stream.write(`${archiveMarker}${archiveRemotePath}\n`);
-      } else if (command.includes("wc -c") && growing) {
-        growingSizeChecks += 1;
-        stream.write(String(growingSizeChecks === 1 ? growingInitialSize : growingPayload.length));
-      } else if (command.includes("wc -c")) stream.write(String(payload.length));
-      else if (command.includes("cat --") && growing) stream.write(growingPayload);
-      else if ((command.includes("cat --") || command.includes("tail -c")) && command.includes(archiveRemotePath)) {
-        const oneBasedOffset = Number(command.match(/tail -c \+(\d+)/)?.[1] || 1);
-        const offset = Math.max(0, oneBasedOffset - 1);
-        const remaining = payload.subarray(offset);
-        const split = Math.min(128 * 1024, remaining.length);
-        stream.write(remaining.subarray(0, split));
-        setTimeout(() => {
-          if (stream.destroyed || stream.closed) return;
-          stream.write(remaining.subarray(split));
-          stream.exit(0);
-          stream.end();
-        }, 180);
-        return;
-      }
-      else if (command.includes("cat --")) stream.write(payload);
-      else stream.stderr.write("unsupported test command");
-      stream.exit(supported ? 0 : 1);
-      stream.end();
+      receiveRemotePosixCommand(info?.command, stream, command => {
+        const supported = command.includes("wc -c") || command.includes("cat --") || command.includes("tail -c") || (command.includes("tar") && command.includes(" -C ")) || command.includes("rm -f --");
+        const growing = command.includes("growing.log");
+        const archiveMarker = command.match(/(__TERMA_ARCHIVE_[a-f0-9]+__:)/i)?.[1] || "";
+        if (command.includes("tar") && command.includes(" -C ") && archiveMarker) {
+          archiveCreateCommand = command;
+          stream.write(`${archiveMarker}${archiveRemotePath}\n`);
+        } else if (command.includes("wc -c") && growing) {
+          growingSizeChecks += 1;
+          stream.write(String(growingSizeChecks === 1 ? growingInitialSize : growingPayload.length));
+        } else if (command.includes("wc -c")) stream.write(command.includes("invalid-size.bin") ? "\n" : String(payload.length));
+        else if (command.includes("cat --") && growing) stream.write(growingPayload);
+        else if ((command.includes("cat --") || command.includes("tail -c")) && command.includes(archiveRemotePath)) {
+          const oneBasedOffset = Number(command.match(/tail -c \+(\d+)/)?.[1] || 1);
+          const offset = Math.max(0, oneBasedOffset - 1);
+          const remaining = payload.subarray(offset);
+          const split = Math.min(128 * 1024, remaining.length);
+          stream.write(remaining.subarray(0, split));
+          setTimeout(() => {
+            if (stream.destroyed || stream.closed) return;
+            stream.write(remaining.subarray(split));
+            stream.exit(0);
+            stream.end();
+          }, 180);
+          return;
+        }
+        else if (command.includes("cat --")) stream.write(payload);
+        else stream.stderr.write("unsupported test command");
+        stream.exit(supported ? 0 : 1);
+        stream.end();
+      });
     });
   }));
 });
@@ -130,6 +131,7 @@ async function main() {
   let jobId = "";
   let desktopJobId = "";
   let growingJobId = "";
+  let invalidJobId = "";
   let archiveJobId = "";
   let deliveryJobId = "";
   try {
@@ -142,6 +144,10 @@ async function main() {
     assert.equal(completed.transferred, payload.length, "completed transfer count must equal the remote size");
     assert.equal(downloaded.length, payload.length, "a completed download must not be truncated");
     assert.equal(hash(downloaded), hash(payload), "a completed download must preserve every byte");
+    invalidJobId = jobs.startDownloadJob(connection.id, "/fixture/invalid-size.bin", {deliveryMode:"browser"}).id;
+    const invalid = await waitForStatus(jobs, invalidJobId, ["failed", "done"]);
+    assert.equal(invalid.status, "failed", "missing size output must not become a completed zero-byte download");
+    assert.match(invalid.error, /远程文件大小返回格式无效/);
     const desktopDirectory = path.join(temporaryRoot, "desktop-downloads");
     fs.mkdirSync(desktopDirectory, {recursive:true});
     fs.writeFileSync(path.join(desktopDirectory, "download.bin"), "keep existing file");
@@ -206,6 +212,7 @@ async function main() {
     console.log("SFTP download integrity check passed.");
   } finally {
     sessions.deliverSftpPaths = originalDeliver;
+    try { if(invalidJobId) jobs.deleteSftpJob(invalidJobId); } catch {}
     try { if(deliveryJobId) jobs.deleteSftpJob(deliveryJobId); } catch {}
     try {
       const current = jobId && jobs.listSftpJobs().find(item => item.id === jobId);

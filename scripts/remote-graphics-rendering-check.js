@@ -1,9 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const { readFrontendDomain } = require("./frontend-source");
+const {loadFrontendService} = require('./frontend-service-test-helper');
 const {
   JAVA_GUI_COMPATIBILITY_COMMANDS,
   XRDP_RENDER_PROBE_SCRIPT,
@@ -81,10 +79,42 @@ assert.equal(xdmcp.java_gui_risk, true);
 assert.match(xdmcp.detail, /JavaFX/);
 assert.equal(createXdmcpRenderingDiagnostics({enabled:false, listening:false}).visible, false);
 
-const remoteUi = readFrontendDomain(path.join(__dirname, ".."), "remote");
-assert.match(remoteUi, /remoteGraphicsRenderingMarkup/);
-assert.match(remoteUi, /copyRemoteGraphicsCommand/);
-const copyHandler = remoteUi.slice(remoteUi.indexOf("async function copyRemoteGraphicsCommand"), remoteUi.indexOf("function renderRdpServerState"));
-assert.match(copyHandler, /await writeClipboardText\(command\)/);
-assert.doesNotMatch(copyHandler, /await copyText\(command\)/);
-console.log("远程图形渲染检查通过：XRDP、共享/虚拟 VNC、XDMCP 与 Java GUI 兼容命令状态统一");
+const {createGraphicsRenderingModel} = loadFrontendService('frontend/src/features/remote/graphics-rendering-model.ts');
+
+async function checkPresentation() {
+  const notifications = [], busy = [], written = [];
+  let fail = false;
+  const model = createGraphicsRenderingModel({
+    tr: (key, params = {}) => params.defaultValue || (params.label ? key + ':' + params.label : key),
+    async write(command) {
+      if (fail) throw Error('Clipboard write refused');
+      written.push(command);
+    },
+    busy: (button, value) => busy.push([button, value]),
+    notify: (message, kind) => notifications.push({message, kind})
+  });
+  assert.equal(model({...softwareRdp, visible: false}), undefined);
+  const warning = model(softwareRdp);
+  assert.equal(warning.tone, 'warning');
+  assert.match(warning.detail, /renderD128/);
+  assert.equal(warning.actions.length, 3);
+  assert.equal(model(sharedPhysicalVnc).actions.length, 0, 'shared X11 retains a status without compatibility copy');
+  assert.match(model(virtualVnc).summary, /软件渲染/);
+  assert.equal(model(xdmcp).tone, 'warning');
+  const command = `printf '%s' '100% ready'`;
+  const action = model({...softwareRdp, compatibility_commands: [{command, label: 'Fixture'}]}).actions[0];
+  const button = {isConnected:true};
+  await action.run(button);
+  assert.deepEqual(written, [command], 'copy preserves spaces, quotes and percent characters');
+  assert.deepEqual(busy, [[button,true],[button,false]]);
+  assert.deepEqual(notifications, [{message:'remote:rendering.command_copied:Fixture',kind:'success'}]);
+  fail = true;
+  await action.run(button);
+  assert.deepEqual(notifications.at(-1), {message:'Clipboard write refused',kind:'error'});
+  assert.equal(busy.at(-1)[1], false, 'clipboard failure releases the action');
+  assert.deepEqual(written, [command]);
+}
+
+checkPresentation().then(() => {
+  console.log('远程图形渲染检查通过：XRDP、共享/虚拟 VNC、XDMCP、兼容命令与复制失败');
+}).catch(error => { console.error(error); process.exitCode = 1; });

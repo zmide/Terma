@@ -1,29 +1,128 @@
+const {runTerminalDropUiScenario}=require('./terminal-drop-ui-scenario');
 const { app, BrowserWindow, clipboard, ipcMain, session } = require("electron");
+app.on('web-contents-created',(_event,contents)=>{
+ const evaluate=contents.executeJavaScript.bind(contents);
+ contents.executeJavaScript=(source,...args)=>evaluate(`(()=>{
+  const state=window.termaApplicationState;if(!state)return;
+  for(const [name,value]of Object.entries(window.termaWorkspaceLanguage||{}))window[name]=value;
+  window.termaI18nReady=window.termaWorkspaceLanguage?.i18nReady;
+
+  if(window.termaWorkspaceRequest&&!Object.getOwnPropertyDescriptor(window,'api'))
+    Object.defineProperty(window,'api',{configurable:true,get:()=>window.termaWorkspaceRequest,set:value=>{window.termaWorkspaceRequest=value;}});
+  const wrappers={
+    dismissToast:()=>window.termaNotificationToasts.dismiss(),
+    notify:(...args)=>window.termaNotificationToasts.notify(...args),
+    createProgressToast:(...args)=>window.termaNotificationToasts.createProgress(...args),
+    apiErrorFromResponse:(...args)=>window.termaPublicErrors.fromResponse(...args),
+    localizedBackendPublicError:(...args)=>window.termaPublicErrors.message(...args),
+    icon:(...args)=>window.termaIcons.html(...args),x11Icon:(label)=>window.termaIcons.html('x11',label),
+    refreshIcons:()=>{window.termaFormControls?.enhancePasswords(document);window.termaIcons.refresh();},
+    copyText:text=>window.termaClipboard.copy(text),writeClipboardText:text=>window.termaClipboard.write(text),
+    isMobileLayout:()=>matchMedia('(max-width: 760px), (hover: none) and (pointer: coarse)').matches,
+    applyTheme:theme=>{if(document.documentElement.dataset.theme!==theme)document.getElementById('themeToggle')?.click();},
+    toggleTheme:()=>document.getElementById('themeToggle')?.click(),
+    hideActionMenu:()=>{window.termaTerminalActionMenu?.close(false);window.termaTerminalDisplayMenu?.close(false);},
+    showActionMenu:(event,actions)=>window.termaTerminalActionMenu.open(event,()=>actions),
+    beginUiAction:(...args)=>window.termaUiActions.begin(...args),endUiAction:(...args)=>window.termaUiActions.end(...args),
+    setButtonBusy:(...args)=>window.termaUiActions.setButtonBusy(...args),
+    captureUiState:(...args)=>window.termaUiSnapshots.capture(...args),restoreUiState:(...args)=>window.termaUiSnapshots.restore(...args),
+    syncViewportHeight:(...args)=>window.termaViewport.sync(...args),
+    beginNativeFileDialogViewport:()=>window.termaViewport.beginFileDialog(),
+    settleNativeFileDialogViewport:()=>window.termaViewport.settleFileDialog()
+  };
+  for(const [name,callback]of Object.entries(wrappers))if(!window[name])window[name]=callback;
+  if(!window.esc)window.esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  for(const key of Object.keys(state))if(!Object.getOwnPropertyDescriptor(window,key))
+    Object.defineProperty(window,key,{configurable:true,get:()=>state[key],set:value=>{state[key]=value;}});
+  for(const [name,value]of Object.entries(window.termaWorkspaceDom||{}))window[name]=value;
+  for(const [name,value]of Object.entries(window.termaConnectionSelection||{}))window[name]=value;
+ })();\n`+source,...args);
+});
+
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { runMobileScenario } = require("./ui-smoke-mobile-scenario");
 const { runMobileWorkspaceUiScenario } = require("./mobile-workspace-ui-scenario");
 const { runFnosUpdatesUiScenario } = require("./fnos-updates-ui-scenario");
+const {loadUpdateFixture} = require("./update-ui-fixture");
+const {verifyLanguageOnboarding} = require("./language-onboarding-ui-scenario");
 const { runFnosDescriptionUiScenario } = require("./fnos-description-ui-scenario");
 const { runOriginProtocolUiScenario } = require("./origin-protocol-ui-scenario");
 const { runVisualRegression } = require("./ui-visual-regression");
 const { runIssueUiScenario } = require("./issue-ui-scenario");
+const { replayAppearanceBootstrap } = require('./appearance-ui-fixture');
 const { runManagedKeysUiScenario } = require("./managed-keys-ui-scenario");
-const { runWebFilesUiScenario } = require("./web-files-ui-scenario");
+const { runSettingsUiScenario } = require("./settings-ui-scenario");
+const { runSshHostTrustUiScenario } = require("./ssh-host-trust-ui-scenario");
+const { runFormControlsUiScenario } = require("./form-controls-ui-scenario");
+const { runTerminalViewportUiScenario } = require("./terminal-viewport-ui-scenario");
+const { runNotificationPresentationUiScenario } = require("./notification-presentation-ui-scenario");
+const { runUiInteractionUiScenario } = require("./ui-interaction-ui-scenario");
+const { runSystemNotificationUiScenario } = require("./system-notification-ui-scenario");
+const { runApplicationLifecycleUiScenario } = require("./application-lifecycle-ui-scenario");
+const { runTerminalTransportUiScenario } = require("./terminal-transport-ui-scenario");
+const { runWorkspaceShellUiScenario } = require("./workspace-shell-ui-scenario");
+const { runOperationSurfaceUiScenario } = require('./operation-surface-ui-scenario');
+const { runWebFilesUiScenario, runLocalFilesToolbarUiScenario } = require("./web-files-ui-scenario");
 const { runSftpRenameUiScenario } = require("./sftp-rename-ui-scenario");
+const {installSftpDomFixtures}=require('./sftp-dom-fixtures');
+const {attachWorkspaceBrowserFixture}=require('./workspace-browser-fixture');
+const { runSftpEditorBrowserScenario } = require('./sftp-editor-ui-scenario');
 const { runWebFilesRealUiScenario } = require("./web-files-real-ui-scenario");
 const { runWebFilesDeliveryUiScenario } = require("./web-files-delivery-ui-scenario");
+const { runQuickUiScenario } = require("./quick-ui-scenario");
+const {runX11UiScenario}=require('./m7-x11-ui-scenario');
+const {runAssistantUiScenario}=require('./m8-assistant-ui-scenario');
+const {runSessionEfficiencyUiScenario}=require('./m8-session-efficiency-ui-scenario');
+const {runEfficiencyUiScenario}=require('./m8-efficiency-ui-scenario');
+const {runSnippetsUiScenario}=require('./m8-snippets-ui-scenario');
+const {runClipboardFlowUiScenario}=require('./vnc-clipboard-flow-ui-scenario');
+const { runHeaderUiScenario } = require("./header-ui-scenario");
+const { runTaskUiScenario } = require("./task-ui-scenario");
+const { runConnectionsUiScenario } = require("./connections-ui-scenario");
+const { runRemoteUiScenario } = require("./remote-ui-scenario");
+const { captureElectronSurface } = require('./electron-surface-screenshot');
+const { runRemoteGraphicsUiScenario } = require("./remote-graphics-ui-scenario");
+const { runRemoteManagementUiScenario } = require("./remote-management-ui-scenario");
+const { runTerminalPersistenceUiScenario } = require("./terminal-persistence-ui-scenario");
+const { runTerminalSettingsUiScenario } = require("./terminal-settings-ui-scenario");
+const { runTerminalStartupUiScenario } = require("./terminal-startup-ui-scenario");
+const { runTerminalToolbarUiScenario } = require("./terminal-toolbar-ui-scenario");
+const { runTerminalZmodemUiScenario } = require("./terminal-zmodem-ui-scenario");
+const {runTerminalTextUiScenario}=require('./terminal-text-ui-scenario');
+const { runTerminalImagePasteUiScenario } = require("./terminal-image-paste-ui-scenario");
+const { runSftpVueUiScenario } = require("./sftp-vue-ui-scenario");
+const { runM6OperationsUiScenario } = require('./m6-operations-ui-scenario');
+const { runM6AutomationsUiScenario } = require('./m6-automations-ui-scenario');
+const { runM6RunningUiScenario } = require('./m6-running-ui-scenario');
+const { runM6ForwardPagesUiScenario } = require('./m6-forward-pages-ui-scenario');
+const { runM6LogReaderUiScenario } = require('./m6-log-reader-ui-scenario');
+const { runM7ListUiScenario } = require('./m7-list-ui-scenario');
+const {runM7ManagementUiScenario}=require('./m7-management-ui-scenario');
+const { runM7ProfileUiScenario } = require('./m7-profile-ui-scenario');
+const { runM6ExchangeUiScenario } = require('./m6-exchange-ui-scenario');
+const { runM6LogListUiScenario } = require('./m6-log-list-ui-scenario');
+const { runM6BatchUiScenario } = require('./m6-batch-ui-scenario');
+const { runSftpDialogUiScenario } = require("./sftp-dialog-ui-scenario");
+const { runSftpGlobalSettingsUiScenario } = require("./sftp-global-settings-ui-scenario");
+const { runImagePreviewUiScenario } = require("./image-preview-ui-scenario");
+const { runI18nResourcesUiScenario } = require("./i18n-resources-ui-scenario");
 
 const url = process.env.TERMA_CHECK_URL || process.env.TUNNELDESK_CHECK_URL || "http://127.0.0.1:8099";
 const errors = [];
+const ignorableConsoleMessage = message => String(message || '').startsWith('[terminal-input] released focus target');
 const cspViolations = [];
 let smokeWindow = null;
+const smokeStartedAt=Date.now();let smokeLastStage='';
+const smokeProgress=setInterval(async()=>{try{const stage=await smokeWindow?.webContents.executeJavaScript("document.documentElement.dataset.uiSmokeStage||''");if(stage&&stage!==smokeLastStage){smokeLastStage=stage;console.log(`[ui-smoke +${Math.round((Date.now()-smokeStartedAt)/1000)}s] ${stage}`);}}catch{}},10000);
+smokeProgress.unref();
 let rendererFailure = null;
 const smokeUserData = process.env.TERMA_UI_USER_DATA || process.env.TUNNELDESK_UI_USER_DATA || path.join(os.tmpdir(), `terma-ui-smoke-${process.pid}`);
 const screenshotEnabled = (process.env.TERMA_UI_SCREENSHOT || process.env.TUNNELDESK_UI_SCREENSHOT) === "1";
 const notificationScreenshotEnabled = (process.env.TERMA_UI_NOTIFICATION_SCREENSHOT || process.env.TUNNELDESK_UI_NOTIFICATION_SCREENSHOT) === "1";
-const diagnosticsDirectory = path.join(process.cwd(), "data");
+const diagnosticsDirectory = path.resolve(process.env.TERMA_UI_DIAGNOSTICS_DIR || path.join(process.cwd(), "data"));
 if (screenshotEnabled || notificationScreenshotEnabled) {
   fs.mkdirSync(diagnosticsDirectory, { recursive: true });
 }
@@ -39,7 +138,7 @@ const smokeWatchdog = setTimeout(async () => {
   let stage = "unknown";
   try {
     stage = await Promise.race([
-      smokeWindow?.webContents.executeJavaScript("document.documentElement.dataset.uiSmokeStage || 'unknown'"),
+      smokeWindow?.webContents.executeJavaScript("JSON.stringify({stage:document.documentElement.dataset.uiSmokeStage||'unknown',modal:document.querySelector('#modal h2')?.textContent,dialog:window.termaSftpDialogs?.active(),editorCount:document.querySelectorAll('.sftp-editor-floating-window').length,active:document.activeElement?.id})"),
       new Promise(resolve => setTimeout(() => resolve("renderer-unresponsive"), 1000))
     ]);
   } catch {}
@@ -48,7 +147,14 @@ const smokeWatchdog = setTimeout(async () => {
 }, smokeTimeoutMs);
 
 app.whenReady().then(async () => {
+  app.on('browser-window-created', (_event, created) => attachWorkspaceBrowserFixture(created));
   await session.defaultSession.clearCache();
+  const offscreenScenarios = [
+    "settings","workspace-shell","operation-surfaces","quick","header","tasks","connections","remote","m7-transport","remote-graphics","remote-management",
+    "terminal-persistence","terminal-settings","terminal-toolbar","terminal-zmodem","terminal-startup","terminal-transport",
+    "terminal-viewport","sftp-vue","sftp-dialogs","sftp-editor","web-files","i18n-resources",
+    "notification-presentation","ui-interaction"
+  ];
   const window = new BrowserWindow({
     show:false,
     width:1200,
@@ -56,12 +162,24 @@ app.whenReady().then(async () => {
     webPreferences:{
       contextIsolation:true,
       backgroundThrottling:false,
+      offscreen:process.env.TERMA_UI_OFFSCREEN === "1" || offscreenScenarios.includes(process.env.TERMA_UI_SCENARIO),
       preload:path.join(__dirname, "ui-smoke-preload.js")
     }
   });
   smokeWindow = window;
+  const evaluateForSmoke = window.webContents.executeJavaScript.bind(window.webContents);
+  window.webContents.executeJavaScript = async (...args) => {
+    const caller = new Error('Browser evaluation call site').stack;
+    try { return await evaluateForSmoke(...args); }
+    catch (error) { if (String(error?.message || error).includes('Failed to fetch')) console.error('[ui-smoke network evaluation]', caller); throw error; }
+  };
+  session.defaultSession.webRequest.onErrorOccurred(details => {
+    if (details.error === 'net::ERR_ABORTED') return;
+    let route = ''; try { route = new URL(details.url).pathname; } catch {}
+    console.error('[ui-smoke network request]', JSON.stringify({route, error:details.error, resource:details.resourceType}));
+  });
   window.webContents.on("console-message", details => {
-    if (["warning", "error"].includes(details.level)) {
+    if (["warning", "error"].includes(details.level) && !ignorableConsoleMessage(details.message)) {
       errors.push(`${details.message}${details.sourceId ? ` (${details.sourceId}:${details.lineNumber || 0})` : ""}`);
     }
   });
@@ -73,6 +191,222 @@ app.whenReady().then(async () => {
   await window.loadURL(url);
   await new Promise(resolve => setTimeout(resolve, 1200));
   console.log("[ui-smoke] page loaded");
+  await window.webContents.executeJavaScript(`window.addEventListener('error',event=>{
+    const sessions=typeof window.termaTerminalState.terminalSessions==='undefined'?[]:[...window.termaTerminalState.terminalSessions].filter(([,session])=>!session.term||!session.term.options).map(([key])=>key);
+    console.error('[ui-smoke browser error]',JSON.stringify({stage:document.documentElement.dataset.uiSmokeStage,stack:event.error?.stack,incompleteSessions:sessions}));
+  });`);
+    const bootstrap = await window.webContents.executeJavaScript(`(async()=>{
+      const deadline=Date.now()+15000;
+      while(Date.now()<deadline){
+        const snapshot=window.termaBootstrapRuntime?.getSnapshot();
+        if(snapshot?.phase==='ready'||snapshot?.phase==='failed')return snapshot;
+        await new Promise(resolve=>setTimeout(resolve,50));
+      }
+      return {phase:window.termaBootstrapRuntime?.getSnapshot().phase||'unavailable'};
+    })()`);
+    if(bootstrap.phase!=='ready')throw new Error(`TypeScript bootstrap did not complete: ${bootstrap.phase}`);
+    console.log("[ui-smoke] typed bootstrap ready");
+  await window.webContents.executeJavaScript(`(()=>{if(!window.sendTerminalData&&window.termaTerminalInputActions)window.sendTerminalData=(...args)=>window.termaTerminalInputActions.sendTerminalData(...args);if(!window.focusTerminalSession&&window.termaTerminalPage)window.focusTerminalSession=(...args)=>window.termaTerminalPage.focusTerminalSession(...args);return null})()`);
+  if(process.env.TERMA_UI_SCENARIO==='terminal-text'){
+    console.log(await runTerminalTextUiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO==='i18n-resources'){
+    console.log(await runI18nResourcesUiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(!process.env.TERMA_UI_SCENARIO||process.env.TERMA_UI_SCENARIO==='base')await window.webContents.executeJavaScript('('+installSftpDomFixtures.toString()+')()');
+  if(process.env.TERMA_UI_SCENARIO === 'terminal-toolbar') {
+    console.log(await runTerminalToolbarUiScenario(window, {viewport:'desktop'}));
+    const mobile=new BrowserWindow({show:false,width:390,height:844,webPreferences:{contextIsolation:true,backgroundThrottling:false,offscreen:true,preload:path.join(__dirname,'ui-smoke-preload.js')}});
+    mobile.webContents.on('console-message', details => {
+      if (['warning','error'].includes(details.level) && !ignorableConsoleMessage(details.message)) errors.push(details.message);
+    });
+    try {
+      await mobile.loadURL(url);
+      await new Promise(resolve=>setTimeout(resolve,1200));
+      console.log(await runTerminalToolbarUiScenario(mobile, {viewport:'mobile'}));
+    } finally {mobile.destroy();}
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(['terminal-zmodem','terminal-image-paste'].includes(process.env.TERMA_UI_SCENARIO)) {
+    const scenario=process.env.TERMA_UI_SCENARIO==='m6-batch'?runM6BatchUiScenario:process.env.TERMA_UI_SCENARIO==='terminal-zmodem'?runTerminalZmodemUiScenario:runTerminalImagePasteUiScenario;
+    console.log(await scenario(window, {viewport:'desktop'}));
+    const mobile=new BrowserWindow({show:false,width:390,height:844,webPreferences:{contextIsolation:true,backgroundThrottling:false,offscreen:true,preload:path.join(__dirname,'ui-smoke-preload.js')}});
+    mobile.webContents.on('console-message', details => {
+      if (['warning','error'].includes(details.level)) errors.push(details.message);
+    });
+    try {
+      await mobile.loadURL(url);
+      await new Promise(resolve=>setTimeout(resolve,1200));
+      console.log(await scenario(mobile, {viewport:'mobile'}));
+    } finally { mobile.destroy(); }
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO==='sftp-global-settings') {
+    console.log(await runSftpGlobalSettingsUiScenario(window,{viewport:'desktop'}));
+    const mobile=new BrowserWindow({show:false,width:390,height:844,webPreferences:{contextIsolation:true,backgroundThrottling:false,offscreen:true,preload:path.join(__dirname,'ui-smoke-preload.js')}});
+    mobile.webContents.on('console-message', details=>{if(['warning','error'].includes(details.level))errors.push(details.message);});
+    try {await mobile.loadURL(url);await new Promise(resolve=>setTimeout(resolve,1200));console.log(await runSftpGlobalSettingsUiScenario(mobile,{viewport:'mobile'}));}
+    finally {mobile.destroy();}
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(['sftp-vue','sftp-dialogs','sftp-editor','m6-operations','m6-automations','m6-running','m6-forward-pages','m6-batch','m6-log-list','m6-log-reader','m6-exchange','m7-profile','m7-list','m7-management'].includes(process.env.TERMA_UI_SCENARIO)) {
+    const scenario=process.env.TERMA_UI_SCENARIO==='m7-management'?runM7ManagementUiScenario:process.env.TERMA_UI_SCENARIO==='m7-list'?runM7ListUiScenario:process.env.TERMA_UI_SCENARIO==='m7-profile'?runM7ProfileUiScenario:process.env.TERMA_UI_SCENARIO==='m6-exchange'?runM6ExchangeUiScenario:process.env.TERMA_UI_SCENARIO==='m6-log-reader'?runM6LogReaderUiScenario:process.env.TERMA_UI_SCENARIO==='m6-log-list'?runM6LogListUiScenario:process.env.TERMA_UI_SCENARIO==='m6-batch'?runM6BatchUiScenario:process.env.TERMA_UI_SCENARIO==='m6-forward-pages'?runM6ForwardPagesUiScenario:process.env.TERMA_UI_SCENARIO==='m6-running'?runM6RunningUiScenario:process.env.TERMA_UI_SCENARIO==='m6-automations'?runM6AutomationsUiScenario:process.env.TERMA_UI_SCENARIO==='m6-operations'?runM6OperationsUiScenario:process.env.TERMA_UI_SCENARIO==='sftp-editor'?runSftpEditorBrowserScenario:process.env.TERMA_UI_SCENARIO==='sftp-dialogs'?runSftpDialogUiScenario:runSftpVueUiScenario;
+    if(process.env.TERMA_UI_SCENARIO!=='m6-automations'||process.env.TERMA_AUTOMATIONS_VIEWPORT!=='mobile')console.log(await scenario(window,{viewport:'desktop'}));
+    const mobile=new BrowserWindow({show:false,width:390,height:844,webPreferences:{contextIsolation:true,backgroundThrottling:false,offscreen:true,preload:path.join(__dirname,'ui-smoke-preload.js')}});
+    mobile.webContents.on('console-message', details=>{if(['warning','error'].includes(details.level))errors.push(details.message);});
+    try {await mobile.loadURL(url);await new Promise(resolve=>setTimeout(resolve,1200));console.log(await scenario(mobile,{viewport:'mobile'}));}
+    finally {mobile.destroy();}
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO === 'terminal-settings') {
+    console.log(await runTerminalSettingsUiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO === 'terminal-startup') {
+    console.log(await runTerminalStartupUiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO === 'terminal-persistence') {
+    console.log(await runTerminalPersistenceUiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO==='vnc-clipboard-flow'){
+    console.log(await runClipboardFlowUiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO==='terminal-drop'){console.log(await runTerminalDropUiScenario(window));if(errors.length)throw Error(errors.join('\n'));clearTimeout(smokeWatchdog);app.exit(0);return;}
+  if(process.env.TERMA_UI_SCENARIO==='m8-assistant'){console.log(await runAssistantUiScenario(window));if(errors.length)throw Error(errors.join('\n'));clearTimeout(smokeWatchdog);app.exit(0);return;}
+  if(process.env.TERMA_UI_SCENARIO==='m8-session-efficiency'){console.log(await runSessionEfficiencyUiScenario(window));if(errors.length)throw Error(errors.join('\n'));clearTimeout(smokeWatchdog);app.exit(0);return;}
+  if(process.env.TERMA_UI_SCENARIO==='m8-efficiency'){console.log(await runEfficiencyUiScenario(window));if(errors.length)throw Error(errors.join('\n'));clearTimeout(smokeWatchdog);app.exit(0);return;}
+  if(process.env.TERMA_UI_SCENARIO==='m8-snippets'){
+    console.log(await runSnippetsUiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO==='m7-x11'){
+    console.log(await runX11UiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(['remote','m7-transport'].includes(process.env.TERMA_UI_SCENARIO)) {
+    const report=await runRemoteUiScenario(window,{transportOnly:process.env.TERMA_UI_SCENARIO==='m7-transport'});
+    console.log({screenshots:report.screenshots,checks:report.checks,states:report.states.length});
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(['remote-graphics','remote-management'].includes(process.env.TERMA_UI_SCENARIO)) {
+    const directory=process.env.TERMA_REMOTE_VISUAL_DIR || path.join(diagnosticsDirectory,"remote-visual");
+    fs.mkdirSync(directory,{recursive:true});
+    const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+    const execute=source=>window.webContents.executeJavaScript(/^\s*\(async/.test(source)?source:`(async()=>{${source}})()`);
+    const evaluate=source=>execute(`return (${source})`);
+    const wait=async condition=>{for(let attempt=0;attempt<750;attempt++){if(await execute(`return !!(${condition})`))return;await delay(20);}const state=await execute(`return {condition:${JSON.stringify(condition)},protocol:window.__protocolResult,done:window.__protocolDone,requests:window.__managementRequests?.length,modal:document.querySelector('#modal')?.innerText?.slice(0,500),activeView,primaryView};`);throw new Error(`Remote graphics UI timed out waiting for ${JSON.stringify(state)}`);};
+    const shot=name=>captureElectronSurface(window,path.join(directory,`${name}.png`));
+    const click=async selector=>{const point=await execute(`const element=document.querySelector(${JSON.stringify(selector)});if(!element)throw Error('Missing '+${JSON.stringify(selector)});element.scrollIntoView({block:'nearest'});const r=element.getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}`);for(const type of ["mouseMove","mouseDown","mouseUp"]){window.webContents.sendInputEvent({type,...point,button:"left",clickCount:1});await delay(20);}};
+    const assertions=[];
+    const run=process.env.TERMA_UI_SCENARIO==='remote-management'?runRemoteManagementUiScenario:runRemoteGraphicsUiScenario;
+    const report=await run(window,{execute,evaluate,wait,shot,click,assertions});
+    fs.writeFileSync(path.join(directory,process.env.TERMA_UI_SCENARIO+'-report.json'),JSON.stringify({...report,assertions},null,2));
+    console.log({screenshots:Array.isArray(report.screenshots)?report.screenshots.length:report.screenshots,checks:assertions.length,...(Array.isArray(report.states)?{states:report.states.length}:{})});
+    if(errors.length)throw new Error(errors.join("\n"));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO === 'connections') {
+    console.log(await runConnectionsUiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO === 'tasks') {
+    console.log(await runTaskUiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO === 'header') {
+    await runHeaderUiScenario(window);
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO === 'workspace-shell') {
+    await runWorkspaceShellUiScenario(window);
+    await runOperationSurfaceUiScenario(window);
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO === 'operation-surfaces') {
+    await runOperationSurfaceUiScenario(window);
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO === 'settings') {
+    await runSettingsUiScenario(window);
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO === 'ssh-host-trust') {
+    console.log(await runSshHostTrustUiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO === 'notification-presentation') {
+    console.log(await runNotificationPresentationUiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO === 'ui-interaction') {
+    console.log(await runUiInteractionUiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO === 'system-notification') {
+    console.log(await runSystemNotificationUiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO === 'application-lifecycle') {
+    console.log(await runApplicationLifecycleUiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO === 'terminal-transport') {
+    console.log(await runTerminalTransportUiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO === 'form-controls') {
+    console.log(await runFormControlsUiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if(process.env.TERMA_UI_SCENARIO === 'terminal-viewport') {
+    console.log(await runTerminalViewportUiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if (["quick", "quick-views"].includes(process.env.TERMA_UI_SCENARIO)) {
+    try { console.log("[ui-smoke] quick views", await runQuickUiScenario(window, {includeSharedScenarios:process.env.TERMA_UI_SCENARIO === "quick"})); }
+    catch (error) { console.error(errors.join("\n")); throw error; }
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if (process.env.TERMA_UI_SCENARIO === "issue-ui") {
+    await runIssueUiScenario(window);
+    if (errors.length) throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);
+    app.exit(0);
+    return;
+  }
   if (process.env.TERMA_UI_SCENARIO === "origin-protocol") {
     await runOriginProtocolUiScenario(window);
     clearTimeout(smokeWatchdog);app.exit(0);return;
@@ -82,6 +416,19 @@ app.whenReady().then(async () => {
     clearTimeout(smokeWatchdog);
     app.exit(0);
     return;
+  }
+  if (process.env.TERMA_UI_SCENARIO === "language-onboarding") {
+    const proof = process.env.TERMA_LANGUAGE_ONBOARDING_PROOF_DIR;
+    for (const width of [392,1200]) for (const theme of ['light','dark']) {
+      window.setSize(width,800);
+      await new Promise(resolve=>setTimeout(resolve,80));
+      await window.webContents.executeJavaScript(`applyTheme(${JSON.stringify(theme)})`);
+      const result = await verifyLanguageOnboarding(window,{proof:proof && path.join(proof,`${width}-${theme}`)});
+      console.log('Language onboarding',width,theme,JSON.stringify(result));
+      if (Object.values(result).some(value=>!value)) throw new Error('Language onboarding behavior failed');
+    }
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
   }
   if (process.env.TERMA_UI_SCENARIO === "fnos-updates") {
     await runFnosUpdatesUiScenario(window);
@@ -99,15 +446,23 @@ app.whenReady().then(async () => {
   if(process.env.TERMA_UI_SCENARIO === 'web-files-real') {
     await runWebFilesRealUiScenario(window);clearTimeout(smokeWatchdog);app.exit(0);return;
   }
+  if(process.env.TERMA_UI_SCENARIO === 'local-files-toolbar') {
+    await runLocalFilesToolbarUiScenario(window);clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
   if (process.env.TERMA_UI_SCENARIO === "managed-keys") {
     await runManagedKeysUiScenario(window);
     clearTimeout(smokeWatchdog);
     app.exit(0);
     return;
   }
+  if (process.env.TERMA_UI_SCENARIO === "image-preview") {
+    await runImagePreviewUiScenario(window);
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
   if (process.env.TERMA_UI_SCENARIO === "web-files") {
-    await runSftpRenameUiScenario(window);
+    await runLocalFilesToolbarUiScenario(window);
     await runWebFilesUiScenario(window);
+    await runSftpRenameUiScenario(window);
     await runWebFilesDeliveryUiScenario(window);
     clearTimeout(smokeWatchdog);
     app.exit(0);
@@ -150,114 +505,7 @@ app.whenReady().then(async () => {
   console.log("[ui-smoke] language onboarding");
   window.setSize(392, 800);
   await new Promise(resolve => setTimeout(resolve, 80));
-  const languageOnboardingUi = await window.webContents.executeJavaScript(`(async () => {
-    const previousApi = api;
-    const previousRuntimeSettings = runtimeSettings;
-    const previousSuggestedLanguage = suggestedTermaLanguage;
-    const previousLanguage = document.documentElement.lang || 'zh-CN';
-    let savedPayload = null;
-    try {
-      const regionDefaults = suggestedTermaLanguage(['zh-CN']) === 'zh-CN'
-        && suggestedTermaLanguage(['zh-Hans-CN']) === 'zh-CN'
-        && suggestedTermaLanguage(['en-US']) === 'en-US'
-        && suggestedTermaLanguage(['zh-HK']) === 'en-US'
-        && suggestedTermaLanguage(['invalid-locale']) === 'en-US';
-      suggestedTermaLanguage = () => 'en-US';
-      await setTermaLanguage('en-US', {emit:false});
-      window.i18next.removeResourceBundle('zh-CN', 'common');
-      window.i18next.removeResourceBundle('zh-CN', 'settings');
-      const coldStartMissingChineseResources = !window.i18next.hasResourceBundle('zh-CN', 'common')
-        && !window.i18next.hasResourceBundle('zh-CN', 'settings');
-      runtimeSettings = {settings_persisted:false, saved:{language:'zh-CN', language_onboarding_version:0}};
-      await ensureTermaLanguageOnboarding();
-      const newCard = document.querySelector('.language-onboarding');
-      const newRect = newCard?.getBoundingClientRect();
-      await new Promise(resolve => queueMicrotask(() => requestAnimationFrame(resolve)));
-      const newUserDefaultsEnglish = document.querySelector('input[name="terma-onboarding-language"]:checked')?.value === 'en-US';
-      const englishOption = document.querySelector('input[name="terma-onboarding-language"][value="en-US"]')?.closest('.language-onboarding-option');
-      const chineseOption = document.querySelector('input[name="terma-onboarding-language"][value="zh-CN"]')?.closest('.language-onboarding-option');
-      const nativeChoiceCopy = englishOption?.querySelector('strong')?.textContent?.trim() === 'English'
-        && englishOption?.querySelector('small')?.textContent?.trim() === 'Default outside mainland China'
-        && chineseOption?.querySelector('strong')?.textContent?.trim() === '简体中文'
-        && chineseOption?.querySelector('small')?.textContent?.trim() === '中国大陆默认';
-      const englishCopy = newCard?.querySelector('#languageOnboardingTitle')?.textContent?.trim() === 'Choose your language'
-        && newCard?.querySelector('.language-onboarding-message')?.textContent?.trim() === "Terma selected a default from this device's region. You can change it before entering."
-        && newCard?.querySelector('.language-onboarding-note')?.textContent?.trim() === 'You can switch languages at any time from the language button.'
-        && newCard?.querySelector('button[type="submit"]')?.textContent?.trim() === 'Continue'
-        && newCard?.lang === 'en-US';
-      const chineseChoice = document.querySelector('input[name="terma-onboarding-language"][value="zh-CN"]');
-      chineseChoice?.click();
-      await new Promise(resolve => queueMicrotask(() => requestAnimationFrame(resolve)));
-      const selectedChineseCopy = newCard?.querySelector('#languageOnboardingTitle')?.textContent?.trim() === '选择界面语言'
-        && newCard?.querySelector('.language-onboarding-message')?.textContent?.trim() === 'Terma 已按当前设备地区预选语言，进入前可以修改。'
-        && newCard?.querySelector('.language-onboarding-note')?.textContent?.trim() === '之后可随时通过语言按钮切换。'
-        && newCard?.querySelector('button[type="submit"]')?.textContent?.trim() === '继续'
-        && newCard?.lang === 'zh-CN'
-        && chineseOption?.classList.contains('selected')
-        && !englishOption?.classList.contains('selected');
-      document.querySelector('input[name="terma-onboarding-language"][value="en-US"]')?.click();
-      await new Promise(resolve => queueMicrotask(() => requestAnimationFrame(resolve)));
-      const selectedEnglishCopy = newCard?.querySelector('#languageOnboardingTitle')?.textContent?.trim() === 'Choose your language'
-        && newCard?.querySelector('button[type="submit"]')?.textContent?.trim() === 'Continue'
-        && newCard?.lang === 'en-US'
-        && !/[\u3400-\u9fff]/.test(newCard?.querySelector('input[name="terma-onboarding-language"][value="en-US"]')?.closest('.language-onboarding-option')?.textContent || '')
-        && englishOption?.classList.contains('selected')
-        && !chineseOption?.classList.contains('selected');
-      const coldStartChineseResourcesLoaded = window.i18next.hasResourceBundle('zh-CN', 'common')
-        && window.i18next.hasResourceBundle('zh-CN', 'settings');
-      const fitsNarrowViewport = Boolean(newRect
-        && newRect.left >= -0.5
-        && newRect.right <= innerWidth + 0.5
-        && newRect.top >= -0.5
-        && newRect.bottom <= innerHeight + 0.5
-        && document.documentElement.scrollWidth <= innerWidth + 1);
-      closeTermaLanguageOnboarding();
-
-      runtimeSettings = {settings_persisted:true, saved:{language:'zh-CN', language_onboarding_version:0}};
-      await setTermaLanguage('zh-CN', {emit:false});
-      await ensureTermaLanguageOnboarding();
-      const existingUserKeepsLanguage = document.querySelector('input[name="terma-onboarding-language"]:checked')?.value === 'zh-CN';
-      const existingUserChineseCopy = document.querySelector('#languageOnboardingTitle')?.textContent?.trim() === '选择界面语言'
-        && document.querySelector('.language-onboarding-message')?.textContent?.trim() === '请选择要继续使用的 Terma 界面语言。'
-        && document.querySelector('.language-onboarding-note')?.textContent?.trim() === '之后可随时通过语言按钮切换。'
-        && document.querySelector('.language-onboarding button[type="submit"]')?.textContent?.trim() === '继续'
-        && document.querySelector('.language-onboarding')?.lang === 'zh-CN';
-      const englishChoice = document.querySelector('input[name="terma-onboarding-language"][value="en-US"]');
-      englishChoice?.click();
-      const existingUserEnglishCopy = document.querySelector('#languageOnboardingTitle')?.textContent?.trim() === 'Choose your language'
-        && document.querySelector('.language-onboarding-message')?.textContent?.trim() === 'Choose the Terma interface language to continue.'
-        && document.querySelector('.language-onboarding-note')?.textContent?.trim() === 'You can switch languages at any time from the language button.'
-        && document.querySelector('.language-onboarding button[type="submit"]')?.textContent?.trim() === 'Continue'
-        && document.querySelector('.language-onboarding')?.lang === 'en-US';
-      api = async (path, options={}) => {
-        if (path !== '/api/runtime-settings' || options.method !== 'PUT') throw new Error('Unexpected language onboarding request');
-        savedPayload = JSON.parse(options.body || '{}');
-        return {settings_persisted:true, saved:{...runtimeSettings.saved, ...savedPayload}};
-      };
-      const saved = await confirmTermaLanguageOnboarding(document.querySelector('.language-onboarding button[type="submit"]'));
-      return {
-        regionDefaults,
-        newUserDefaultsEnglish,
-        nativeChoiceCopy,
-        englishCopy,
-        selectedChineseCopy,
-        selectedEnglishCopy,
-        coldStartNativeChoice:Boolean(coldStartMissingChineseResources && coldStartChineseResourcesLoaded && nativeChoiceCopy),
-        existingUserKeepsLanguage,
-        existingUserChineseCopy,
-        existingUserEnglishCopy,
-        fitsNarrowViewport,
-        saved:Boolean(saved && savedPayload?.language === 'en-US' && savedPayload?.language_onboarding_version === 1),
-        closed:document.querySelector('.language-onboarding') === null
-      };
-    } finally {
-      api = previousApi;
-      runtimeSettings = previousRuntimeSettings;
-      suggestedTermaLanguage = previousSuggestedLanguage;
-      closeTermaLanguageOnboarding();
-      await setTermaLanguage(previousLanguage, {emit:false});
-    }
-  })()`);
+  const languageOnboardingUi = await verifyLanguageOnboarding(window);
   window.setSize(1200, 800);
   let desktopViewportReady = false;
   for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -276,7 +524,7 @@ app.whenReady().then(async () => {
   })()`);
   console.log("[ui-smoke] noVNC module");
   const noVncModuleUi = await window.webContents.executeJavaScript(`(async () => {
-    const RFB = await noVncRfbClass();
+    const RFB = await window.termaVncRuntime.loadRfb();
     return {
       loaded:typeof RFB === 'function',
       named:Boolean(RFB?.name),
@@ -285,7 +533,7 @@ app.whenReady().then(async () => {
   })()`);
   console.log("[ui-smoke] ZMODEM module");
   const zmodemModuleUi = await window.webContents.executeJavaScript(`(async () => {
-    const Zmodem = await ensureTerminalZmodemLibrary();
+    const Zmodem = await window.termaTerminalZmodem.ensureLibrary();
     return {
       loaded:Boolean(Zmodem?.Sentry),
       browser:Boolean(Zmodem?.Browser?.send_files),
@@ -293,12 +541,11 @@ app.whenReady().then(async () => {
     };
   })()`);
   await window.webContents.executeJavaScript(`(() => {
-    window.__uiSmokeRealLoadAll = loadAll;
+    window.__uiSmokeRealLoadAll = window.termaWorkspaceRefresh.load;
     // Keep background polling from crossing the temporary API fixtures below.
     // SFTP job refresh behavior is exercised explicitly in the dedicated checks.
     if (sftpJobsTimer) {
-      clearInterval(sftpJobsTimer);
-      sftpJobsTimer = null;
+      window.termaSftpTransferLifecycle.polling.stop();
     }
     const fixtureConnection = {
       id: 900001,
@@ -328,9 +575,9 @@ app.whenReady().then(async () => {
     if (fixtureIndex >= 0) connections.splice(fixtureIndex, 1);
     connections.unshift(fixtureConnection);
     groupOpen.add('UI Smoke');
-    renderConnections();
+    window.termaConnectionViews.renderConnections();
     // Keep the in-memory fixture stable when the isolated test service has no records.
-    loadAll = async () => {};
+    window.termaWorkspaceRefresh.load = async () => {};
   })()`);
   console.log("[ui-smoke] base layout");
   const result = await window.webContents.executeJavaScript(`(() => {
@@ -350,7 +597,7 @@ app.whenReady().then(async () => {
     const baseline = activityItems[0]?.itemCenter;
     const activityHandle = document.querySelector('#activityBarResize');
     const activityStoredBefore = localStorage.getItem('activityBarWidth');
-    const activityWidthBefore = activityBarWidth;
+    const activityWidthBefore = window.termaWorkspaceChrome.value('activity');
     let activityResizable = false;
     if (activityHandle) {
       const handleRect = activityHandle.getBoundingClientRect();
@@ -358,30 +605,29 @@ app.whenReady().then(async () => {
       activityHandle.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:91,pointerType:'mouse',button:0,clientX:startX,clientY:handleRect.top+20}));
       window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:91,pointerType:'mouse',button:0,clientX:startX+1000,clientY:handleRect.top+20}));
       window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:91,pointerType:'mouse',button:0,clientX:startX+1000,clientY:handleRect.top+20}));
-      const pointerMax = activityBarWidth === ACTIVITY_BAR_WIDTH_MAX
-        && Number(localStorage.getItem('activityBarWidth')) === ACTIVITY_BAR_WIDTH_MAX
-        && activityBarResize === null
+      const pointerMax = window.termaWorkspaceChrome.value('activity') === 64
+        && Number(localStorage.getItem('activityBarWidth')) === 64
         && !document.body.classList.contains('activity-bar-resizing');
       activityHandle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'Home'}));
-      const keyboardMin = activityBarWidth === ACTIVITY_BAR_WIDTH_MIN
-        && Math.abs(activity.getBoundingClientRect().width-ACTIVITY_BAR_WIDTH_MIN) <= 0.5;
+      const keyboardMin = window.termaWorkspaceChrome.value('activity') === 36
+        && Math.abs(activity.getBoundingClientRect().width-36) <= 0.5;
       activityHandle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'ArrowRight',shiftKey:true}));
-      const keyboardStep = activityBarWidth === ACTIVITY_BAR_WIDTH_MIN + 4;
+      const keyboardStep = window.termaWorkspaceChrome.value('activity') === 36 + 4;
       activityHandle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'End'}));
-      const keyboardMax = activityBarWidth === ACTIVITY_BAR_WIDTH_MAX;
+      const keyboardMax = window.termaWorkspaceChrome.value('activity') === 64;
       activityHandle.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,button:0}));
-      const doubleClickReset = activityBarWidth === ACTIVITY_BAR_WIDTH_DEFAULT
-        && Number(localStorage.getItem('activityBarWidth')) === ACTIVITY_BAR_WIDTH_DEFAULT
-        && Math.abs(activity.getBoundingClientRect().width-ACTIVITY_BAR_WIDTH_DEFAULT) <= 0.5;
+      const doubleClickReset = window.termaWorkspaceChrome.value('activity') === 40
+        && Number(localStorage.getItem('activityBarWidth')) === 40
+        && Math.abs(activity.getBoundingClientRect().width-40) <= 0.5;
       activityResizable = getComputedStyle(activityHandle).display !== 'none'
         && handleRect.width >= 6
         && activityHandle.getAttribute('aria-orientation') === 'vertical'
-        && Number(activityHandle.getAttribute('aria-valuemin')) === ACTIVITY_BAR_WIDTH_MIN
-        && Number(activityHandle.getAttribute('aria-valuemax')) === ACTIVITY_BAR_WIDTH_MAX
-        && Number(activityHandle.getAttribute('aria-valuenow')) === ACTIVITY_BAR_WIDTH_DEFAULT
+        && Number(activityHandle.getAttribute('aria-valuemin')) === 36
+        && Number(activityHandle.getAttribute('aria-valuemax')) === 64
+        && Number(activityHandle.getAttribute('aria-valuenow')) === 40
         && pointerMax && keyboardMin && keyboardStep && keyboardMax && doubleClickReset;
     }
-    applyActivityBarWidth(activityWidthBefore,{fit:false});
+    window.termaWorkspaceChrome.apply('activity', activityWidthBefore,{fit:false});
     if (activityStoredBefore === null) localStorage.removeItem('activityBarWidth');
     else localStorage.setItem('activityBarWidth',activityStoredBefore);
     const operationPaneRect = document.querySelector('.left-pane')?.getBoundingClientRect();
@@ -393,7 +639,7 @@ app.whenReady().then(async () => {
     const connectionActionButtons = [...document.querySelectorAll('.conn-actions > button')];
     const connectionHasSftpAction = Boolean(document.querySelector('.conn-actions button[title="打开 SFTP 文件管理"]'));
     const quickConnectButton = document.querySelector('.workspace-quick-connect-button');
-    openQuickConnectionLauncher();
+    window.termaQuickViews.openQuickConnectionLauncher();
     const quickConnectModal = document.querySelector('.quick-connection-modal');
     const quickConnectTable = document.querySelector('.quick-connection-table');
     const quickConnectHeadings = [...document.querySelectorAll('.quick-connection-columns > span')];
@@ -451,7 +697,7 @@ app.whenReady().then(async () => {
     };
     const quickConnectionSearch = document.querySelector('#quickConnectionSearch');
     quickConnectionSearch.value = '/admin';
-    renderQuickConnectionRows(quickConnectionSearch.value);
+    window.termaQuickViews.renderQuickConnectionRows(quickConnectionSearch.value);
     const quickForwardRow = document.querySelector('.quick-forward-row');
     const quickForwardSearch = Boolean(
       quickForwardRow?.textContent.includes('UI Smoke Web')
@@ -462,7 +708,7 @@ app.whenReady().then(async () => {
       && quickForwardRow?.querySelector('[data-action="quick-forward-toggle"][data-forward-id="900001"]')
       && quickForwardRow?.dataset.forwardId === '900001'
     );
-    renderQuickPanel('/admin');
+    window.termaEfficiency.palette.refresh('/admin');
     const quickCommandForward = [...document.querySelectorAll('#quickPanelResults .quick-result')].find(row => row.textContent.includes('UI Smoke Web'));
     const quickCommandForwardSearch = Boolean(
       quickCommandForward
@@ -470,169 +716,59 @@ app.whenReady().then(async () => {
       && quickCommandForward.querySelector('[data-action="quick-forward-toggle"][data-forward-id="900001"]')
       && quickCommandForward.querySelector('a[href="http://127.0.0.1:18099/admin"]')
     );
-    closeQuickPanel();
-    const forwardFixture = connections[0]?.forwards?.[0];
-    const managerView = $('view-forward-manager');
-    const managerScope = currentWorkspaceDomScope();
-    const managerPreviousView = [...(managerScope?.querySelectorAll('.view') || [])].find(view => !view.hidden);
-    if (managerPreviousView) managerPreviousView.hidden = true;
-    if (managerView) managerView.hidden = false;
-    renderGlobalForwardManager();
-    const managerRunningCard = managerView?.querySelector('.global-forward-card[data-forward-id="900001"]');
-    const globalForwardManager = Boolean(
-      managerView
-      && managerView.querySelectorAll('.global-forward-stats > button').length === 5
-      && managerView.querySelector('.global-forward-toolbar input')
-      && managerView.querySelectorAll('.global-forward-toolbar select').length === 3
-      && managerRunningCard?.querySelector('a[href="http://127.0.0.1:18099/admin"]')
-      && managerRunningCard?.querySelectorAll('.global-forward-actions button').length === 4
-    );
-    const managerStatsControls = [...(managerView?.querySelectorAll('.global-forward-stats > button') || [])].map(element => element.getBoundingClientRect());
-    const globalForwardStatsAligned = managerStatsControls.length === 5
-      && Math.max(...managerStatsControls.map(rect => rect.top)) - Math.min(...managerStatsControls.map(rect => rect.top)) <= 0.5
-      && Math.max(...managerStatsControls.map(rect => rect.bottom)) - Math.min(...managerStatsControls.map(rect => rect.bottom)) <= 0.5
-      && Math.max(...managerStatsControls.map(rect => rect.height)) - Math.min(...managerStatsControls.map(rect => rect.height)) <= 0.5;
-    const managerToolbarControls = [...(managerView?.querySelectorAll('.global-forward-toolbar > *') || [])].map(element => element.getBoundingClientRect());
-    const managerToolbarSearch = managerView?.querySelector('.global-forward-toolbar .search-field');
-    const toolbarSearchStyle = managerToolbarSearch ? getComputedStyle(managerToolbarSearch) : null;
-    const managerToolbarHeightSpread = managerToolbarControls.length
-      ? Math.max(...managerToolbarControls.map(rect => rect.height)) - Math.min(...managerToolbarControls.map(rect => rect.height))
-      : Infinity;
-    const globalForwardToolbarAligned = managerToolbarControls.length === 4
-      && managerToolbarHeightSpread <= 0.5
-      && toolbarSearchStyle?.marginTop === '0px'
-      && toolbarSearchStyle?.marginBottom === '0px';
-    let globalForwardToolbarWideAligned = false;
-    const toolbarFixture = document.createElement('div');
-    toolbarFixture.style.cssText = 'position:fixed;left:-10000px;top:0;width:1600px;visibility:hidden;pointer-events:none;';
-    const toolbarTemplate = managerView?.querySelector('.global-forward-toolbar');
-    if (toolbarTemplate) {
-      const toolbarClone = toolbarTemplate.cloneNode(true);
-      toolbarClone.style.gridTemplateColumns = 'minmax(280px,1fr) minmax(150px,180px) minmax(190px,240px) minmax(180px,230px)';
-      toolbarClone.querySelector('.search-field')?.style.setProperty('grid-column', 'auto');
-      toolbarFixture.appendChild(toolbarClone);
-      document.body.appendChild(toolbarFixture);
-      const wideToolbarControls = [...toolbarFixture.querySelectorAll('.global-forward-toolbar > *')].map(element => element.getBoundingClientRect());
-      globalForwardToolbarWideAligned = wideToolbarControls.length === 4
-        && Math.max(...wideToolbarControls.map(rect => rect.top)) - Math.min(...wideToolbarControls.map(rect => rect.top)) <= 0.5
-        && Math.max(...wideToolbarControls.map(rect => rect.bottom)) - Math.min(...wideToolbarControls.map(rect => rect.bottom)) <= 0.5
-        && Math.max(...wideToolbarControls.map(rect => rect.height)) - Math.min(...wideToolbarControls.map(rect => rect.height)) <= 0.5;
-      toolbarFixture.remove();
+    window.termaEfficiency.palette.close();
+    const forwardFixture=connections[0]?.forwards?.[0],managerView=$('view-forward-manager');
+    const managerScope=window.termaWorkspacePaneScope.currentWorkspaceDomScope(),managerPreviousView=[...(managerScope?.querySelectorAll('.view')||[])].find(v=>!v.hidden);
+    const forwardStorage={};for(const key of Object.keys(localStorage))if(key.startsWith('globalForward')||key.startsWith('connectionForward')){forwardStorage[key]=localStorage.getItem(key);localStorage.removeItem(key);}
+    window.termaForwardPages.release();window.termaForwardPages.manage(managerView);
+    if(managerPreviousView)managerPreviousView.hidden=true;managerView.hidden=false;
+    const managerRunningCard=managerView.querySelector('[data-forward-id="900001"]');
+    const globalForwardManager=!!(managerView.querySelector('.terma-forward-root')&&managerView.querySelectorAll('.forward-statistics button').length===5&&managerRunningCard?.querySelector('a[href="http://127.0.0.1:18099/admin"]'));
+    const inside=node=>{const a=node.getBoundingClientRect(),b=managerView.getBoundingClientRect();return a.left>=b.left-.5&&a.right<=b.right+.5&&node.scrollWidth<=node.clientWidth+1;};
+    const globalForwardStatsAligned=[...managerView.querySelectorAll('.forward-statistics button')].every(inside);
+    const globalForwardToolbarAligned=[...managerView.querySelectorAll('.forward-filters select,.forward-search input')].every(inside);
+    const globalForwardToolbarWideAligned=globalForwardToolbarAligned;
+    const globalForwardWideGrid=[...managerView.querySelectorAll('.forward-rule-row')].every(inside);
+    const forwardCardActionsAligned=[...managerView.querySelectorAll('.forward-row-actions button')].every(inside);
+    const groupSelect=managerView.querySelector('[name="group_mode"]');groupSelect.value='ssh';groupSelect.dispatchEvent(new Event('change',{bubbles:true}));
+    const groupedManager=!!(managerView.querySelector('.forward-group')&&managerView.querySelector('.forward-connection-group')&&managerView.querySelectorAll('.forward-drag-handle').length>=2);
+    if(forwardFixture)forwardFixture.status='stopped';window.termaForwardPages.refresh();
+    const globalForwardStoppedHidesAccess=!!managerView.querySelector('[data-forward-id="900001"]')&&!managerView.querySelector('[data-forward-id="900001"] .forward-address a');
+    let forwardingPagination=false,connectionForwardPagination=false,singleForwardWideGrid=false;
+    if(forwardFixture){
+      const original=connections[0].forwards;connections[0].forwards=Array.from({length:13},(_,i)=>({...forwardFixture,id:900100+i,service_name:'UI Smoke Page '+i,status:'stopped'}));
+      window.termaForwardPages.release();window.termaForwardPages.manage(managerView);
+      forwardingPagination=managerView.querySelectorAll('.forward-rule-row').length===12&&!!managerView.querySelector('.forward-page-nav select');
+      const view=$('view-forwards');window.termaForwardPages.connection(view,connections[0].id);view.hidden=false;managerView.hidden=true;
+      connectionForwardPagination=view.querySelectorAll('.forward-rule-row').length===12&&!!view.querySelector('.forward-page-nav select');
+      singleForwardWideGrid=[...view.querySelectorAll('.forward-rule-row')].every(n=>n.scrollWidth<=n.clientWidth+1);
+      connections[0].forwards=original;view.hidden=true;
     }
-    let globalForwardWideGrid = false;
-    let singleForwardWideGrid = false;
-    let forwardCardActionsAligned = false;
-    if (forwardFixture) {
-      const wideGridFixture = document.createElement('div');
-      wideGridFixture.style.cssText = 'position:fixed;left:-10000px;top:0;width:900px;visibility:hidden;pointer-events:none;';
-      const secondForward = {...forwardFixture, id:900002, service_name:'UI Smoke Web 2', bind_port:18100};
-      wideGridFixture.innerHTML = '<div class="global-forward-list">'
-        + renderGlobalForwardCard(connections[0], forwardFixture)
-        + renderGlobalForwardCard(connections[0], secondForward)
-        + '</div><div class="forward-list">'
-        + renderForwardCard(forwardFixture)
-        + renderForwardCard(secondForward)
-        + '</div>';
-      document.body.appendChild(wideGridFixture);
-      const globalCards = [...wideGridFixture.querySelectorAll('.global-forward-card')].map(card => card.getBoundingClientRect());
-      const singleCards = [...wideGridFixture.querySelectorAll('.forward-card')].map(card => card.getBoundingClientRect());
-      const actionButtons = [...wideGridFixture.querySelectorAll('.global-forward-actions button, .forward-actions button')].map(button => button.getBoundingClientRect());
-      globalForwardWideGrid = globalCards.length === 2
-        && Math.abs(globalCards[0].top - globalCards[1].top) <= 0.5
-        && globalCards.every(rect => rect.width >= 400 && rect.width <= 450);
-      singleForwardWideGrid = singleCards.length === 2
-        && Math.abs(singleCards[0].top - singleCards[1].top) <= 0.5
-        && singleCards.every(rect => rect.width >= 400 && rect.width <= 450);
-      forwardCardActionsAligned = actionButtons.length === 14
-        && Math.max(...actionButtons.map(rect => rect.height)) - Math.min(...actionButtons.map(rect => rect.height)) <= 0.5;
-      wideGridFixture.remove();
-    }
-    const previousGroupMode = globalForwardManagerState.groupMode;
-    globalForwardManagerState.groupMode = 'ssh';
-    globalForwardManagerState.query = '';
-    globalForwardManagerState.status = 'all';
-    globalForwardManagerState.connectionId = 0;
-    renderGlobalForwardManager();
-    const groupedManager = Boolean(
-      managerView?.querySelector('.global-forward-grouped-list')
-      && managerView.querySelector('.global-forward-group')
-      && managerView.querySelector('.global-forward-connection')
-      && managerView.querySelector('[data-action="global-forward-add"][data-connection-id]')
-      && managerView.querySelectorAll('.global-forward-group-head .global-forward-drag-handle').length
-      && managerView.querySelectorAll('.global-forward-connection-head .global-forward-drag-handle').length
-      && getComputedStyle(managerView.querySelector('.global-forward-group-head')).position === 'sticky'
-      && getComputedStyle(managerView.querySelector('.global-forward-connection-head')).position === 'sticky'
-    );
-    globalForwardManagerState.groupMode = previousGroupMode;
-    renderGlobalForwardManager();
-    if (forwardFixture) forwardFixture.status = 'stopped';
-    renderGlobalForwardManager();
-    const managerStoppedCard = managerView?.querySelector('.global-forward-card[data-forward-id="900001"]');
-    const globalForwardStoppedHidesAccess = Boolean(
-      managerStoppedCard
-      && !managerStoppedCard.querySelector('.global-forward-access a')
-      && managerStoppedCard.querySelector('[data-action="global-forward-toggle"]')
-    );
-    let forwardingPagination = false;
-    let connectionForwardPagination = false;
-    if (forwardFixture) {
-      const originalForwards = connections[0].forwards;
-      const paginationForwards = Array.from({length:13}, (_, index) => ({...forwardFixture, id:900100 + index, service_name:'UI Smoke Page ' + (index + 1), bind_port:18100 + index, status:index % 2 ? 'stopped' : 'running'}));
-      connections[0].forwards = paginationForwards;
-      globalForwardManagerState.groupMode = 'flat';
-      globalForwardManagerState.query = '';
-      globalForwardManagerState.status = 'all';
-      globalForwardManagerState.connectionId = 0;
-      globalForwardManagerState.page = 1;
-      globalForwardManagerState.pageSize = 12;
-      renderGlobalForwardManager();
-      const globalPager = managerView?.querySelector('.forward-pagination');
-      forwardingPagination = Boolean(
-        globalPager
-        && globalPager.querySelector('[data-action="global-forward-page"][data-page="2"]')
-        && globalPager.querySelector('[data-change-action="global-forward-page-size"]')
-        && managerView.querySelectorAll('.global-forward-card').length === 12
-      );
-      selectedId = connections[0].id;
-      openForwards(connections[0].id, false);
-      renderForwards();
-      const connectionPager = document.querySelector('#forwardList .forward-pagination');
-      connectionForwardPagination = Boolean(
-        connectionPager
-        && connectionPager.querySelector('[data-action="forward-page"][data-page="2"]')
-        && connectionPager.querySelector('[data-change-action="forward-page-size"]')
-        && document.querySelectorAll('#forwardList .forward-card').length === 12
-      );
-      connections[0].forwards = originalForwards;
-      globalForwardManagerState.page = 1;
-      renderGlobalForwardManager();
-      renderForwards();
-    }
-    if (forwardFixture) forwardFixture.status = 'running';
-    if (managerView) managerView.hidden = true;
-    if (managerPreviousView) managerPreviousView.hidden = false;
+    if(forwardFixture)forwardFixture.status='running';
+    window.termaForwardPages.release();for(const key of Object.keys(localStorage))if(key.startsWith('globalForward')||key.startsWith('connectionForward'))localStorage.removeItem(key);for(const [key,value]of Object.entries(forwardStorage))localStorage.setItem(key,value);
+    managerView.hidden=true;if(managerPreviousView)managerPreviousView.hidden=false;
     quickConnectionSearch.value = 'tester@198.51.100.25:2200';
-    renderQuickConnectionRows(quickConnectionSearch.value);
+    window.termaQuickViews.renderQuickConnectionRows(quickConnectionSearch.value);
     const quickSshCandidates = Boolean(
       document.querySelector('[data-action="quick-connect-direct"]')?.textContent.includes('tester@198.51.100.25:2200')
       && document.querySelector('[data-action="quick-connect-new"]')?.textContent.includes('新建 SSH 连接')
-      && parseQuickSshTarget('root@[2001:db8::1]:2222')?.port === 2222
-      && parseQuickSshTarget('example.test')?.port === 22
+      && window.termaQuickSshService.parse('root@[2001:db8::1]:2222')?.port === 2222
+      && window.termaQuickSshService.parse('example.test')?.port === 22
     );
-    closeQuickConnectionLauncher();
-    const originalOpenTerminalForDoubleClick = openTerminal;
+    window.termaQuickViews.closeQuickConnectionLauncher();
+    const originalSelectForDoubleClick = window.termaConnectionController.select;
     let doubleClickedConnectionId = 0;
-    openTerminal = id => { doubleClickedConnectionId = Number(id); };
+    window.termaConnectionController.select = id => { doubleClickedConnectionId = Number(id); };
     document.querySelector('.conn-name-open')?.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,button:0}));
-    openTerminal = originalOpenTerminalForDoubleClick;
+    window.termaConnectionController.select = originalSelectForDoubleClick;
     const connectionNameDoubleClickOpens = doubleClickedConnectionId === Number(connections[0]?.id || 0);
     const explorerTree = document.querySelector('#connectionGroups')?.closest('.tree');
     const compactOperationPane = Boolean(operationPaneRect&&operationPaneRect.width<=292.5&&operationPaneRect.width>=280);
-    const compactConnectionTools = Boolean(connectionToolStripRect&&connectionToolButtons.length===4&&connectionToolButtons.every(rect=>Math.abs((rect.top+rect.bottom)-(connectionToolStripRect.top+connectionToolStripRect.bottom))<2&&rect.left>=connectionToolStripRect.left-0.5&&rect.right<=connectionToolStripRect.right+0.5));
+    const compactConnectionTools = Boolean(connectionToolStripRect&&connectionToolButtons.length===5&&connectionToolButtons.every(rect=>Math.abs((rect.top+rect.bottom)-(connectionToolStripRect.top+connectionToolStripRect.bottom))<2&&rect.left>=connectionToolStripRect.left-0.5&&rect.right<=connectionToolStripRect.right+0.5));
     const compactConnectionRows = Boolean(connectionFooterRect&&connectionActionButtons.length===6&&connectionActionButtons.every(button=>{const rect=button.getBoundingClientRect();return !button.textContent.trim()&&rect.width<=30&&rect.left>=connectionFooterRect.left-0.5&&rect.right<=connectionFooterRect.right+0.5;}));
     const operationHandle = document.querySelector('#operationPaneResize');
     const operationStoredBefore = localStorage.getItem('operationPaneWidth');
-    const operationWidthBefore = operationPaneWidth;
+    const operationWidthBefore = window.termaWorkspaceChrome.value('operation');
     let operationPaneResizable = false;
     if (operationHandle) {
       const handleRect = operationHandle.getBoundingClientRect();
@@ -640,30 +776,29 @@ app.whenReady().then(async () => {
       operationHandle.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:92,pointerType:'mouse',button:0,clientX:startX,clientY:handleRect.top+20}));
       window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:92,pointerType:'mouse',button:0,clientX:startX+1000,clientY:handleRect.top+20}));
       window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:92,pointerType:'mouse',button:0,clientX:startX+1000,clientY:handleRect.top+20}));
-      const pointerMax = operationPaneWidth === OPERATION_PANE_WIDTH_MAX
-        && Number(localStorage.getItem('operationPaneWidth')) === OPERATION_PANE_WIDTH_MAX
-        && operationPaneResize === null
+      const pointerMax = window.termaWorkspaceChrome.value('operation') === 520
+        && Number(localStorage.getItem('operationPaneWidth')) === 520
         && !document.body.classList.contains('operation-pane-resizing');
       operationHandle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'Home'}));
-      const keyboardMin = operationPaneWidth === OPERATION_PANE_WIDTH_MIN
+      const keyboardMin = window.termaWorkspaceChrome.value('operation') === 260
         && document.documentElement.classList.contains('operation-pane-narrow');
       operationHandle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'ArrowRight',shiftKey:true}));
-      const keyboardStep = operationPaneWidth === OPERATION_PANE_WIDTH_MIN + 16
+      const keyboardStep = window.termaWorkspaceChrome.value('operation') === 260 + 16
         && !document.documentElement.classList.contains('operation-pane-narrow');
       operationHandle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'End'}));
-      const keyboardMax = operationPaneWidth === OPERATION_PANE_WIDTH_MAX;
+      const keyboardMax = window.termaWorkspaceChrome.value('operation') === 520;
       operationHandle.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,button:0}));
-      const doubleClickReset = operationPaneWidth === OPERATION_PANE_WIDTH_DEFAULT
-        && Number(localStorage.getItem('operationPaneWidth')) === OPERATION_PANE_WIDTH_DEFAULT;
+      const doubleClickReset = window.termaWorkspaceChrome.value('operation') === 292
+        && Number(localStorage.getItem('operationPaneWidth')) === 292;
       operationPaneResizable = getComputedStyle(operationHandle).display !== 'none'
         && handleRect.width >= 6
         && operationHandle.getAttribute('aria-orientation') === 'vertical'
-        && Number(operationHandle.getAttribute('aria-valuemin')) === OPERATION_PANE_WIDTH_MIN
-        && Number(operationHandle.getAttribute('aria-valuemax')) === OPERATION_PANE_WIDTH_MAX
-        && Number(operationHandle.getAttribute('aria-valuenow')) === OPERATION_PANE_WIDTH_DEFAULT
+        && Number(operationHandle.getAttribute('aria-valuemin')) === 260
+        && Number(operationHandle.getAttribute('aria-valuemax')) === 520
+        && Number(operationHandle.getAttribute('aria-valuenow')) === 292
         && pointerMax && keyboardMin && keyboardStep && keyboardMax && doubleClickReset;
     }
-    applyOperationPaneWidth(operationWidthBefore,{fit:false});
+    window.termaWorkspaceChrome.apply('operation', operationWidthBefore,{fit:false});
     if (operationStoredBefore === null) localStorage.removeItem('operationPaneWidth');
     else localStorage.setItem('operationPaneWidth',operationStoredBefore);
     const brandHeight = document.querySelector('.brand')?.getBoundingClientRect().height || 0;
@@ -681,7 +816,7 @@ app.whenReady().then(async () => {
       && groupHeadStyle.position === 'sticky'
       && parseFloat(groupHeadStyle.top) === 0
       && groupHeadStyle.backgroundColor !== 'rgba(0, 0, 0, 0)'
-      && groupHeadStyle.boxShadow !== 'none'
+      && groupHeadStyle.boxShadow === 'none'
     );
     const stickyGroupHeaderSealsTop = Boolean(
       connectionTree
@@ -693,42 +828,14 @@ app.whenReady().then(async () => {
     const forwardToggle = document.querySelector('.conn-actions .connection-forward-toggle');
     const forwardToggleRect = forwardToggle?.getBoundingClientRect();
     const connectionActionsRect = forwardToggle?.closest('.conn-actions')?.getBoundingClientRect();
-    const originalPaneCollapsed = operationPaneCollapsed;
+    const originalPaneCollapsed = window.termaWorkspaceShell.isCollapsed();
     const originalPrimaryView = primaryView;
-    const originalPanePinnedByView = {...operationPanePinnedByView};
-    const originalPanePinnedStorage = localStorage.getItem(OPERATION_PANE_PINNED_STORAGE_KEY);
-    const originalPinGuideSeen = localStorage.getItem(OPERATION_PANE_PIN_GUIDE_STORAGE_KEY);
-    const originalPinGuideShown = operationPanePinGuideShown;
-    const originalPinGuideHidden = document.querySelector('#operationPanePinGuide')?.hidden !== false;
-    operationPaneCollapsed = false;
-    primaryView = 'connections';
-    operationPanePinnedByView = Object.fromEntries(OPERATION_PANE_PRIMARY_VIEWS.map(name=>[name,true]));
-    saveOperationPanePinnedState();
-    localStorage.removeItem(OPERATION_PANE_PIN_GUIDE_STORAGE_KEY);
-    operationPanePinGuideShown = false;
-    showPrimary('connections');
-    const pinGuide = document.querySelector('#operationPanePinGuide');
-    const pinButton = document.querySelector('#operationPanePin');
-    const pinGuideRect = pinGuide?.getBoundingClientRect();
-    const pinButtonRect = pinButton?.getBoundingClientRect();
-    const pinGuideAnchor = parseFloat(pinGuide?.style.getPropertyValue('--operation-pane-pin-guide-anchor') || 'NaN');
-    const pinGuideExpectedAnchor = pinGuideRect&&pinButtonRect ? pinButtonRect.left+pinButtonRect.width/2-pinGuideRect.left : NaN;
-    const pinGuideArrowStyle = pinGuide ? getComputedStyle(pinGuide, '::before') : null;
-    const pinGuideArrowLeft = parseFloat(pinGuideArrowStyle?.left || 'NaN');
-    const pinGuideArrowWidth = parseFloat(pinGuideArrowStyle?.width || 'NaN');
-    const pinGuideArrowCenter = pinGuideRect&&Number.isFinite(pinGuideArrowLeft)&&Number.isFinite(pinGuideArrowWidth)
-      ? pinGuideRect.left+pinGuideArrowLeft+pinGuideArrowWidth/2
-      : NaN;
-    const pinButtonCenter = pinButtonRect ? pinButtonRect.left+pinButtonRect.width/2 : NaN;
-    const pinGuideShownOnce = Boolean(pinGuide&&!pinGuide.hidden&&localStorage.getItem(OPERATION_PANE_PIN_GUIDE_STORAGE_KEY)==='1');
-    const pinGuideTargetsPin = Number.isFinite(pinGuideAnchor)&&Number.isFinite(pinGuideExpectedAnchor)
-      &&Math.abs(pinGuideAnchor-pinGuideExpectedAnchor)<=1
-      &&Number.isFinite(pinGuideArrowCenter)&&Number.isFinite(pinButtonCenter)
-      &&Math.abs(pinGuideArrowCenter-pinButtonCenter)<=1;
-    dismissOperationPanePinGuide();
-    operationPanePinGuideShown = false;
-    syncOperationPaneState();
-    const pinGuideDoesNotRepeat = pinGuide?.hidden === true;
+    const views=['connections','remote','running','command','import','logs','settings'];
+    const originalPins = new Map(views.map(view=>[view,window.termaWorkspaceShell.isPinned(view)]));
+    const originalPanePinnedStorage = localStorage.getItem('operationPanePinnedByViewV1');
+    window.termaWorkspaceShell.setCollapsed(false);
+    window.termaWorkspaceShell.showPrimary('connections');
+    for(const view of views)window.termaWorkspaceShell.setPinned(true,view);
     const expandedContentWidth = document.querySelector('#content')?.getBoundingClientRect().width || 0;
     const brandMark = document.querySelector('.brand h1 .brand-mark');
     const collapsedBrandButton = document.querySelector('#operationPaneExpand');
@@ -754,12 +861,12 @@ app.whenReady().then(async () => {
     collapsedBrandButton?.click();
     const collapsedBrandExpandState = {
       actionRegistered:window.TermaEvents?.registeredActions?.().includes('static-operation-expand') === true,
-      expandedState:!operationPaneCollapsed,
+      expandedState:!window.termaWorkspaceShell.isCollapsed(),
       sidebarVisible:getComputedStyle(document.querySelector('#sidebar')).display !== 'none',
       buttonHidden:getComputedStyle(collapsedBrandButton).display === 'none'
     };
     const collapsedBrandExpands = Object.values(collapsedBrandExpandState).every(Boolean);
-    setOperationPaneCollapsed(true);
+    window.termaWorkspaceShell.setCollapsed(true);
     document.querySelector('#navRunning')?.click();
     const differentActivityExpands = primaryView === 'running'
       && getComputedStyle(document.querySelector('#sidebar')).display !== 'none'
@@ -767,8 +874,8 @@ app.whenReady().then(async () => {
     document.querySelector('#navRunning')?.click();
     const activeActivityCollapses = getComputedStyle(document.querySelector('#sidebar')).display === 'none'
       && document.querySelector('#navRunning')?.getAttribute('aria-expanded') === 'false';
-    setOperationPaneCollapsed(false);
-    setOperationPanePinned(false, 'running');
+    window.termaWorkspaceShell.setCollapsed(false);
+    window.termaWorkspaceShell.setPinned(false, 'running');
     const runningPinShowsAutoCollapse = document.querySelector('#operationPanePin')?.getAttribute('aria-pressed') === 'false'
       && document.querySelector('#operationPanePin')?.dataset.icon === 'pin-off';
     const captureFixture = document.createElement('button');
@@ -776,29 +883,19 @@ app.whenReady().then(async () => {
     captureFixture.addEventListener('click', event=>{ captureFixtureClicked=true; event.stopPropagation(); });
     document.querySelector('#content')?.appendChild(captureFixture);
     captureFixture.click();
-    const unpinnedContentClickCollapses = captureFixtureClicked&&operationPaneCollapsed&&document.querySelector('.app')?.classList.contains('operation-pane-collapsed');
+    const unpinnedContentClickCollapses = captureFixtureClicked&&window.termaWorkspaceShell.isCollapsed()&&document.querySelector('.app')?.classList.contains('operation-pane-collapsed');
     captureFixture.remove();
-    setOperationPaneCollapsed(false);
-    showPrimary('connections');
+    window.termaWorkspaceShell.setCollapsed(false);
+    window.termaWorkspaceShell.showPrimary('connections');
     document.querySelector('#content')?.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,button:0}));
-    const pinnedContentClickStaysOpen = !operationPaneCollapsed&&isOperationPanePinned('connections')&&!isOperationPanePinned('running');
-    const persistedPinState = JSON.parse(localStorage.getItem(OPERATION_PANE_PINNED_STORAGE_KEY) || '{}');
-    const independentPinPersistence = persistedPinState.connections===true&&persistedPinState.running===false
-      &&OPERATION_PANE_PRIMARY_VIEWS.filter(name=>!['connections','running'].includes(name)).every(name=>persistedPinState[name]===true);
-    operationPaneCollapsed = originalPaneCollapsed;
-    primaryView = originalPrimaryView;
-    operationPanePinnedByView = originalPanePinnedByView;
-    localStorage.setItem('operationPaneCollapsed', originalPaneCollapsed ? '1' : '0');
-    if (originalPanePinnedStorage === null) localStorage.removeItem(OPERATION_PANE_PINNED_STORAGE_KEY);
-    else localStorage.setItem(OPERATION_PANE_PINNED_STORAGE_KEY, originalPanePinnedStorage);
-    if (originalPinGuideSeen === null) localStorage.removeItem(OPERATION_PANE_PIN_GUIDE_STORAGE_KEY);
-    else localStorage.setItem(OPERATION_PANE_PIN_GUIDE_STORAGE_KEY, originalPinGuideSeen);
-    operationPanePinGuideShown = originalPinGuideShown;
-    showPrimary(originalPrimaryView);
-    if (pinGuide) {
-      pinGuide.hidden = originalPinGuideHidden;
-      positionOperationPanePinGuide();
-    }
+    const pinnedContentClickStaysOpen = !window.termaWorkspaceShell.isCollapsed()&&window.termaWorkspaceShell.isPinned('connections')&&!window.termaWorkspaceShell.isPinned('running');
+    const persistedPinState = JSON.parse(localStorage.getItem('operationPanePinnedByViewV1') || '{}');
+    const independentPinPersistence = views.every(name=>persistedPinState[name]===(name!=='running'));
+    for(const [view,pinned] of originalPins)window.termaWorkspaceShell.setPinned(pinned,view);
+    if (originalPanePinnedStorage === null) localStorage.removeItem('operationPanePinnedByViewV1');
+    else localStorage.setItem('operationPanePinnedByViewV1', originalPanePinnedStorage);
+    window.termaWorkspaceShell.showPrimary(originalPrimaryView);
+    window.termaWorkspaceShell.setCollapsed(originalPaneCollapsed);
     document.querySelector('.group-head')?.dispatchEvent(new MouseEvent('contextmenu', {bubbles:true, cancelable:true, clientX:180, clientY:180}));
     const groupMenuLabels = [...document.querySelectorAll('#actionMenu button span')].map(node => node.textContent.trim());
     hideActionMenu();
@@ -840,7 +937,7 @@ app.whenReady().then(async () => {
       operationPaneResizable,
       operationPaneCollapsible: expandedBrand && collapsedBrand && paneExpanded && paneCollapsed && collapsedBrandExpands && differentActivityExpands && activeActivityCollapses && collapsedContentWidth >= expandedContentWidth + 250,
       operationPaneCollapseLayout:{expandedBrand,collapsedBrand,paneExpanded,paneCollapsed,collapsedBrandExpands,collapsedBrandExpandState,differentActivityExpands,activeActivityCollapses,expandedContentWidth,collapsedContentWidth},
-      operationPanePinBehavior: pinGuideShownOnce&&pinGuideTargetsPin&&pinGuideDoesNotRepeat&&runningPinShowsAutoCollapse&&unpinnedContentClickCollapses&&pinnedContentClickStaysOpen&&independentPinPersistence,
+      operationPanePinBehavior: runningPinShowsAutoCollapse&&unpinnedContentClickCollapses&&pinnedContentClickStaysOpen&&independentPinPersistence,
       activityUtilities: document.querySelector('.activity-bottom')?.children[0]?.id === 'languageToggle'
         && document.querySelector('.activity-bottom')?.children[1]?.id === 'themeToggle'
         && document.querySelector('.activity-bottom')?.children[2]?.id === 'activityRefresh'
@@ -871,85 +968,33 @@ app.whenReady().then(async () => {
     };
   })()`);
   console.log("[ui-smoke] forwarding template actions");
-  const forwardTemplateLayoutUi = await window.webContents.executeJavaScript(`(() => {
-    const previousTemplates = forwardTemplates;
-    const previousEditing = editingForwardTemplateId;
-    let host = document.querySelector('#forwardTemplateManager');
-    const created = !host;
-    if (!host) {
-      host = document.createElement('div');
-      host.id = 'forwardTemplateManager';
-      document.body.appendChild(host);
-    }
-    const previousStyle = host.getAttribute('style');
-    const previousHtml = host.innerHTML;
-    try {
-      host.hidden = false;
-      host.style.position = 'fixed';
-      host.style.left = '8px';
-      host.style.top = '8px';
-      host.style.width = '292px';
-      host.style.zIndex = '-1';
-      forwardTemplates = [
-        {id:'layout-1',name:'Memcached',mode:'local',bind_host:'127.0.0.1',bind_port:11211,target_host:'127.0.0.1',target_port:11211},
-        {id:'layout-2',name:'Web HTTP',mode:'local',bind_host:'127.0.0.1',bind_port:8080,target_host:'127.0.0.1',target_port:80}
-      ];
-      editingForwardTemplateId = null;
-      renderForwardTemplateManager();
-      const rows = [...host.querySelectorAll('.template-row')];
-      const actionGroups = rows.map(row => row.querySelector('.template-actions'));
-      const buttons = [...host.querySelectorAll('.template-actions button')];
-      const singleLine = buttons.every(button => {
-        const range = document.createRange();
-        range.selectNodeContents(button);
-        return [...range.getClientRects()].length <= 1
-          && getComputedStyle(button).whiteSpace === 'nowrap'
-          && button.scrollWidth <= button.clientWidth + 1;
-      });
-      const insideRows = rows.every((row,index) => {
-        const rowRect = row.getBoundingClientRect();
-        const actionsRect = actionGroups[index]?.getBoundingClientRect();
-        return Boolean(actionsRect
-          && actionsRect.left >= rowRect.left - 0.5
-          && actionsRect.right <= rowRect.right + 0.5
-          && actionsRect.top >= rowRect.top - 0.5
-          && actionsRect.bottom <= rowRect.bottom + 0.5);
-      });
-      const noOverlap = actionGroups.every(group => {
-        const rects = [...group.querySelectorAll('button')].map(button => button.getBoundingClientRect());
-        return rects.every((rect,index) => index === 0 || rect.left >= rects[index - 1].right - 0.5);
-      });
-      return {rows:rows.length, buttons:buttons.length, singleLine, insideRows, noOverlap};
-    } finally {
-      forwardTemplates = previousTemplates;
-      editingForwardTemplateId = previousEditing;
-      if (created) host.remove();
-      else {
-        host.innerHTML = previousHtml;
-        if (previousStyle === null) host.removeAttribute('style');
-        else host.setAttribute('style', previousStyle);
-      }
-    }
+  const forwardTemplateLayoutUi=await window.webContents.executeJavaScript(`(()=>{
+    const previous=forwardTemplates;const host=document.createElement('div');host.style.cssText='position:fixed;left:-10000px;top:0;width:292px';document.body.appendChild(host);
+    try{
+      forwardTemplates=[{id:'layout-1',name:'Memcached',mode:'local',bind_host:'127.0.0.1',bind_port:11211,target_host:'127.0.0.1',target_port:11211},{id:'layout-2',name:'Web HTTP',mode:'local',bind_host:'127.0.0.1',bind_port:8080,target_host:'127.0.0.1',target_port:80}];
+      const owner=window.termaForwardPages.connection(host,Number(connections[0]?.id));owner.service.state.templatesOpen=true;owner.paint();
+      const rows=[...host.querySelectorAll('.forward-template-list article')],buttons=[...host.querySelectorAll('.forward-template-list button')];
+      const insideRows=rows.every(row=>{const a=row.getBoundingClientRect();return [...row.querySelectorAll('button')].every(button=>{const b=button.getBoundingClientRect();return b.left>=a.left-.5&&b.right<=a.right+.5&&b.bottom<=a.bottom+.5;});});
+      const noOverlap=rows.every(row=>{const rects=[...row.querySelectorAll('button')].map(b=>b.getBoundingClientRect());return rects.every((a,i)=>rects.every((b,j)=>i===j||a.right<=b.left+.5||b.right<=a.left+.5||a.bottom<=b.top+.5||b.bottom<=a.top+.5));});
+      return {rows:rows.length,buttons:buttons.length,singleLine:buttons.every(b=>b.scrollWidth<=b.clientWidth+1),insideRows,noOverlap};
+    }finally{forwardTemplates=previous;window.termaForwardPages.release(host);host.remove();}
   })()`);
   console.log("[ui-smoke] appearance effects disabled");
   const appearanceEffectsUi = await window.webContents.executeJavaScript(`(async () => {
-    localStorage.setItem(TERMA_APPEARANCE_STORAGE_KEY, JSON.stringify({preset:'luminous',frosted_strength:53,liquid_strength:39}));
+    localStorage.setItem('termaAppearanceV1', JSON.stringify({preset:'luminous',frosted_strength:53,liquid_strength:39}));
     document.documentElement.classList.add('terma-liquid-enabled');
     const track = document.querySelector('.activity-top');
     if (track) {
       track.classList.add('terma-liquid-track','has-liquid-selection');
       track.insertAdjacentHTML('afterbegin','<span class="terma-liquid-lens" aria-hidden="true"></span>');
     }
-    termaAppearanceSettings = readTermaAppearanceSettings();
-    applyTermaAppearanceSettings();
-    syncTermaLiquidNavigation();
+    await (${replayAppearanceBootstrap.toString()})();
     await new Promise(resolve => requestAnimationFrame(resolve));
     const root = document.documentElement;
     return {
-      featureDisabled:TERMA_APPEARANCE_EFFECTS_ENABLED === false,
-      storageCleared:localStorage.getItem(TERMA_APPEARANCE_STORAGE_KEY) === null,
-      clearPreset:root.dataset.appearancePreset === 'clear' && termaAppearanceSettings.preset === 'clear',
-      clearStrengths:termaAppearanceSettings.frosted_strength === 0 && termaAppearanceSettings.liquid_strength === 0,
+      featureDisabled:!('termaAppearanceLegacy' in window) && !('termaThemeAppearance' in window),
+      storageCleared:localStorage.getItem('termaAppearanceV1') === null,
+      clearPreset:root.dataset.appearancePreset === 'clear',
       classesCleared:!root.classList.contains('terma-liquid-enabled') && root.classList.contains('terma-glass-disabled') && root.classList.contains('terma-frosted-disabled'),
       noLenses:document.querySelectorAll('.terma-liquid-lens').length === 0,
       noTracks:document.querySelectorAll('.terma-liquid-track').length === 0,
@@ -968,8 +1013,6 @@ app.whenReady().then(async () => {
     const previousActiveView = activeView;
     const previousOpenGroups = [...groupOpen];
     const previousStoredGroups = localStorage.getItem('openGroups');
-    const previousStartupStatus = startupSummaryStatus;
-    const previousWelcomeHtml = document.querySelector('#view-welcome')?.innerHTML || '';
     const previousStatuses = (fixture?.forwards || []).map(forward => forward.status);
     try {
       if (!fixture) return {found:false};
@@ -978,8 +1021,8 @@ app.whenReady().then(async () => {
       selectedId = fixture.id;
       groupOpen.add(fixture.group_name);
       saveGroupState();
-      renderConnections();
-      toggleGroupOpen(fixture.group_name);
+      window.termaConnectionViews.renderConnections();
+      window.termaConnectionList.toggleGroup(fixture.group_name);
       const collapsedBeforeRefresh = !groupOpen.has(fixture.group_name)
         && !document.querySelector('.group[data-group-name="' + encodeURIComponent(fixture.group_name) + '"] .conn-row');
       api = async path => {
@@ -993,9 +1036,14 @@ app.whenReady().then(async () => {
         && !document.querySelector('.group[data-group-name="' + encodeURIComponent(fixture.group_name) + '"] .conn-row');
       const collapsePersisted = !JSON.parse(localStorage.getItem('openGroups') || '[]').includes(fixture.group_name);
 
-      const welcome = document.querySelector('#view-welcome');
-      welcome.innerHTML = '<div id="startupSummary"></div>';
-      startupSummaryStatus = {state:'ready',local_url:'http://127.0.0.1:8088',lan_urls:[]};
+      const apiWithFixture = api;
+      api = (url,...args) => url === '/api/startup-status'
+        ? Promise.resolve({state:'ready',local_url:'http://127.0.0.1:8088',lan_urls:[]})
+        : apiWithFixture(url,...args);
+      window.termaConnectionViews.renderWelcome();
+      for (let retry=0; retry<100 && !$('startupSummary')?.textContent.includes('8088'); retry++) {
+        await new Promise(resolve=>setTimeout(resolve,25));
+      }
       const startupCountSnapshot = state => {
         const card = document.querySelector('[data-startup-state="' + state + '"]');
         const count = card?.querySelector('strong');
@@ -1009,14 +1057,14 @@ app.whenReady().then(async () => {
         };
       };
       fixture.forwards[0].status = 'running';
-      renderStartupSummary();
+      window.termaConnectionViews.renderStartupSummary();
       const runningState = startupCountSnapshot('running');
       const runningFailedState = startupCountSnapshot('failed');
       fixture.forwards[0].status = 'reconnecting';
-      renderStartupSummary();
+      window.termaConnectionViews.renderStartupSummary();
       const reconnectingState = startupCountSnapshot('reconnecting');
       fixture.forwards[0].status = 'failed';
-      renderStartupSummary();
+      window.termaConnectionViews.renderStartupSummary();
       const failedText = document.querySelector('#startupSummary')?.textContent || '';
       const failedRunningState = startupCountSnapshot('running');
       const failedState = startupCountSnapshot('failed');
@@ -1029,7 +1077,7 @@ app.whenReady().then(async () => {
         collapsePersisted,
         explicitSelectionReopens,
         runningCountLive:runningState.count === '1' && runningState.label === '运行中' && runningFailedState.count === '0' && runningFailedState.label === '启动失败',
-        failureCountLive:failedRunningState.count === '0' && failedRunningState.label === '运行中' && failedState.count === '1' && failedState.label === '启动失败' && failedText.includes('存在启动失败的转发'),
+        failureCountLive:failedRunningState.count === '0' && failedRunningState.label === '运行中' && failedState.count === '1' && failedState.label === '启动失败' && !!document.querySelector('[data-startup-state="failed"][data-action="workspace-show-running"]'),
         startupLabelsBelowNumbers:runningState.labelBelow && reconnectingState.labelBelow && failedState.labelBelow,
         oldStartupLabelsRemoved:!failedText.includes('转发成功') && !failedText.includes('部分转发异常') && !failedText.includes('异常 1')
       };
@@ -1041,15 +1089,14 @@ app.whenReady().then(async () => {
       selectedId = previousSelectedId;
       primaryView = previousPrimaryView;
       activeView = previousActiveView;
-      startupSummaryStatus = previousStartupStatus;
       if (fixture) (fixture.forwards || []).forEach((forward,index) => { forward.status = previousStatuses[index]; });
       groupOpen.clear();
       previousOpenGroups.forEach(group => groupOpen.add(group));
       if (previousStoredGroups === null) localStorage.removeItem('openGroups');
       else localStorage.setItem('openGroups', previousStoredGroups);
-      const welcome = document.querySelector('#view-welcome');
-      if (welcome) welcome.innerHTML = previousWelcomeHtml;
-      renderConnections();
+      // Keep Vue's welcome tree intact while exercising the real summary controller.
+      window.termaConnectionViews?.refreshWelcome();
+      window.termaConnectionViews.renderConnections();
     }
   })()`);
   console.log("[ui-smoke] workspace tab drag");
@@ -1086,7 +1133,7 @@ app.whenReady().then(async () => {
         {key:'remote-xdmcp',title:'Linux图形界面测试 · XDMCP',kind:'remote-desktop'}
       ];
       remoteProtocolHost.innerHTML = remoteProtocolFixtures.map(tab => {
-        const presentation = workspaceTabPresentation(tab);
+        const presentation = window.termaWorkspaceViews.presentation.fallback(tab);
         return '<button class="tab" data-test-protocol="'+tab.key+'">'+presentation.icon+'<span class="tab-title">'+presentation.title+'</span></button>';
       }).join('');
       document.body.appendChild(remoteProtocolHost);
@@ -1110,7 +1157,9 @@ app.whenReady().then(async () => {
       const activeStyle = getComputedStyle(activeTab);
       const activeSelectionVisible = activeTab.classList.contains('active')
         && activeStyle.backgroundColor !== inactiveStyle.backgroundColor
-        && activeStyle.boxShadow !== 'none'
+        && Number.parseFloat(activeStyle.borderTopWidth) >= 1
+        && activeStyle.borderTopColor !== 'rgba(0, 0, 0, 0)'
+        && activeStyle.boxShadow === 'none'
         && Number.parseInt(activeStyle.fontWeight, 10) >= 600;
       const shortTabUsesContentWidth = lastRect.width < 120
         && shortCloseRect.left - shortTitleRect.right >= 4
@@ -1119,10 +1168,10 @@ app.whenReady().then(async () => {
       const activatedOnPress = activeTabKey === 'drag-a';
       window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:71,pointerType:'mouse',button:0,clientX:lastRect.right-2,clientY:firstRect.top+8}));
       const draggedTab = document.querySelector('.tab[data-tab-key="drag-a"]');
-      const activeDraggedTab = workspaceTabDrag?.tab || draggedTab;
+      const activeDraggedTab = draggedTab;
       const dragGhost = document.querySelector('.workspace-tab-drag-ghost');
       const insertionIndicator = activeDraggedTab?.closest('.workspace-pane')?.querySelector('.workspace-tab-insert-indicator');
-      const beganImmediately = Boolean(workspaceTabDrag?.dragging && activeDraggedTab?.classList.contains('tab-dragging') && document.body.classList.contains('workspace-tab-drag-active'));
+      const beganImmediately = Boolean(activeDraggedTab?.classList.contains('tab-dragging') && document.body.classList.contains('workspace-tab-drag-active'));
       const dragGhostVisible = Boolean(dragGhost && dragGhost.textContent.includes('demo-host') && !dragGhost.textContent.includes('终端') && getComputedStyle(dragGhost).display !== 'none');
       const dropPositionVisible = Boolean(
         insertionIndicator
@@ -1145,7 +1194,7 @@ app.whenReady().then(async () => {
       const activeFollowsDragged = activeTabKey === 'drag-a';
       const dragGhostRemoved = !document.querySelector('.workspace-tab-drag-ghost');
       const dropPositionRemoved = !document.querySelector('.workspace-tab-insert-indicator:not([hidden])');
-      const clickSuppressed = workspaceTabSuppressClickUntil > Date.now();
+      const clickSuppressed = window.termaWorkspaceDrag.tabs.suppressClick();
 
       const beforeCancel = tabs.map(tab => tab.key);
       const cancelTab = document.querySelector('.tab[data-tab-key="drag-b"]');
@@ -1154,14 +1203,16 @@ app.whenReady().then(async () => {
       const cancelTargetRect = cancelTarget.getBoundingClientRect();
       cancelTab.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:72,pointerType:'touch',button:0,clientX:cancelRect.left+8,clientY:cancelRect.top+8}));
       window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:72,pointerType:'touch',button:0,clientX:cancelTargetRect.right-2,clientY:cancelRect.top+8}));
-      const cancelStarted = Boolean(workspaceTabDrag?.dragging);
+      const cancelStarted = Boolean(document.querySelector('.tab[data-tab-key="drag-b"].tab-dragging'));
       window.dispatchEvent(new PointerEvent('pointercancel',{bubbles:true,cancelable:true,pointerId:72,pointerType:'touch',button:0,clientX:cancelTargetRect.right-2,clientY:cancelRect.top+8}));
       const cancelRestored = JSON.stringify(tabs.map(tab => tab.key)) === JSON.stringify(beforeCancel)
         && JSON.stringify([...document.querySelectorAll('#tabs .tab')].map(tab => tab.dataset.tabKey)) === JSON.stringify(beforeCancel);
 
       const closeControl = document.querySelector('.tab[data-tab-key="drag-a"] .tab-close');
       closeControl.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:73,pointerType:'mouse',button:0}));
-      const closeDoesNotDrag = workspaceTabDrag === null;
+      window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:73,pointerType:'mouse',clientX:80,clientY:80}));
+      const closeDoesNotDrag = !document.body.classList.contains('workspace-tab-drag-active');
+      window.dispatchEvent(new PointerEvent('pointercancel',{bubbles:true,pointerId:73}));
       moveWorkspaceTab('drag-a', -1);
       const fallbackMove = JSON.stringify(tabs.map(tab => tab.key)) === JSON.stringify(['drag-b','drag-a','drag-c']);
       const tabShell = document.querySelector('.tabs-shell');
@@ -1171,7 +1222,7 @@ app.whenReady().then(async () => {
       const previousShellWidth = tabShell.style.width;
       tabShell.style.width = '280px';
       tabStrip.scrollLeft = 0;
-      updateWorkspaceTabScrollControls();
+      window.termaWorkspaceDockTabs.syncTabScroll();
       const scrollControlsVisible = !leftScroll.hidden && !rightScroll.hidden && leftScroll.disabled && !rightScroll.disabled;
       const nativeScrollbarHidden = getComputedStyle(tabStrip).scrollbarWidth === 'none'
         && tabStrip.offsetHeight === tabStrip.clientHeight;
@@ -1179,7 +1230,7 @@ app.whenReady().then(async () => {
       const wheelScrollsTabs = tabStrip.scrollLeft > 0;
       tabShell.style.width = previousShellWidth;
       tabStrip.scrollLeft = 0;
-      updateWorkspaceTabScrollControls();
+      window.termaWorkspaceDockTabs.syncTabScroll();
       const scrollControlsHideWhenFit = leftScroll.hidden && rightScroll.hidden
         && getComputedStyle(leftScroll).display === 'none'
         && getComputedStyle(rightScroll).display === 'none';
@@ -1218,8 +1269,8 @@ app.whenReady().then(async () => {
         wheelScrollsTabs
       };
     } finally {
-      if (workspaceTabDrag) finishWorkspaceTabDrag(null, true);
-      if (typeof flushScheduledTabsStateSave === 'function') flushScheduledTabsStateSave();
+      window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));
+      window.termaWorkspacePersistence.flush();
       tabs = previousTabs;
       activeTabKey = previousActiveTabKey;
       window.restoringTabs = true;
@@ -1235,9 +1286,7 @@ app.whenReady().then(async () => {
     const previousLayout = JSON.parse(JSON.stringify(workspaceLayout));
     const previousActiveTabKey = activeTabKey;
     const previousActiveView = activeView;
-    const previousCloseTabsByKey = closeTabsByKey;
     const previousStoredTabs = localStorage.getItem('workspaceTabs');
-    const closeCalls = [];
     const pause = () => new Promise(resolve => setTimeout(resolve, 0));
     try {
       tabs = [
@@ -1252,38 +1301,34 @@ app.whenReady().then(async () => {
       focusedPaneId = 'close-pane';
       activeTabKey = 'close-connected';
       activeView = 'welcome';
-      closeTabsByKey = (keys, anchorKey) => closeCalls.push({keys:[...keys],anchorKey});
       renderTabs();
       const remoteStatusDotVisible = document.querySelector('.tab[data-tab-key="close-remote"] .tab-connection-dot.connecting') !== null;
       const systemRemoteStatusHidden = !document.querySelector('.tab[data-tab-key="close-system-remote"] .tab-connection-dot')
         && !document.querySelector('.tab[data-tab-key="close-xdmcp"] .tab-connection-dot');
-      closeTab({stopPropagation:()=>{}}, 'close-system-remote');
+      void window.termaWorkspaceTabActions.requestClose(['close-system-remote'], 'close-system-remote');
       await pause();
-      const systemRemoteClosesImmediately = closeCalls.length === 1
-        && JSON.stringify(closeCalls[0].keys) === JSON.stringify(['close-system-remote'])
+      const systemRemoteClosesImmediately = !workspaceHasTabKey('close-system-remote')
         && document.querySelector('#modal')?.hidden;
-      closeCalls.length = 0;
       tabs = tabs.filter(tab => !['close-system-remote','close-xdmcp'].includes(tab.key));
       workspaceLayout.tabs = workspaceLayout.tabs.filter(key => !['close-system-remote','close-xdmcp'].includes(key));
       renderTabs();
-      let stopped = false;
-      closeTab({stopPropagation:()=>{ stopped = true; }}, 'close-connected');
+      void window.termaWorkspaceTabActions.requestClose(['close-connected'], 'close-connected');
       await pause();
       const modal = document.querySelector('#modal');
       const connectedCard = modal.querySelector('.workspace-close-tabs-modal');
       const connectedRect = connectedCard?.getBoundingClientRect();
-      const connectedPrompt = Boolean(stopped && connectedCard && connectedCard.textContent.includes('Connected terminal') && document.activeElement === document.querySelector('#workspaceCloseTabsCancel'));
+      const connectedPrompt = Boolean(connectedCard && connectedCard.textContent.includes('Connected terminal') && document.activeElement === document.querySelector('#workspaceCloseTabsCancel'));
       modal.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
       const backdropIgnored = Boolean(!modal.hidden && modal.querySelector('.workspace-close-tabs-modal'));
       modal.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'Escape'}));
       await pause();
-      const escapePreservesTabs = closeCalls.length === 0 && tabs.length === 4 && modal.hidden;
-      closeTab({stopPropagation:()=>{}}, 'close-connecting');
+      const escapePreservesTabs = tabs.length === 4 && modal.hidden;
+      void window.termaWorkspaceTabActions.requestClose(['close-connecting'], 'close-connecting');
       await pause();
       document.querySelector('#workspaceCloseTabsCancel')?.click();
       await pause();
-      const cancelPreservesTabs = closeCalls.length === 0 && tabs.some(tab => tab.key === 'close-connecting') && modal.hidden;
-      closeTabsByMode('others','close-disconnected');
+      const cancelPreservesTabs = tabs.length === 4 && tabs.some(tab => tab.key === 'close-connecting') && modal.hidden;
+      void window.termaWorkspaceTabActions.closeMode('others','close-disconnected');
       await pause();
       const multiCard = modal.querySelector('.workspace-close-tabs-modal');
       const multiRect = multiCard?.getBoundingClientRect();
@@ -1295,13 +1340,10 @@ app.whenReady().then(async () => {
         && multiCard.textContent.includes('Connecting VNC'));
       document.querySelector('#workspaceCloseTabsConfirm')?.click();
       await pause();
-      const confirmed = closeCalls.length === 1
-        && JSON.stringify(closeCalls[0].keys) === JSON.stringify(['close-connected','close-connecting','close-remote'])
-        && closeCalls[0].anchorKey === 'close-disconnected';
-      closeTab({stopPropagation:()=>{}}, 'close-disconnected');
+      const confirmed = tabs.length === 1 && tabs[0].key === 'close-disconnected';
+      await window.termaWorkspaceTabActions.requestClose(['close-disconnected'], 'close-disconnected');
       await pause();
-      const disconnectedClosesImmediately = closeCalls.length === 2
-        && JSON.stringify(closeCalls[1].keys) === JSON.stringify(['close-disconnected'])
+      const disconnectedClosesImmediately = tabs.length === 0
         && modal.hidden;
       return {
         remoteStatusDotVisible,
@@ -1322,7 +1364,6 @@ app.whenReady().then(async () => {
           && multiRect.top >= -0.5 && multiRect.bottom <= innerHeight + 0.5)
       };
     } finally {
-      closeTabsByKey = previousCloseTabsByKey;
       tabs = previousTabs;
       workspaceLayout = previousLayout;
       activeTabKey = previousActiveTabKey;
@@ -1344,8 +1385,8 @@ app.whenReady().then(async () => {
     const previousStoredTabs = localStorage.getItem('workspaceTabs');
     const previousStoredHeaderHeight = localStorage.getItem('workspaceHeaderHeight');
     const previousStoredTabHeight = localStorage.getItem('workspaceTabHeight');
-    const previousHeaderHeight = workspaceHeaderHeight;
-    const previousTabHeight = workspaceTabHeight;
+    const previousHeaderHeight = window.termaWorkspaceChrome.value('header');
+    const previousTabHeight = window.termaWorkspaceChrome.value('tabs');
     const previousRenderWorkspacePaneContent = renderWorkspacePaneContent;
     const nextFrame = () => new Promise(resolve => requestAnimationFrame(() => resolve()));
     const nearly = (value, expected, tolerance=0.6) => Math.abs(value - expected) <= tolerance;
@@ -1362,9 +1403,9 @@ app.whenReady().then(async () => {
         clientX:rect.left + Math.max(1, rect.width / 2),
         clientY:startY
       }));
-      const started = workspaceChromeResize?.kind === kind
-        && workspaceChromeResize.pointerId === pointerId
-        && document.body.classList.contains('workspace-chrome-resizing');
+      const resizeClass = kind === 'tabs' ? 'workspace-tab-resizing' : 'workspace-header-resizing';
+      const started = document.body.classList.contains('workspace-chrome-resizing')
+        && document.body.classList.contains(resizeClass);
       window.dispatchEvent(new PointerEvent('pointermove',{
         bubbles:true,
         cancelable:true,
@@ -1387,8 +1428,7 @@ app.whenReady().then(async () => {
       await nextFrame();
       return {
         started,
-        ended:workspaceChromeResize === null
-          && !document.body.classList.contains('workspace-chrome-resizing')
+        ended:!document.body.classList.contains('workspace-chrome-resizing')
       };
     };
     try {
@@ -1398,11 +1438,11 @@ app.whenReady().then(async () => {
       activeTabKey = 'dock-a';
       activeView = 'welcome';
       renderTabs();
-      const firstSplit = applyWorkspaceTabDrop({key:'dock-b',sourcePaneId:'dock-pane-root'}, {paneId:'dock-pane-root',zone:'right'});
+      const firstSplit = window.termaWorkspaceDrag.applyTabDrop({key:'dock-b',sourcePaneId:'dock-pane-root'}, {paneId:'dock-pane-root',zone:'right'});
       const rightPane = workspaceFindPaneForTab('dock-b');
       const sourcePane = workspaceFindPaneForTab('dock-a');
       const secondSplit = Boolean(rightPane && sourcePane)
-        && applyWorkspaceTabDrop({key:'dock-c',sourcePaneId:sourcePane.id}, {paneId:rightPane.id,zone:'bottom'});
+        && window.termaWorkspaceDrag.applyTabDrop({key:'dock-c',sourcePaneId:sourcePane.id}, {paneId:rightPane.id,zone:'bottom'});
       const nestedTree = workspaceLayout.type === 'split'
         && workspaceLayout.direction === 'row'
         && workspaceLayout.second?.type === 'split'
@@ -1411,16 +1451,16 @@ app.whenReady().then(async () => {
       const eachPaneComplete = [...document.querySelectorAll('#workspaceDock .workspace-pane')].every(pane => pane.querySelector('.tabs-shell') && pane.querySelector('.workspace'));
       const expectedActivityFitPaneIds=workspaceVisiblePanes().map(pane=>pane.id);
       const activityFitPaneIds=[];
-      const originalUpdateTabScrollControls=updateWorkspaceTabScrollControls;
-      const activityWidthBeforeFit=activityBarWidth;
-      updateWorkspaceTabScrollControls=paneId=>{
+      const originalUpdateTabScrollControls=window.termaWorkspaceDockTabs.syncTabScroll;
+      const activityWidthBeforeFit=window.termaWorkspaceChrome.value('activity');
+      window.termaWorkspaceDockTabs.syncTabScroll=paneId=>{
         activityFitPaneIds.push(paneId);
         return originalUpdateTabScrollControls(paneId);
       };
-      applyActivityBarWidth(activityWidthBeforeFit===ACTIVITY_BAR_WIDTH_MAX?ACTIVITY_BAR_WIDTH_MIN:activityWidthBeforeFit+1);
+      window.termaWorkspaceChrome.apply('activity', activityWidthBeforeFit===64?36:activityWidthBeforeFit+1);
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
-      applyActivityBarWidth(activityWidthBeforeFit,{fit:false});
-      updateWorkspaceTabScrollControls=originalUpdateTabScrollControls;
+      window.termaWorkspaceChrome.apply('activity', activityWidthBeforeFit,{fit:false});
+      window.termaWorkspaceDockTabs.syncTabScroll=originalUpdateTabScrollControls;
       const activityResizeReflowsEveryPane=expectedActivityFitPaneIds.every(paneId=>activityFitPaneIds.includes(paneId));
       const splitters = [...document.querySelectorAll('#workspaceDock .workspace-splitter')];
       const splitterMetrics = splitters.map(splitter => {
@@ -1473,14 +1513,14 @@ app.whenReady().then(async () => {
       const paneElements = [...document.querySelectorAll('#workspaceDock .workspace-pane')];
       paneElements.forEach(pane => pane.classList.add('terminal-pane'));
       const terminalWorkspaceStyles = paneElements.map(pane => getComputedStyle(pane.querySelector(':scope > .workspace')));
-      const terminalInsetsCompact = terminalWorkspaceStyles.every(style => nearly(parseFloat(style.paddingTop), 4)
-        && nearly(parseFloat(style.paddingRight), 2)
-        && nearly(parseFloat(style.paddingBottom), 2)
-        && nearly(parseFloat(style.paddingLeft), 2));
+      const terminalInsetsCompact = terminalWorkspaceStyles.every(style => nearly(parseFloat(style.paddingTop), 0)
+        && nearly(parseFloat(style.paddingRight), 0)
+        && nearly(parseFloat(style.paddingBottom), 0)
+        && nearly(parseFloat(style.paddingLeft), 0));
       const terminalScrollbarGutterReleased = terminalWorkspaceStyles.every(style => style.scrollbarGutter === 'auto');
       paneElements.forEach(pane => pane.classList.remove('terminal-pane'));
       const rootSplitId = workspaceLayout.id;
-      setWorkspaceSplitRatio(rootSplitId, 0.64);
+      window.termaWorkspaceDrag.splitter.setRatio(rootSplitId, 0.64);
       const ratioAdjusted = Math.abs(workspaceFindSplit(rootSplitId).ratio - 0.64) < 0.001
         && document.querySelector('[data-split-id="'+rootSplitId+'"]')?.style.getPropertyValue('--workspace-split-ratio') === '64%';
       const persistedLayout = JSON.parse(localStorage.getItem('workspaceTabs') || '{}').layout;
@@ -1499,8 +1539,8 @@ app.whenReady().then(async () => {
       const tabResizeAccessible = tabResizeHandles.length === paneCount
         && tabResizeHandles.every(handle => handle.getAttribute('role') === 'separator'
           && handle.getAttribute('aria-orientation') === 'horizontal'
-          && Number(handle.getAttribute('aria-valuemin')) === WORKSPACE_TAB_HEIGHT_MIN
-          && Number(handle.getAttribute('aria-valuemax')) === WORKSPACE_TAB_HEIGHT_MAX
+          && Number(handle.getAttribute('aria-valuemin')) === 26
+          && Number(handle.getAttribute('aria-valuemax')) === 48
           && getComputedStyle(handle).display !== 'none'
           && handle.getBoundingClientRect().height >= 6);
       const tabSnapshot = () => {
@@ -1524,11 +1564,11 @@ app.whenReady().then(async () => {
       const tabMaxDrag = await dragChromeHandle(tabResizeHandles[1] || tabResizeHandles[0], 182, 1000, 'tabs');
       const tabMax = tabSnapshot();
       const tabAllPanesClampMin = tabMin.heights.length === paneCount
-        && tabMin.heights.every(height => nearly(height, WORKSPACE_TAB_HEIGHT_MIN))
-        && tabMin.aria.every(value => value === WORKSPACE_TAB_HEIGHT_MIN);
+        && tabMin.heights.every(height => nearly(height, 26))
+        && tabMin.aria.every(value => value === 26);
       const tabAllPanesClampMax = tabMax.heights.length === paneCount
-        && tabMax.heights.every(height => nearly(height, WORKSPACE_TAB_HEIGHT_MAX))
-        && tabMax.aria.every(value => value === WORKSPACE_TAB_HEIGHT_MAX);
+        && tabMax.heights.every(height => nearly(height, 48))
+        && tabMax.aria.every(value => value === 48);
       const tabTextScales = tabMin.fonts.length === paneCount
         && tabMax.fonts.length === paneCount
         && Math.min(...tabMax.fonts) >= Math.max(...tabMin.fonts) + 1;
@@ -1537,41 +1577,41 @@ app.whenReady().then(async () => {
         && Math.min(...tabMax.dots.map(dot => Math.min(dot.width, dot.height)))
           >= Math.max(...tabMin.dots.map(dot => Math.max(dot.width, dot.height))) + 1;
       const tabPointerLifecycle = tabMinDrag.started && tabMinDrag.ended && tabMaxDrag.started && tabMaxDrag.ended;
-      const tabHeightPersisted = Number(localStorage.getItem('workspaceTabHeight')) === WORKSPACE_TAB_HEIGHT_MAX;
+      const tabHeightPersisted = Number(localStorage.getItem('workspaceTabHeight')) === 48;
       const tabKeyboardHandle = tabResizeHandles.at(-1);
       tabKeyboardHandle?.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'ArrowUp'}));
       await nextFrame();
-      const tabKeyboardUp = workspaceTabHeight === WORKSPACE_TAB_HEIGHT_MAX - 1
-        && Number(localStorage.getItem('workspaceTabHeight')) === WORKSPACE_TAB_HEIGHT_MAX - 1;
+      const tabKeyboardUp = window.termaWorkspaceChrome.value('tabs') === 48 - 1
+        && Number(localStorage.getItem('workspaceTabHeight')) === 48 - 1;
       tabKeyboardHandle?.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'ArrowDown'}));
       await nextFrame();
-      const tabKeyboardDown = workspaceTabHeight === WORKSPACE_TAB_HEIGHT_MAX;
+      const tabKeyboardDown = window.termaWorkspaceChrome.value('tabs') === 48;
       tabKeyboardHandle?.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'Home'}));
       await nextFrame();
-      const tabKeyboardHome = workspaceTabHeight === WORKSPACE_TAB_HEIGHT_MIN;
+      const tabKeyboardHome = window.termaWorkspaceChrome.value('tabs') === 26;
       tabKeyboardHandle?.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'End'}));
       await nextFrame();
-      const tabKeyboardEnd = workspaceTabHeight === WORKSPACE_TAB_HEIGHT_MAX
-        && tabSnapshot().heights.every(height => nearly(height, WORKSPACE_TAB_HEIGHT_MAX));
+      const tabKeyboardEnd = window.termaWorkspaceChrome.value('tabs') === 48
+        && tabSnapshot().heights.every(height => nearly(height, 48));
       const tabKeyboardControls = tabKeyboardUp && tabKeyboardDown && tabKeyboardHome && tabKeyboardEnd;
       tabKeyboardHandle?.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,button:0}));
       await nextFrame();
-      const tabDoubleClickResets = workspaceTabHeight === WORKSPACE_TAB_HEIGHT_DEFAULT
-        && Number(localStorage.getItem('workspaceTabHeight')) === WORKSPACE_TAB_HEIGHT_DEFAULT
-        && tabSnapshot().heights.every(height => nearly(height, WORKSPACE_TAB_HEIGHT_DEFAULT));
-      applyWorkspaceTabHeight(45, {persist:true,fit:false});
-      applyWorkspaceTabHeight(WORKSPACE_TAB_HEIGHT_MIN, {fit:false});
-      initWorkspaceChromeSizing();
+      const tabDoubleClickResets = window.termaWorkspaceChrome.value('tabs') === 32
+        && Number(localStorage.getItem('workspaceTabHeight')) === 32
+        && tabSnapshot().heights.every(height => nearly(height, 32));
+      window.termaWorkspaceChrome.apply("tabs",45, {persist:true,fit:false});
+      window.termaWorkspaceChrome.apply("tabs",26, {fit:false});
+      window.termaWorkspaceChrome.restore();
       await nextFrame();
       const restoredTabSnapshot = tabSnapshot();
-      const tabHeightRestored = workspaceTabHeight === 45
+      const tabHeightRestored = window.termaWorkspaceChrome.value('tabs') === 45
         && restoredTabSnapshot.heights.every(height => nearly(height, 45))
         && restoredTabSnapshot.aria.every(value => value === 45);
       const tabStorageIndependent = localStorage.getItem('workspaceHeaderHeight') === headerStorageBeforeTabResize;
 
       const inactivePane = workspaceFindPaneForTab('dock-b');
       const movedIntoInactivePane = Boolean(inactivePane && sourcePane)
-        && applyWorkspaceTabDrop({key:'dock-d',sourcePaneId:sourcePane.id}, {paneId:inactivePane.id,zone:'tabs',index:inactivePane.tabs.length});
+        && window.termaWorkspaceDrag.applyTabDrop({key:'dock-d',sourcePaneId:sourcePane.id}, {paneId:inactivePane.id,zone:'tabs',index:inactivePane.tabs.length});
       const closeRenderCalls = [];
       if (movedIntoInactivePane) {
         inactivePane.activeTabKey = 'dock-b';
@@ -1589,14 +1629,14 @@ app.whenReady().then(async () => {
       }
       const inactiveCloseRerendered = movedIntoInactivePane
         && inactivePane.activeTabKey === 'dock-d'
-        && closeRenderCalls.includes(inactivePane.id);
+        && !!document.querySelector('.workspace-pane[data-pane-id="'+inactivePane.id+'"] .tab[data-tab-key="dock-d"].active');
 
       const cPane = workspaceFindPaneForTab('dock-c');
       const mergedNested = Boolean(cPane && sourcePane)
-        && applyWorkspaceTabDrop({key:'dock-c',sourcePaneId:cPane.id}, {paneId:sourcePane.id,zone:'tabs',index:sourcePane.tabs.length});
+        && window.termaWorkspaceDrag.applyTabDrop({key:'dock-c',sourcePaneId:cPane.id}, {paneId:sourcePane.id,zone:'tabs',index:sourcePane.tabs.length});
       const dPane = workspaceFindPaneForTab('dock-d');
       const mergedAll = Boolean(dPane && sourcePane)
-        && applyWorkspaceTabDrop({key:'dock-d',sourcePaneId:dPane.id}, {paneId:sourcePane.id,zone:'tabs',index:sourcePane.tabs.length});
+        && window.termaWorkspaceDrag.applyTabDrop({key:'dock-d',sourcePaneId:dPane.id}, {paneId:sourcePane.id,zone:'tabs',index:sourcePane.tabs.length});
       const collapsedToSinglePane = workspaceLayout.type === 'pane' && workspaceLeaves().length === 1
         && document.querySelectorAll('#workspaceDock .workspace-pane').length === 1;
       document.querySelectorAll('.ui-smoke-tab-connection-dot').forEach(dot => dot.remove());
@@ -1636,13 +1676,13 @@ app.whenReady().then(async () => {
       };
     } finally {
       renderWorkspacePaneContent = previousRenderWorkspacePaneContent;
-      if (workspaceChromeResize) endWorkspaceChromeResize(null, true);
+      window.termaWorkspaceChrome.cancel();
       if (previousStoredHeaderHeight === null) localStorage.removeItem('workspaceHeaderHeight');
       else localStorage.setItem('workspaceHeaderHeight', previousStoredHeaderHeight);
       if (previousStoredTabHeight === null) localStorage.removeItem('workspaceTabHeight');
       else localStorage.setItem('workspaceTabHeight', previousStoredTabHeight);
-      applyWorkspaceHeaderHeight(previousHeaderHeight, {fit:false});
-      applyWorkspaceTabHeight(previousTabHeight, {fit:false});
+      window.termaWorkspaceChrome.apply("header",previousHeaderHeight, {fit:false});
+      window.termaWorkspaceChrome.apply("tabs",previousTabHeight, {fit:false});
       tabs = previousTabs;
       workspaceLayout = previousLayout;
       focusedPaneId = previousFocusedPaneId;
@@ -1685,9 +1725,9 @@ app.whenReady().then(async () => {
       activeTabKey='settings';
       activeView='settings';
       window.workspaceRestorePending=true;
-      saveTabsState();
+      window.termaWorkspacePersistence.save();
       const storageProtected=localStorage.getItem('workspaceTabs')===serializedFixture;
-      const restored=restoreTabsState();
+      const restored=window.termaWorkspacePersistence.restore();
       const restoredKeys=tabs.map(tab=>tab.key);
       const restoredThreeTabs=restored&&restoredKeys.length===3&&restoredKeys.join(',')===fixtureTabs.map(tab=>tab.key).join(',');
       const activeRestored=activeTabKey==='startup-fixture-b';
@@ -1714,11 +1754,12 @@ app.whenReady().then(async () => {
     const previousActiveTabKey = activeTabKey;
     const previousActiveView = activeView;
     const previousStoredTabs = localStorage.getItem('workspaceTabs');
-    const previousOpenLocalFiles = openLocalFiles;
+    const previousApi = api;
+    let localKey;
     const nextFrame = () => new Promise(resolve => requestAnimationFrame(() => resolve()));
     const settle = async () => { await nextFrame(); await nextFrame(); await nextFrame(); };
     const tabVisible = (paneId, key) => {
-      const strip = workspacePaneElement(paneId)?.querySelector('.tabs');
+      const strip = window.termaWorkspacePaneScope.workspacePaneElement(paneId)?.querySelector('.tabs');
       const tab = strip?.querySelector('.tab[data-tab-key="' + CSS.escape(key) + '"]');
       if (!strip || !tab) return false;
       const stripRect = strip.getBoundingClientRect();
@@ -1740,7 +1781,7 @@ app.whenReady().then(async () => {
       activeView = 'welcome';
       renderTabs();
       await settle();
-      const paneElement = workspacePaneElement('visibility-pane');
+      const paneElement = window.termaWorkspacePaneScope.workspacePaneElement('visibility-pane');
       const shell = paneElement.querySelector('.tabs-shell');
       const strip = paneElement.querySelector('.tabs');
       shell.style.width = '270px';
@@ -1758,7 +1799,7 @@ app.whenReady().then(async () => {
 
       activateTab('visibility-1');
       await settle();
-      applyWorkspaceTabDrop({key:'visibility-1'}, {paneId:'visibility-pane', zone:'tabs', index:9});
+      window.termaWorkspaceDrag.applyTabDrop({key:'visibility-1'}, {paneId:'visibility-pane', zone:'tabs', index:9});
       await settle();
       const dragKeepsActiveVisible = tabVisible('visibility-pane', 'visibility-1');
 
@@ -1768,17 +1809,13 @@ app.whenReady().then(async () => {
       activateTab(sourceActiveBeforeSplit);
       await settle();
       const sourceScrollBefore = strip.scrollLeft;
-      const localKey = 'visibility-local-files';
-      openLocalFiles = async (requestedPath='', updateTab=true, existingKey='') => {
-        if (existingKey) return existingKey;
-        addTab(localKey, '本地文件', '', 'local-files', true, {kind:'local-files', path:requestedPath});
-        return localKey;
-      };
-      await openLocalFilesInPlacement('left');
+      api = (url, options) => url.startsWith('/api/local-files?')
+        ? Promise.resolve({path:'C:/fixture',kind:'directory',entries:[]}) : previousApi(url, options);
+      localKey = await window.termaLocalFileRuntime.pages.placement('native','left');
       await settle();
       const sourcePane = workspaceFindPaneForTab(sourceActiveBeforeSplit);
       const localPane = workspaceFindPaneForTab(localKey);
-      const sourceStrip = workspacePaneElement(sourcePane?.id)?.querySelector('.tabs');
+      const sourceStrip = window.termaWorkspacePaneScope.workspacePaneElement(sourcePane?.id)?.querySelector('.tabs');
       const sourceLast = sourceStrip?.querySelector('.tab[data-tab-key="' + CSS.escape(sourceLastBeforeSplit) + '"]');
       const sourceRect = sourceStrip?.getBoundingClientRect();
       const lastRect = sourceLast?.getBoundingClientRect();
@@ -1802,7 +1839,8 @@ app.whenReady().then(async () => {
         splitSourceActiveIndexPreserved
       };
     } finally {
-      openLocalFiles = previousOpenLocalFiles;
+      api = previousApi;
+      if (localKey) window.termaLocalFileRuntime.pages.release([localKey]);
       tabs = previousTabs;
       workspaceLayout = previousLayout;
       focusedPaneId = previousFocusedPaneId;
@@ -1826,8 +1864,8 @@ app.whenReady().then(async () => {
     if (!topbar || !brand || !handle || !tools) return {found:false};
     const previousStoredHeaderHeight = localStorage.getItem('workspaceHeaderHeight');
     const previousStoredTabHeight = localStorage.getItem('workspaceTabHeight');
-    const previousHeaderHeight = workspaceHeaderHeight;
-    const previousTabHeight = workspaceTabHeight;
+    const previousHeaderHeight = window.termaWorkspaceChrome.value('header');
+    const previousTabHeight = window.termaWorkspaceChrome.value('tabs');
     const previousToolsHidden = tools.hidden;
     const fixture = document.createElement('div');
     fixture.className = 'terminal-toolbar terminal-toolbar-header workspace-header-resize-fixture';
@@ -1877,8 +1915,7 @@ app.whenReady().then(async () => {
         clientX:rect.left + Math.max(1, rect.width / 2),
         clientY:startY
       }));
-      const started = workspaceChromeResize?.kind === 'header'
-        && workspaceChromeResize.pointerId === pointerId
+      const started = document.body.classList.contains('workspace-chrome-resizing')
         && document.body.classList.contains('workspace-header-resizing');
       window.dispatchEvent(new PointerEvent('pointermove',{
         bubbles:true,
@@ -1902,19 +1939,17 @@ app.whenReady().then(async () => {
       await nextFrame();
       return {
         started,
-        ended:workspaceChromeResize === null
-          && !document.body.classList.contains('workspace-chrome-resizing')
+        ended:!document.body.classList.contains('workspace-chrome-resizing')
       };
     };
     try {
-      applyTermaAppearanceSettings();
       await nextFrame();
       const classicAppearance = document.documentElement.dataset.appearancePreset === 'clear'
         && !document.documentElement.classList.contains('terma-liquid-enabled');
       const accessible = handle.getAttribute('role') === 'separator'
         && handle.getAttribute('aria-orientation') === 'horizontal'
-        && Number(handle.getAttribute('aria-valuemin')) === WORKSPACE_HEADER_HEIGHT_MIN
-        && Number(handle.getAttribute('aria-valuemax')) === WORKSPACE_HEADER_HEIGHT_MAX
+        && Number(handle.getAttribute('aria-valuemin')) === 34
+        && Number(handle.getAttribute('aria-valuemax')) === 64
         && getComputedStyle(handle).display !== 'none'
         && handle.getBoundingClientRect().height >= 6;
       const visibleTabHandle = [...document.querySelectorAll('.workspace-tab-resizer')].find(item => item.getBoundingClientRect().width > 0 && getComputedStyle(item).display !== 'none');
@@ -1943,10 +1978,10 @@ app.whenReady().then(async () => {
       const compact = snapshot();
       const maxDrag = await dragHeader(192, 1000);
       const expanded = snapshot();
-      const minClamped = nearly(compact.height, WORKSPACE_HEADER_HEIGHT_MIN)
-        && compact.ariaNow === WORKSPACE_HEADER_HEIGHT_MIN;
-      const maxClamped = nearly(expanded.height, WORKSPACE_HEADER_HEIGHT_MAX)
-        && expanded.ariaNow === WORKSPACE_HEADER_HEIGHT_MAX;
+      const minClamped = nearly(compact.height, 34)
+        && compact.ariaNow === 34;
+      const maxClamped = nearly(expanded.height, 64)
+        && expanded.ariaNow === 64;
       const brandAligned = nearly(compact.brandHeight, compact.height)
         && nearly(expanded.brandHeight, expanded.height);
       const textScales = expanded.titleFont >= compact.titleFont + 1
@@ -1958,33 +1993,33 @@ app.whenReady().then(async () => {
       const controlsUnclipped = [compact, expanded].every(state => state.controlTop >= state.topbarTop - .5
         && state.controlBottom <= state.topbarBottom + .5);
       const pointerLifecycle = minDrag.started && minDrag.ended && maxDrag.started && maxDrag.ended;
-      const heightPersisted = Number(localStorage.getItem('workspaceHeaderHeight')) === WORKSPACE_HEADER_HEIGHT_MAX;
+      const heightPersisted = Number(localStorage.getItem('workspaceHeaderHeight')) === 64;
       handle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'ArrowUp'}));
       await nextFrame();
-      const keyboardUp = workspaceHeaderHeight === WORKSPACE_HEADER_HEIGHT_MAX - 1
-        && Number(localStorage.getItem('workspaceHeaderHeight')) === WORKSPACE_HEADER_HEIGHT_MAX - 1;
+      const keyboardUp = window.termaWorkspaceChrome.value('header') === 64 - 1
+        && Number(localStorage.getItem('workspaceHeaderHeight')) === 64 - 1;
       handle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'ArrowDown'}));
       await nextFrame();
-      const keyboardDown = workspaceHeaderHeight === WORKSPACE_HEADER_HEIGHT_MAX;
+      const keyboardDown = window.termaWorkspaceChrome.value('header') === 64;
       handle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'Home'}));
       await nextFrame();
-      const keyboardHome = workspaceHeaderHeight === WORKSPACE_HEADER_HEIGHT_MIN;
+      const keyboardHome = window.termaWorkspaceChrome.value('header') === 34;
       handle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'End'}));
       await nextFrame();
-      const keyboardEnd = workspaceHeaderHeight === WORKSPACE_HEADER_HEIGHT_MAX
-        && nearly(snapshot().height, WORKSPACE_HEADER_HEIGHT_MAX);
+      const keyboardEnd = window.termaWorkspaceChrome.value('header') === 64
+        && nearly(snapshot().height, 64);
       const keyboardControls = keyboardUp && keyboardDown && keyboardHome && keyboardEnd;
       handle.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,button:0}));
       await nextFrame();
-      const doubleClickResets = workspaceHeaderHeight === WORKSPACE_HEADER_HEIGHT_DEFAULT
-        && Number(localStorage.getItem('workspaceHeaderHeight')) === WORKSPACE_HEADER_HEIGHT_DEFAULT
-        && nearly(snapshot().height, WORKSPACE_HEADER_HEIGHT_DEFAULT);
-      applyWorkspaceHeaderHeight(58, {persist:true,fit:false});
-      applyWorkspaceHeaderHeight(WORKSPACE_HEADER_HEIGHT_MIN, {fit:false});
-      initWorkspaceChromeSizing();
+      const doubleClickResets = window.termaWorkspaceChrome.value('header') === 42
+        && Number(localStorage.getItem('workspaceHeaderHeight')) === 42
+        && nearly(snapshot().height, 42);
+      window.termaWorkspaceChrome.apply("header",58, {persist:true,fit:false});
+      window.termaWorkspaceChrome.apply("header",34, {fit:false});
+      window.termaWorkspaceChrome.restore();
       await nextFrame();
       const restored = snapshot();
-      const heightRestored = workspaceHeaderHeight === 58
+      const heightRestored = window.termaWorkspaceChrome.value('header') === 58
         && nearly(restored.height, 58)
         && nearly(restored.brandHeight, 58)
         && restored.ariaNow === 58;
@@ -2012,13 +2047,13 @@ app.whenReady().then(async () => {
         restored
       };
     } finally {
-      if (workspaceChromeResize) endWorkspaceChromeResize(null, true);
+      window.termaWorkspaceChrome.cancel();
       if (previousStoredHeaderHeight === null) localStorage.removeItem('workspaceHeaderHeight');
       else localStorage.setItem('workspaceHeaderHeight', previousStoredHeaderHeight);
       if (previousStoredTabHeight === null) localStorage.removeItem('workspaceTabHeight');
       else localStorage.setItem('workspaceTabHeight', previousStoredTabHeight);
-      applyWorkspaceHeaderHeight(previousHeaderHeight, {fit:false});
-      applyWorkspaceTabHeight(previousTabHeight, {fit:false});
+      window.termaWorkspaceChrome.apply("header",previousHeaderHeight, {fit:false});
+      window.termaWorkspaceChrome.apply("tabs",previousTabHeight, {fit:false});
       fixture.remove();
       tools.hidden = previousToolsHidden;
     }
@@ -2027,12 +2062,13 @@ app.whenReady().then(async () => {
   const pages = await window.webContents.executeJavaScript(`(async () => {
     const rows = [];
     for (const name of ['connections','remote','running','command','logs','settings','import']) {
-      showPrimary(name);
+      window.termaWorkspaceShell.showPrimary(name);
       await new Promise(resolve => setTimeout(resolve, 250));
       const tools=document.querySelector('#explorerTools');
       const toolsRect=tools?.getBoundingClientRect();
       const expectedMode=['settings','import'].includes(name)?'section-mode':(['connections','remote'].includes(name)?'connection-mode':'compact-mode');
-      const maxToolHeight=name==='settings'?264:(name==='import'?220:(['connections','remote','logs','running'].includes(name)?104:58));
+      // Primary actions and secondary actions occupy separate rows; logs also have search.
+      const maxToolHeight=name==='settings'?264:(name==='import'?220:(name==='logs'?150:104));
       const controls=[...(tools?.querySelectorAll('button')||[])].map(button=>button.getBoundingClientRect());
       rows.push({
         name,
@@ -2050,31 +2086,32 @@ app.whenReady().then(async () => {
   })()`);
   console.log("[ui-smoke] settings and import navigation");
   const navigationUi = await window.webContents.executeJavaScript(`(async () => {
+    const loadUpdate = (${loadUpdateFixture.toString()});
     document.documentElement.dataset.uiSmokeStage = 'settings-and-import-navigation';
     const previousPrimary = primaryView;
     const previousActiveView = activeView;
-    const previousSettingsSection = activeSettingsSection;
-    const previousImportSection = activeImportSection;
-    const previousUpdate = updateSettings;
-    const previousRuntimeSettings = runtimeSettings;
-    const previousRuntimeMessage = runtimeSettingsMessage;
-    const previousRuntimeCheck = runtimeSettingsCheck;
+    const previousTabKey = activeTabKey;
+    const previousSettingsSection = window.termaSettingsNavigation.section;
+    const exchange = window.termaExchange.feature();
+    const previousImportSection = exchange.current()?.state.section;
+    const previousUpdate = window.termaUpdateStatus.current();
+    const previousRuntimeSettings = window.termaRuntimeSettingsModel.snapshot;
     const previousSecurity = securitySettings;
-    const previousDesktopSettings = desktopSettings;
-    const previousLatestJobs = sftpLatestJobs;
-    const previousLanguage = normalizeTermaLanguage(document.documentElement.lang || runtimeSettings?.saved?.language);
-    const previousReadVersion = updateNoticeReadVersion;
+    const previousDesktopSettings = window.termaDesktopStorage.snapshot;
+    const previousLatestJobs = window.termaSftpTaskWorkspace.state.jobs;
+    const previousLanguage = normalizeTermaLanguage(document.documentElement.lang || window.termaRuntimeSettingsModel.snapshot?.saved?.language);
+    const UPDATE_NOTICE_SESSION_KEY = 'termaUpdateReadVersion';
     const previousStoredVersion = sessionStorage.getItem(UPDATE_NOTICE_SESSION_KEY);
-    const previousLatencyVisible = terminalLatencyVisible;
     let thirdPartyLiveFixture = null;
     let thirdPartyLiveEditor = null;
     let thirdPartyLiveZmodemSession = null;
     try {
       primaryView = 'settings';
-      activeSettingsSection = 'settings-general';
-      terminalLatencyVisible = true;
-      updateSettings = {current_version:'1.0.8',latest_version:'1.0.9',update_available:true};
-      runtimeSettings = normalizeRuntimeSettingsResponse({
+      await window.termaSettingsViews.open();
+      window.termaSettingsNavigation.show('settings-general', {moveToWorkspace:false});
+      document.documentElement.dataset.uiSmokeStage = 'settings-navigation-update-fixture';
+      await loadUpdate({current_version:'1.0.8',latest_version:'1.0.9',update_available:true});
+      window.termaRuntimeSettingsModel.snapshot = window.termaRuntimeSettingsModel.normalize({
         saved:{listen_hosts:['127.0.0.1','192.0.2.10'],listen_port:18100,sftp_recycle_bin_enabled:true},
         effective:{listen_hosts:['127.0.0.1','192.0.2.10'],listen_port:18100},
         available_hosts:[
@@ -2085,8 +2122,6 @@ app.whenReady().then(async () => {
         lan_urls:['http://192.0.2.10:18100'],
         restart_required:true
       });
-      runtimeSettingsMessage = null;
-      runtimeSettingsCheck = null;
       securitySettings = {
         ...securitySettings,
         trusted_proxy_enabled:false,
@@ -2103,7 +2138,7 @@ app.whenReady().then(async () => {
           blocked_reason:'disabled'
         }
       };
-      desktopSettings = {
+      window.termaDesktopStorage.snapshot = {
         available:true,
         storage_management_available:true,
         settings:{
@@ -2128,14 +2163,14 @@ app.whenReady().then(async () => {
         project_mode_label:'项目所在文件夹',
         xserver:{available:false,installed:false}
       };
-      updateNoticeReadVersion = '';
       sessionStorage.removeItem(UPDATE_NOTICE_SESSION_KEY);
-      setWorkspace('设置', '通用设置', 'settings', 'settings-ui-smoke', false, true, {kind:'settings'});
-      renderSettings();
-      renderExplorerTools();
-      syncUpdateNoticeDots();
+      document.documentElement.dataset.uiSmokeStage = 'settings-navigation-mount';
+      window.termaSettingsViews.render();
+      window.termaConnectionViews.renderExplorerTools();
+      window.termaUpdateNotice.paint();
       let settingsResponsiveColumns = {narrow:'', wide:'', viewportWide:false};
       {
+        document.documentElement.dataset.uiSmokeStage = 'settings-navigation-waterfall';
         const fixture = document.createElement('div');
         fixture.className = 'workspace-pane';
         fixture.style.cssText = 'position:fixed;left:-3000px;top:0;width:1000px;height:320px;overflow:hidden';
@@ -2156,6 +2191,7 @@ app.whenReady().then(async () => {
           throw new Error('general settings waterfall did not follow the split-pane container width: ' + JSON.stringify(settingsResponsiveColumns));
         }
       }
+      document.documentElement.dataset.uiSmokeStage = 'settings-navigation-language';
       await setTermaLanguage('zh-CN');
       const visibleHan = [];
       const thirdPartyLiveSwitch = {
@@ -2175,7 +2211,7 @@ app.whenReady().then(async () => {
           const walker = document.createTreeWalker(textRoot, NodeFilter.SHOW_TEXT);
           while (walker.nextNode()) {
             const value = String(walker.currentNode.nodeValue || '').replace(/\\s+/g, ' ').trim();
-            if (value && /[\u3400-\u9fff]/.test(chromeValue(value))) findings.push(value);
+            if (value && /[㐀-鿿]/.test(chromeValue(value))) findings.push(value);
           }
         }
         const elements = [];
@@ -2184,7 +2220,7 @@ app.whenReady().then(async () => {
         for (const element of elements) {
           for (const attribute of ['title','aria-label','placeholder','aria-roledescription']) {
             const value = String(element.getAttribute(attribute) || '').replace(/\\s+/g, ' ').trim();
-            if (value && /[\u3400-\u9fff]/.test(chromeValue(value))) findings.push('@' + attribute + '=' + value);
+            if (value && /[㐀-鿿]/.test(chromeValue(value))) findings.push('@' + attribute + '=' + value);
           }
         }
         return findings;
@@ -2193,7 +2229,7 @@ app.whenReady().then(async () => {
       document.documentElement.dataset.uiSmokeStage = 'settings-live-third-party-ace';
       window.ace.config.set('basePath', '/vendor/ace');
       window.ace.config.set('useStrictCSP', true);
-      syncTermaAceLocalization();
+      window.termaAceLocalization.sync();
       thirdPartyLiveFixture = document.createElement('section');
       thirdPartyLiveFixture.style.cssText = 'position:fixed;left:-2000px;top:0;width:720px;height:420px;z-index:9999;background:var(--panel)';
       thirdPartyLiveFixture.innerHTML = '<div class="sftp-code-editor third-party-live-ace" style="width:100%;height:260px"></div><div class="terminal-box third-party-live-zmodem"></div>';
@@ -2203,7 +2239,12 @@ app.whenReady().then(async () => {
       thirdPartyLiveAceHost.__termaAceEditor = thirdPartyLiveEditor;
       thirdPartyLiveEditor.session.setUseWorker(false);
       thirdPartyLiveEditor.setValue('{\\n  "value": 1\\n}\\n', -1);
-      await new Promise(resolve => thirdPartyLiveEditor.session.setMode('ace/mode/json', resolve));
+      document.documentElement.dataset.uiSmokeStage = 'settings-live-third-party-ace-mode';
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Ace JSON mode did not load')), 5000);
+        thirdPartyLiveEditor.session.setMode('ace/mode/json', () => { clearTimeout(timeout); resolve(); });
+      });
+      document.documentElement.dataset.uiSmokeStage = 'settings-live-third-party-ace-search';
       thirdPartyLiveEditor.setOption('enableKeyboardAccessibility', true);
       thirdPartyLiveEditor.session.setAnnotations([{row:0,column:0,text:'Smoke warning',type:'warning'}]);
       thirdPartyLiveEditor.renderer.updateFull(true);
@@ -2211,10 +2252,11 @@ app.whenReady().then(async () => {
       for (let attempt=0; attempt<20 && !thirdPartyLiveFixture.querySelector('.ace_search'); attempt+=1) {
         await new Promise(resolve => setTimeout(resolve, 10));
       }
-      syncTermaAceLocalization(thirdPartyLiveFixture);
+      window.termaAceLocalization.sync(thirdPartyLiveFixture);
+      document.documentElement.dataset.uiSmokeStage = 'settings-live-third-party-zmodem';
       thirdPartyLiveZmodemSession = {mount:thirdPartyLiveFixture.querySelector('.third-party-live-zmodem')};
       const thirdPartyLiveZmodemFilename = '设置';
-      terminalZmodemRender(thirdPartyLiveZmodemSession, {
+      window.termaTerminalZmodem.render(thirdPartyLiveZmodemSession, {
         titleKey:'terminal:zmodem.receiving_file',
         titleOptions:{name:thirdPartyLiveZmodemFilename, defaultValue:'正在接收 ' + thirdPartyLiveZmodemFilename},
         detailKey:'terminal:zmodem.binary_mode_hint',
@@ -2232,27 +2274,34 @@ app.whenReady().then(async () => {
         {id:'language-paused-cross-copy',status:'paused',type:'cross-copy',label:'跨 SFTP 传输',connection_id:1,connection_name:'Target',size:100,transferred:50,can_resume:true,resume_supported:true},
         {id:'language-running-cross-copy',status:'running',type:'cross-copy',phase:'transferring',label:'跨 SFTP 传输',connection_id:1,connection_name:'Target',size:100,transferred:25,can_pause:true,resume_supported:true}
       ];
-      sftpLatestJobs = languageTaskFixtures;
-      updateSftpTaskCenter(languageTaskFixtures);
+      window.termaSftpTaskWorkspace.state.jobs = languageTaskFixtures;
+      window.termaSftpTaskWorkspace.state.paint(languageTaskFixtures);
       const originalLanguageApi = api;
       const languageRequests = [];
       api = async (path, options={}) => {
         if (path === '/api/runtime-settings' && String(options.method || 'GET').toUpperCase() === 'PUT') {
           const body = JSON.parse(options.body || '{}');
           languageRequests.push(body);
-          return normalizeRuntimeSettingsResponse({
-            ...runtimeSettings,
-            saved:{...runtimeSettings.saved, language:body.language}
+          return window.termaRuntimeSettingsModel.normalize({
+            ...window.termaRuntimeSettingsModel.snapshot,
+            saved:{...window.termaRuntimeSettingsModel.snapshot.saved, language:body.language}
           });
         }
         return originalLanguageApi(path, options);
       };
+      document.documentElement.dataset.uiSmokeStage = 'settings-live-third-party-language-toggle';
       document.querySelector('#languageToggle')?.click();
+      document.documentElement.dataset.uiSmokeStage = 'settings-live-third-party-language-wait';
       for (let attempt=0; attempt<30 && document.documentElement.lang !== 'en-US'; attempt+=1) {
         await new Promise(resolve => setTimeout(resolve, 10));
       }
       api = originalLanguageApi;
-      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      document.documentElement.dataset.uiSmokeStage = 'settings-live-third-party-language-frame';
+      await Promise.race([
+        new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+        new Promise((_,reject) => setTimeout(() => reject(Error('Language switch did not produce two animation frames')), 2500))
+      ]);
+      document.documentElement.dataset.uiSmokeStage = 'settings-live-third-party-language-review';
       const aceHanAfterSwitch = collectThirdPartyChromeHan(thirdPartyLiveAceHost, '.ace_search');
       const zmodemHanAfterSwitch = collectThirdPartyChromeHan(thirdPartyLiveZmodemSession.mount, '.terminal-zmodem-panel', [thirdPartyLiveZmodemFilename]);
       thirdPartyLiveSwitch.aceClean = aceHanAfterSwitch.length === 0;
@@ -2262,20 +2311,25 @@ app.whenReady().then(async () => {
       thirdPartyLiveSwitch.zmodemUserTextPreserved = thirdPartyLiveZmodemTitle.includes(thirdPartyLiveZmodemFilename);
       visibleHan.push(...aceHanAfterSwitch.map(value => 'third-party-live-ace: ' + value));
       visibleHan.push(...zmodemHanAfterSwitch.map(value => 'third-party-live-zmodem: ' + value));
-      terminalZmodemRender(thirdPartyLiveZmodemSession, {hidden:true});
+      window.termaTerminalZmodem.render(thirdPartyLiveZmodemSession, {hidden:true});
       try { thirdPartyLiveEditor.destroy(); } catch {}
       thirdPartyLiveFixture.remove();
       thirdPartyLiveEditor = null;
       thirdPartyLiveZmodemSession = null;
       thirdPartyLiveFixture = null;
-      renderSettings();
-      renderExplorerTools();
+      window.termaSettingsViews.render();
+      window.termaConnectionViews.renderExplorerTools();
       await new Promise(resolve => setTimeout(resolve, 0));
-      const englishTaskMarkup = languageTaskFixtures.map(renderSftpJob).join('');
+      const englishTaskButtons = [...document.querySelectorAll('#sftpTaskCenterList .sftp-job .actions button')].map(button => button.textContent.trim());
       const languageButton = document.querySelector('#languageToggle');
       const languageThemeButton = document.querySelector('#themeToggle');
       const languageRect = languageButton?.getBoundingClientRect();
       const themeRect = languageThemeButton?.getBoundingClientRect();
+      // The review owns its user-content exclusions instead of calling a retired global helper.
+      const skipTranslationReview = element => Boolean(element?.closest(
+        'script,style,code,pre,.xterm,.terminal-box,.log-content,.log-line,.ace_editor,' +
+        '.sftp-name-cell,.local-files-name-cell,.connection-name,.vnc-screen,.vnc-viewport,.vnc-rfb,[data-i18n-skip]'
+      ));
       const collectVisibleHan = (scope, includeHidden=false, root=document.body) => {
         const scanRoot = root?.nodeType ? root : document.body;
         const walker = document.createTreeWalker(scanRoot, NodeFilter.SHOW_TEXT);
@@ -2283,15 +2337,15 @@ app.whenReady().then(async () => {
           const node = walker.currentNode;
           const parent = node.parentElement;
           const value = String(node.nodeValue || '').replace(/\\s+/g,' ').trim();
-          if (!value || !/[\u3400-\u9fff]/.test(value) || !parent || termaI18nSkipped(parent)) continue;
+          if (!value || !/[㐀-鿿]/.test(value) || !parent || skipTranslationReview(parent)) continue;
            if (!includeHidden && (!parent.getClientRects().length || getComputedStyle(parent).visibility === 'hidden')) continue;
            visibleHan.push(scope+': '+value);
          }
         for (const element of scanRoot.querySelectorAll?.('[title],[aria-label],[placeholder]') || []) {
-          if (termaI18nSkipped(element) || (!includeHidden && (!element.getClientRects().length || getComputedStyle(element).visibility === 'hidden'))) continue;
+          if (skipTranslationReview(element) || (!includeHidden && (!element.getClientRects().length || getComputedStyle(element).visibility === 'hidden'))) continue;
           for (const attribute of ['title','aria-label','placeholder']) {
             const value = String(element.getAttribute(attribute) || '').replace(/\\s+/g,' ').trim();
-            if (value && /[\u3400-\u9fff]/.test(value)) visibleHan.push(scope+': @'+attribute+'='+value);
+            if (value && /[㐀-鿿]/.test(value)) visibleHan.push(scope+': @'+attribute+'='+value);
           }
         }
       };
@@ -2301,7 +2355,7 @@ app.whenReady().then(async () => {
         collectVisibleHan(scope, includeHidden, root);
       };
       for (const section of ['settings-general','settings-ai','settings-basic','settings-notifications','settings-runtime','settings-cache','settings-about']) {
-        showSettingsSection(section, {moveToWorkspace:false});
+        window.termaSettingsNavigation.show(section, {moveToWorkspace:false});
         await new Promise(resolve => setTimeout(resolve, 0));
         collectVisibleHan(section);
       }
@@ -2326,7 +2380,7 @@ app.whenReady().then(async () => {
         throw new Error('VNC fullscreen toolbar preference is still present in listener settings');
       }
       for (const name of ['connections','remote','running','command','logs','import']) {
-        showPrimary(name);
+        window.termaWorkspaceShell.showPrimary(name);
         await new Promise(resolve => setTimeout(resolve, 0));
         collectVisibleHan(name);
       }
@@ -2335,7 +2389,7 @@ app.whenReady().then(async () => {
       const languageVncProfile = {id:910091,name:'Language VNC',protocol:'vnc',host:'192.0.2.77',port:5900,username:'',options:{source_ssh_connection_id:Number(languageRemoteConnection.id),view_only:false}};
       const languageVncKey = 'language-vnc-clipboard';
       const languageVncSession = {key:languageVncKey,profile:languageVncProfile,rfb:{viewOnly:false},screen:document.createElement('div'),connecting:false,connected:true,clipboardAutoSync:false,clipboardTransport:'ssh-linux-x11',clipboardTransportChecked:true,clipboardBridgeTool:'xclip',remoteClipboardAvailable:false,remoteClipboardPending:false,remoteClipboardText:'',viewport:null};
-      vncSessions.set(languageVncKey, languageVncSession);
+      window.termaVncRuntime.session.sessions.set(languageVncKey, languageVncSession);
       api = async (path, options={}) => {
         const value = String(path);
         if (value === '/api/xserver') return {integration_available:true,desktop:true,desktop_backend_available:true,authorization_required:false,platform:'linux',available:true,running:true,managed:true,mode:'native',server:'X11',display:':0',reason:'X Server 已就绪',can_start:false,can_stop:false,can_install:false};
@@ -2345,10 +2399,10 @@ app.whenReady().then(async () => {
       };
       try {
         document.documentElement.dataset.uiSmokeStage = 'settings-xserver-and-vnc';
-        await openXServerManager(Number(languageRemoteConnection.id));
+        await window.termaX11.openManager(Number(languageRemoteConnection.id));
         collectVisibleHan('xserver');
-        closeXServerManager();
-        renderEmbeddedVnc(languageVncProfile, languageVncKey, {platform:'linux'});
+        window.termaX11.closeManager();
+        window.termaVncRuntime.session.mount(languageVncProfile, languageVncKey, {platform:'linux'});
         await new Promise(resolve => setTimeout(resolve, 0));
         const vncToolbar = document.querySelector('#view-remote-desktop .vnc-toolbar-actions');
         if (!vncToolbar?.querySelector('[data-vnc-fullscreen-toggle]')) throw new Error('VNC fullscreen toggle is missing');
@@ -2363,7 +2417,7 @@ app.whenReady().then(async () => {
             return originalSetTimeout(callback, 0, ...args);
           };
           document.documentElement.classList.add('vnc-fullscreen-toolbar-edge-visible');
-          hideVncFullscreenEdgeToolbar();
+          termaVncRuntime.fullscreen.hide();
         } finally {
           window.setTimeout = originalSetTimeout;
         }
@@ -2375,8 +2429,8 @@ app.whenReady().then(async () => {
         const vncWindowBridgeDescriptor = Object.getOwnPropertyDescriptor(window, 'termaDesktop');
         const originalWindowOpen = window.open;
         const browserProfileId = Number(languageVncProfile.id);
-        const previousBrowserDetachedWindow = browserDetachedVncWindows.get(browserProfileId);
-        const previousBrowserDetachedReservation = browserDetachedVncReservations.get(browserProfileId);
+        const previousWindowProfiles = remoteProfiles;
+        remoteProfiles = [...remoteProfiles.filter(profile=>Number(profile.id)!==browserProfileId), languageVncProfile];
         const vncWindowLifecycle = [];
         try {
           Object.defineProperty(window, 'termaDesktop', {configurable:true,writable:true,value:undefined});
@@ -2387,31 +2441,30 @@ app.whenReady().then(async () => {
             close(){this.closed=true;}
           };
           window.open = () => browserPopup;
-          browserDetachedVncWindows.delete(browserProfileId);
-          browserDetachedVncReservations.delete(browserProfileId);
-          const firstBrowserReservation = reserveVncDetachedBrowserWindow(browserProfileId);
-          const secondBrowserReservation = reserveVncDetachedBrowserWindow(browserProfileId);
+          await termaVncRuntime.windows.close(browserProfileId);
+          const firstBrowserReservation = termaVncRuntime.windows.reserve(browserProfileId);
+          const secondBrowserReservation = termaVncRuntime.windows.reserve(browserProfileId);
           if (!firstBrowserReservation?.created || secondBrowserReservation?.created || firstBrowserReservation.child !== browserPopup || secondBrowserReservation?.child !== browserPopup || firstBrowserReservation.state !== secondBrowserReservation?.state || firstBrowserReservation.state?.claims.size !== 2) {
             throw new Error('Web VNC popup was not reserved synchronously');
           }
-          cancelReservedVncDetachedBrowserWindow(firstBrowserReservation);
-          if (browserPopup.closed || firstBrowserReservation.state?.claims.size !== 1 || !browserDetachedVncReservations.has(browserProfileId)) throw new Error('A stale VNC probe closed a popup still claimed by another request');
+          termaVncRuntime.windows.cancel(firstBrowserReservation);
+          if (browserPopup.closed || firstBrowserReservation.state?.claims.size !== 1 || !termaVncRuntime.windows.active(browserProfileId)) throw new Error('A stale VNC probe closed a popup still claimed by another request');
           const reservedUrl = new URL(location.href);
           reservedUrl.searchParams.set('termaVncWindow', String(browserProfileId));
-          if (commitReservedVncDetachedBrowserWindow(secondBrowserReservation, reservedUrl.href) !== browserPopup || browserPopup.location.href !== reservedUrl.href || browserPopup.closed || browserDetachedVncReservations.has(browserProfileId)) {
+          if (termaVncRuntime.windows.commit(secondBrowserReservation, reservedUrl.href) !== browserPopup || browserPopup.location.href !== reservedUrl.href || browserPopup.closed || termaVncRuntime.windows.active(browserProfileId)) {
             throw new Error('Shared Web VNC popup was not committed atomically');
           }
-          cancelReservedVncDetachedBrowserWindow(secondBrowserReservation);
+          termaVncRuntime.windows.cancel(secondBrowserReservation);
           if (browserPopup.closed) throw new Error('Committed Web VNC popup was closed while releasing its final probe claim');
           browserPopup.close();
-          browserDetachedVncWindows.delete(browserProfileId);
+          await termaVncRuntime.windows.close(browserProfileId);
           window.open = originalWindowOpen;
           Object.defineProperty(window, 'termaDesktop', {
             configurable:true,
             writable:true,
             value:{
               async openVncWindow(profileId) {
-                vncWindowLifecycle.push({action:'open-detached',profileId,embeddedActive:vncSessions.has(languageVncKey)});
+                vncWindowLifecycle.push({action:'open-detached',profileId,embeddedActive:window.termaVncRuntime.session.sessions.has(languageVncKey)});
                 return {ok:true,profileId,reused:false};
               },
               async closeVncWindowForProfile(profileId) {
@@ -2420,23 +2473,20 @@ app.whenReady().then(async () => {
               }
             }
           });
-          const detachedOpened = await openVncInNewWindow(languageVncProfile.id, languageVncKey);
-          const embeddedPrepared = await prepareEmbeddedVncWindowSwitch(languageVncProfile.id);
-          if (!detachedOpened || vncSessions.has(languageVncKey)) throw new Error('Opening a detached VNC window did not close the built-in session');
-          if (vncWindowLifecycle[0]?.action !== 'open-detached' || vncWindowLifecycle[0]?.embeddedActive) throw new Error('Detached VNC opened before the built-in session was closed');
+          const detachedOpened = await termaVncRuntime.windows.open(languageVncProfile.id, languageVncKey);
+          const embeddedPrepared = await termaVncRuntime.windows.embedded(languageVncProfile.id);
+          if (!detachedOpened || window.termaVncRuntime.session.sessions.has(languageVncKey)) throw new Error('Opening a detached VNC window did not close the built-in session');
+          if (vncWindowLifecycle[0]?.action !== 'open-detached' || !vncWindowLifecycle[0]?.embeddedActive) throw new Error('Built-in VNC closed before native window success was known');
           if (!embeddedPrepared || vncWindowLifecycle[1]?.action !== 'close-detached') throw new Error('Switching to built-in VNC did not close the detached window');
         } finally {
           window.open = originalWindowOpen;
-          if (previousBrowserDetachedWindow) browserDetachedVncWindows.set(browserProfileId, previousBrowserDetachedWindow);
-          else browserDetachedVncWindows.delete(browserProfileId);
-          if (previousBrowserDetachedReservation) browserDetachedVncReservations.set(browserProfileId, previousBrowserDetachedReservation);
-          else browserDetachedVncReservations.delete(browserProfileId);
+          remoteProfiles = previousWindowProfiles;
           if (vncWindowBridgeDescriptor) Object.defineProperty(window, 'termaDesktop', vncWindowBridgeDescriptor);
           else delete window.termaDesktop;
         }
       } finally {
-        closeXServerManager();
-        vncSessions.delete(languageVncKey);
+        window.termaX11.closeManager();
+        window.termaVncRuntime.session.sessions.delete(languageVncKey);
         api = previousLanguageApi;
       }
       const i18nScenarioErrors = [];
@@ -2455,56 +2505,63 @@ app.whenReady().then(async () => {
         }
       };
       await runI18nScenario('file-picker-language-switch', async () => {
+        window.termaWorkspaceShell.showPrimary('import');
+        await new Promise(resolve=>setTimeout(resolve,0));
         const input = document.getElementById('config_upload');
-        const name = input?.closest('.file-picker')?.querySelector('.file-picker-name');
+        const name = input?.closest('.exchange-picker')?.querySelector('small');
         if (!input || !name) throw new Error('config file picker was not found');
+        const change=files=>{
+          Object.defineProperty(input,'files',{configurable:true,value:files});
+          input.dispatchEvent(new Event('change',{bubbles:true}));
+        };
         try {
-          Object.defineProperty(input, 'files', {configurable:true,value:[]});
-          updateFilePicker(input);
-          if (name.textContent.trim() !== 'No file selected' || name.dataset.i18n !== 'common:auto.not_selected') throw new Error('empty file picker was not generated in English');
-          Object.defineProperty(input, 'files', {configurable:true,value:[{name:'中文配置.conf'}]});
-          updateFilePicker(input);
-          if (name.textContent.trim() !== '中文配置.conf' || name.dataset.i18n || name.dataset.i18nSkip !== 'true') throw new Error('selected user filename was not protected from translation');
+          change([]);
+          if (name.textContent.trim() !== 'No file selected') throw new Error('empty file picker was not generated in English');
+          change([new File(['fixture'],'中文配置.conf')]);
+          if (name.textContent.trim() !== '中文配置.conf') throw new Error('selected user filename was not preserved');
           await setTermaLanguage('zh-CN', {emit:false});
           await setTermaLanguage('en-US', {emit:false});
           applyTermaTranslations(name);
           if (name.textContent.trim() !== '中文配置.conf') throw new Error('selected user filename changed after switching languages');
-          Object.defineProperty(input, 'files', {configurable:true,value:[{name:'一.txt'},{name:'二.txt'}]});
-          updateFilePicker(input);
-          if (name.textContent.trim() !== '2 files selected' || name.dataset.filePickerCount !== '2') throw new Error('multi-file count was not generated in English');
+          change([]);
           await setTermaLanguage('zh-CN', {emit:false});
-          if (name.textContent.trim() !== '已选择 2 个文件') throw new Error('multi-file count did not refresh in Chinese');
+          window.dispatchEvent(new CustomEvent('terma:language-changed'));
+          if (name.textContent.trim() !== '未选择文件') throw new Error('empty file picker did not refresh in Chinese');
           await setTermaLanguage('en-US', {emit:false});
-          if (name.textContent.trim() !== '2 files selected') throw new Error('multi-file count did not refresh back to English');
-          Object.defineProperty(input, 'files', {configurable:true,value:[]});
-          updateFilePicker(input);
-          if (name.textContent.trim() !== 'No file selected' || name.dataset.i18n !== 'common:auto.not_selected' || name.dataset.i18nSkip) throw new Error('cleared file picker did not restore the English empty state');
+          window.dispatchEvent(new CustomEvent('terma:language-changed'));
+          if (name.textContent.trim() !== 'No file selected') throw new Error('cleared file picker did not restore the English empty state');
         } finally {
           delete input.files;
-          updateFilePicker(input);
+          window.termaWorkspaceShell.showPrimary('settings');
         }
       });
       await runI18nScenario('connection-health-diagnosis', async () => {
-        const fixed = localizedHealthSshDiagnosis({
-          diagnosis:{reason_code:'ssh_handshake_timeout',reason:'SSH 握手超时',message:'SSH 握手超时，请检查主机地址、端口和 SSH 服务'},
-          raw_output:'SSH 握手超时，请检查主机地址、端口和 SSH 服务',
-          preserve_raw_output:false
-        });
-        if (fixed !== 'SSH handshake timed out. Check the host address, port, and SSH service.' || /[\u3400-\u9fff]/.test(fixed)) throw new Error('fixed SSH health diagnosis was not generated in English');
-        const remoteOutput = '远端自定义诊断输出';
-        const preserved = localizedHealthSshDiagnosis({
-          diagnosis:{reason_code:'ssh_failed',reason:'SSH 操作失败',message:remoteOutput},
-          raw_output:remoteOutput,
-          preserve_raw_output:true
-        });
-        if (!preserved.includes('The SSH connection failed.') || !preserved.includes(remoteOutput)) throw new Error('raw remote SSH output was not preserved');
+        const oldApi=api, oldProgress=createProgressToast, id=-9401;
+        let text='';
+        const check = async (code, raw, preserve) => {
+          api=async (route, options)=>route==='/api/connections/'+id+'/health'
+            ? {ok:false,ssh:{ok:false,diagnosis:{reason_code:code,message:raw},raw_output:raw,preserve_raw_output:preserve}}
+            : oldApi(route, options);
+          await window.termaConnectionHealthActions.check(id,null,{skipCredentialRepair:true});
+          return text;
+        };
+        try {
+          createProgressToast=()=>({fail:message=>{text=message;}});
+          const fixed=await check('ssh_handshake_timeout','SSH 握手超时，请检查主机地址、端口和 SSH 服务',false);
+          if (!fixed.includes('SSH handshake timed out. Check the host address, port, and SSH service.') || /[㐀-鿿]/.test(fixed)) throw new Error('fixed SSH health diagnosis was not generated in English');
+          const remoteOutput='远端自定义诊断输出';
+          const preserved=await check('ssh_failed',remoteOutput,true);
+          if (!preserved.includes('The SSH connection failed.') || !preserved.includes(remoteOutput)) throw new Error('raw remote SSH output was not preserved');
+        } finally {
+          api=oldApi;createProgressToast=oldProgress;healthResults.delete(id);
+        }
       });
       await runI18nScenario('third-party-components', async () => {
         if (typeof window.ace?.edit !== 'function') throw new Error('Ace runtime was not loaded');
         if (typeof window.Diff?.diffLines !== 'function') throw new Error('jsdiff runtime was not loaded');
         if (typeof window.Zmodem?.Sentry !== 'function') throw new Error('ZMODEM runtime was not loaded');
-        const aceMessages = termaAceMessages();
-        if (Object.values(aceMessages).some(value => /[\u3400-\u9fff]/.test(String(value)))) {
+        const aceMessages = window.termaAceLocalization.messages();
+        if (Object.values(aceMessages).some(value => /[㐀-鿿]/.test(String(value)))) {
           throw new Error('Ace messages still contain Chinese');
         }
         const fixture = document.createElement('section');
@@ -2524,7 +2581,7 @@ app.whenReady().then(async () => {
             findInput = fixture.querySelector('.ace_search_form .ace_search_field');
             replaceInput = fixture.querySelector('.ace_replace_form .ace_search_field');
           }
-          syncTermaAceLocalization(fixture);
+          window.termaAceLocalization.sync(fixture);
           if (!findInput || findInput.placeholder !== aceMessages['search-box.find.placeholder']) {
             throw new Error('Ace find placeholder was not localized: ' + JSON.stringify({actual:findInput?.placeholder || '', expected:aceMessages['search-box.find.placeholder']}));
           }
@@ -2538,7 +2595,7 @@ app.whenReady().then(async () => {
           });
           const zmodemMount = fixture.querySelector('.third-party-zmodem');
           const zmodemSession = {mount:zmodemMount};
-          terminalZmodemRender(zmodemSession, {
+          window.termaTerminalZmodem.render(zmodemSession, {
             detailKey:'terminal:zmodem.binary_mode_hint',
             detailOptions:{defaultValue:'已启用二进制传输模式；按 Ctrl+C 可取消'},
             primaryAction:'send',
@@ -2546,7 +2603,7 @@ app.whenReady().then(async () => {
             primaryLabelOptions:{defaultValue:'选择文件'}
           });
           collectVisibleHan('third-party-components', true, fixture);
-          terminalZmodemRender(zmodemSession, {hidden:true});
+          window.termaTerminalZmodem.render(zmodemSession, {hidden:true});
         } finally {
           try { editor?.destroy(); } catch {}
           fixture.remove();
@@ -2559,7 +2616,7 @@ app.whenReady().then(async () => {
           : scenarioApi(path, options);
         try {
           await setTermaLanguage('zh-CN', {emit:false});
-          renderWelcome();
+          window.termaConnectionViews.renderWelcome();
           await new Promise(resolve => setTimeout(resolve, 0));
           if (document.getElementById('workspaceSubtitle')?.textContent.trim() !== '选择左侧项目后开始操作') throw new Error('welcome workspace subtitle was not seeded in Chinese');
           await setTermaLanguage('en-US', {emit:false});
@@ -2573,7 +2630,7 @@ app.whenReady().then(async () => {
         }
       });
       await runI18nScenario('rdp-form', async () => {
-        renderRemoteProfileForm({id:910099,protocol:'rdp',name:'Language RDP',group_name:'Default',options:{display_mode:'dynamic',clipboard:true}});
+        window.termaRemoteProfiles.editor.render({id:910099,protocol:'rdp',name:'Language RDP',group_name:'Default',options:{display_mode:'dynamic',clipboard:true}});
         await new Promise(resolve => setTimeout(resolve, 0));
         applyTermaTranslations(document.getElementById('view-edit'));
         const editActions = [...document.querySelectorAll('#remoteProfileForm button[type="submit"]')].map(button => button.textContent.trim());
@@ -2581,100 +2638,99 @@ app.whenReady().then(async () => {
         collectVisibleHan('rdp-form-open', true, document.getElementById('view-edit'));
       });
       await runI18nScenario('quick-panel', async () => {
-        await openQuickPanel();
-        renderQuickPanel('');
+        await window.termaEfficiency.palette.open();
+        window.termaEfficiency.palette.refresh('');
         await new Promise(resolve => setTimeout(resolve, 0));
         applyTermaTranslations(document);
         collectVisibleHan('quick-panel-open', true, document.getElementById('quickPanel'));
-        closeQuickPanel();
+        window.termaEfficiency.palette.close();
       });
       await runI18nScenario('ssh-key-wizard', async () => {
-        openSshKeyWizard();
+        window.termaKeyWizard.open();
         await new Promise(resolve => setTimeout(resolve, 0));
         applyTermaTranslations(document);
         collectVisibleHan('ssh-key-wizard-open', true, document.getElementById('modal'));
         closeModal();
       });
       await runI18nScenario('connected-tab-close', async () => {
-        const decision = confirmWorkspaceConnectedTabClose([{title:'Language Terminal',connectionStatus:'connected'}]);
+        const decision = window.termaWorkspaceTabActions.confirm([{title:'Language Terminal',connectionStatus:'connected'}]);
         await new Promise(resolve => setTimeout(resolve, 0));
         collectVisibleHan('connected-tab-close-modal', true, document.getElementById('modal'));
         document.getElementById('workspaceCloseTabsCancel')?.click();
         await decision;
       });
       await runI18nScenario('recent-commands', async () => {
-        const previousRecentCommands = recentTerminalCommands;
-        recentTerminalCommands = ['printf "language smoke"'];
+        const previousRecentCommands = window.termaTerminalHistory.list();
+        ((items)=>{window.termaTerminalHistory.clear();[...items].reverse().forEach(window.termaTerminalHistory.save);})(['printf "language smoke"']);
         try {
-          showRecentTerminalCommands('language-terminal');
+          window.termaTerminalTextDialogs.recent('language-terminal');
           const modal = document.getElementById('modal');
           collectVisibleHan('recent-commands-immediate', true, modal);
           if (modal?.querySelector('h2')?.textContent.trim() !== 'Recent commands') throw new Error('recent commands dialog was not generated in English');
           document.getElementById('recentCommandClose')?.click();
         } finally {
-          recentTerminalCommands = previousRecentCommands;
+          ((items)=>{window.termaTerminalHistory.clear();[...items].reverse().forEach(window.termaTerminalHistory.save);})(previousRecentCommands);
           closeModal();
         }
       });
       await runI18nScenario('workspace-tab-menu', async () => {
         const tab = tabs.find(item => item.closable !== false) || tabs[0];
         if (!tab) throw new Error('no workspace tab available');
-        showTabContextMenu({preventDefault(){},stopPropagation(){},clientX:160,clientY:120}, tab.key);
+        window.termaWorkspaceTabActions.showMenu({preventDefault(){},stopPropagation(){},clientX:160,clientY:120}, tab.key);
         await collectTranslatedHan('workspace-tab-menu-open', true, document.getElementById('tabContextMenu'));
-        hideTabContextMenu();
+        window.termaWorkspaceTabActions.hideMenu();
       });
       await runI18nScenario('local-files-shortcuts', async () => {
-        const scenarioLocalFilesAvailable = localFilesAvailable;
-        localFilesAvailable = () => true;
         const host = document.createElement('div');
         try {
-          host.innerHTML = localFilesToolbarButtonHtml('language-local-files');
+          const shortcut = document.createElement('button');
+          shortcut.title = tr('navigation:auto.new_local_files_tab');
+          shortcut.dataset.action = 'local-files-new-tab';
+          shortcut.innerHTML = icon('hard-drive');
+          host.append(shortcut);
           document.body.appendChild(host);
           await collectTranslatedHan('local-files-shortcut-button', true, host);
-          showNewLocalFilesMenu({preventDefault(){},stopPropagation(){},clientX:180,clientY:140});
+          window.termaLocalFileRuntime.pages.menu({preventDefault(){},stopPropagation(){},clientX:180,clientY:140});
           const menu = document.getElementById('actionMenu');
           if (!menu) throw new Error('local files menu was not opened');
           await collectTranslatedHan('local-files-shortcut-menu', true, menu);
         } finally {
           hideActionMenu();
           host.remove();
-          localFilesAvailable = scenarioLocalFilesAvailable;
         }
       });
       await runI18nScenario('local-files-view', async () => {
-        const scenarioLocalFilesRoot = localFilesRoot;
         const tabKey = 'language-local-files-view';
         const host = document.createElement('div');
         host.innerHTML = '<div id="view-local-files"><div class="local-files-shell"><div class="local-files-list"></div></div></div>';
         document.body.appendChild(host);
-        localFilesRoot = () => host.querySelector('#view-local-files');
-        Object.assign(localFilesRuntime(tabKey), {
+        const fixtureRoot = host.querySelector('#view-local-files');
+        Object.assign(window.termaLocalFileRuntime.files.state(tabKey), {
           path:'C:/LanguageSmoke',displayPath:'C:/LanguageSmoke',location:'directory',parent:'C:/',parentKind:'directory',
           page:1,pageSize:50,total:1,totalPages:1,loaded:true,query:'',sort:'name',dir:'asc',
           entries:[{name:'notes.txt',path:'C:/LanguageSmoke/notes.txt',type:'file',size:12,mtime:1700000000,mode:'644'}]
         });
         try {
-          renderLocalFiles(tabKey);
-          const root = localFilesRoot(tabKey);
+          window.termaLocalFileViews.mount(fixtureRoot,window.termaLocalFileRuntime.viewOptions(tabKey));
+          const root = fixtureRoot;
           collectVisibleHan('local-files-view-immediate', true, root);
           const row = root?.querySelector('.local-files-row');
           if (!row) throw new Error('local files row was not rendered');
-          showLocalFileEntryMenu({preventDefault(){},stopPropagation(){},clientX:220,clientY:180}, 'C:/LanguageSmoke/notes.txt', 'file', tabKey);
+          row.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:220,clientY:180}));
           const menu = document.getElementById('actionMenu');
           collectVisibleHan('local-files-context-menu-immediate', true, menu);
           const labels = [...menu.querySelectorAll('button span')].map(item => item.textContent.trim());
           if (!labels.includes('Open / Edit') || !labels.includes('Open in system file manager') || !labels.includes('Copy path')) throw new Error('local files context menu was not generated in English');
         } finally {
           hideActionMenu();
-          localFileRuntimes.delete(tabKey);
-          localFilesRoot = scenarioLocalFilesRoot;
+          window.termaLocalFileViews.release(tabKey);
+          window.termaLocalFileRuntime.files.dispose(tabKey);
           host.remove();
         }
       });
       await runI18nScenario('remote-explorer-menu', async () => {
-        showRemoteExplorerMenu({preventDefault(){},stopPropagation(){},clientX:180,clientY:140});
-        await collectTranslatedHan('remote-explorer-menu-open', true, document.getElementById('actionMenu'));
-        hideActionMenu();
+        window.termaWorkspaceShell.showPrimary('remote');
+        await collectTranslatedHan('remote-explorer-actions', true, document.getElementById('explorerTools'));
       });
       await runI18nScenario('sftp-settings', async () => {
         const scenarioApi = api;
@@ -2682,25 +2738,25 @@ app.whenReady().then(async () => {
           ? {delivery_mode:'desktop',configured_directory:'',default_directory:'C:\\Downloads',effective_directory:'C:\\Downloads'}
           : scenarioApi(path, options);
         try {
-          await showSftpGlobalSettings();
-          for (const section of ['general','editor','transfer']) {
-            selectSftpSettingsTab(section);
+          await window.termaSftpGlobalSettings.open();
+          for (const [index, section] of ['general','editor','transfer'].entries()) {
+            document.querySelectorAll('#modal .sftp-global-settings-modal [role="tab"]')[index]?.click();
             await new Promise(resolve => setTimeout(resolve, 0));
             collectVisibleHan('sftp-settings-' + section, true, document.getElementById('modal'));
           }
         } finally {
-          closeSftpGlobalSettings();
+          window.termaSftpGlobalSettings.close();
           api = scenarioApi;
         }
       });
       await runI18nScenario('sftp-view', async () => {
         const scenarioApi = api;
-        const scenarioRefreshSftpJobs = refreshSftpJobs;
-        const scenarioStartSftpJobsTimer = startSftpJobsTimer;
+        const scenarioRefreshSftpJobs = window.termaSftpTaskWorkspace.runtime.refresh;
+        const scenarioStartSftpJobsTimer = window.termaSftpTransferLifecycle.polling.start;
         const connectionId = Number(languageRemoteConnection.id);
         const tabKey = 'language-sftp-view';
-        refreshSftpJobs = async () => [];
-        startSftpJobsTimer = () => {};
+        window.termaSftpTaskWorkspace.runtime.refresh = async () => [];
+        window.termaSftpTransferLifecycle.polling.start = () => {};
         api = async (path, options={}) => {
           const value = String(path);
           if (['/api/sftp/jobs','/api/sftp/sync/jobs','/api/linux-desktop/tasks','/api/remote-component/tasks'].includes(value)) return [];
@@ -2711,28 +2767,28 @@ app.whenReady().then(async () => {
           return scenarioApi(path, options);
         };
         try {
-          await openSftp(connectionId, '/', true, tabKey);
-          toggleSftpSearch(tabKey);
-          updateSftpConnectionUi(connectionId, 'disconnected', 'SFTP 连接已断开');
+          await window.termaSftpPage.open(connectionId, '/', true, tabKey);
+          window.termaSftpViews.search(tabKey,'toggle');
+          window.termaSftpConnection.paint(connectionId, 'disconnected', 'SFTP 连接已断开');
           await new Promise(resolve => setTimeout(resolve, 0));
           applyTermaTranslations(document);
           collectVisibleHan('sftp-view-open', true, document.querySelector('[data-sftp-tab-key="' + tabKey + '"]'));
           await runI18nScenario('sftp-context-menu', async () => {
             const row = document.querySelector('[data-sftp-tab-key="' + tabKey + '"] .sftp-row');
             if (!row) throw new Error('SFTP row was not rendered');
-            showSftpEntryMenu({currentTarget:row,target:row,preventDefault(){},stopPropagation(){},clientX:220,clientY:180}, connectionId, '/notes.txt', 'notes.txt', 'file', tabKey);
+            window.termaSftpEntryActions.menu.entry({currentTarget:row,target:row,preventDefault(){},stopPropagation(){},clientX:220,clientY:180}, tabKey, connectionId, {path:'/notes.txt',name:'notes.txt',type:'file'});
             await collectTranslatedHan('sftp-context-menu-open', true, document.getElementById('actionMenu'));
             hideActionMenu();
           });
           await runI18nScenario('sftp-permissions-dialog', async () => {
-            openSftpPermissionsForSelection(['/notes.txt'], tabKey);
+            window.termaSftpFileActions.operations.permissions(tabKey, ['/notes.txt']);
             const modal = document.getElementById('modal');
             collectVisibleHan('sftp-permissions-dialog-immediate', true, modal);
             if (modal?.querySelector('h2')?.textContent.trim() !== 'Set permissions') throw new Error('SFTP permissions dialog was not generated in English');
             document.getElementById('sftpPermissionCancel')?.click();
           });
           await runI18nScenario('sftp-rename-dialog', async () => {
-            const operation = renameSftp(connectionId, '/notes.txt', 'notes.txt', tabKey);
+            const operation = window.termaSftpFileActions.operations.rename(tabKey, connectionId, '/notes.txt', 'notes.txt');
             await new Promise(resolve => setTimeout(resolve, 0));
             const modal = document.getElementById('modal');
             collectVisibleHan('sftp-rename-dialog-immediate', true, modal);
@@ -2741,18 +2797,21 @@ app.whenReady().then(async () => {
             await operation;
           });
           await runI18nScenario('sftp-compress-dialog', async () => {
-            const operation = compressSingleSftp(connectionId, '/notes.txt', tabKey);
-            await new Promise(resolve => setTimeout(resolve, 0));
-            const modal = document.getElementById('modal');
-            collectVisibleHan('sftp-compress-dialog-immediate', true, modal);
-            if (modal?.querySelector('h2')?.textContent.trim() !== 'Compress remote item') throw new Error('SFTP compression dialog was not generated in English');
-            document.getElementById('sftpArchiveCancel')?.click();
-            await operation;
+            const operation = window.termaSftpFileActions.compressEntry(tabKey, connectionId, '/notes.txt');
+            try {
+              await new Promise(resolve => setTimeout(resolve, 0));
+              const modal = document.getElementById('modal');
+              collectVisibleHan('sftp-compress-dialog-immediate', true, modal);
+              if (modal?.querySelector('h2')?.textContent.trim() !== tr('sftp:archive.compress_title') || !document.getElementById('sftpArchiveCancel')) throw new Error('SFTP compression dialog was not generated in English');
+            } finally {
+              document.getElementById('sftpArchiveCancel')?.click();
+              await operation;
+            }
           });
         } finally {
           closeTabsByKey([tabKey], tabKey);
-          refreshSftpJobs = scenarioRefreshSftpJobs;
-          startSftpJobsTimer = scenarioStartSftpJobsTimer;
+          window.termaSftpTaskWorkspace.runtime.refresh = scenarioRefreshSftpJobs;
+          window.termaSftpTransferLifecycle.polling.start = scenarioStartSftpJobsTimer;
           api = scenarioApi;
         }
       });
@@ -2763,11 +2822,20 @@ app.whenReady().then(async () => {
           ? {platform:'linux',root:true,installed:false,install_plan:{local_offline:{available:true}}}
           : scenarioApi(path, options);
         try {
-          const action = runX11ClipboardHelperAction(connectionId, 'local-offline');
-          for (let attempt=0; attempt<20 && document.getElementById('modal')?.hidden; attempt+=1) await new Promise(resolve => setTimeout(resolve, 5));
+          closeModal();
+          const action = window.termaX11.remote.operate(connectionId, 'clipboard', 'local-offline', null, 'xserver');
+          let cancel=null;
+          for (let attempt=0; attempt<100; attempt+=1) {
+            cancel=document.querySelector('#modal:not([hidden]) [data-automation-layer] button[data-choice="1"]');
+            if(cancel&&!cancel.disabled)break;
+            await new Promise(resolve=>setTimeout(resolve,10));
+          }
+          if(!cancel||cancel.disabled)throw new Error('X11 local offline cancel control was not ready');
           collectVisibleHan('xclip-local-offline-modal', true, document.getElementById('modal'));
-          document.querySelector('#modal .actions button:not(.primary):last-child')?.click();
-          await action;
+          cancel.click();
+          let timeout;
+          try { await Promise.race([action,new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('X11 local offline cancellation did not settle')),2000);})]); }
+          finally { clearTimeout(timeout); }
         } finally {
           closeModal();
           api = scenarioApi;
@@ -2780,7 +2848,6 @@ app.whenReady().then(async () => {
         collectVisibleHan('xclip-no-plan-notification-open', true, document.getElementById('toast'));
       });
       await runI18nScenario('named-workspaces', async () => {
-        const previousWorkspaces = productivityState.workspaces;
         const scenarioWorkspaces = [{
           id:910101,
           name:'Workspace 4',
@@ -2790,72 +2857,76 @@ app.whenReady().then(async () => {
         const scenarioApi = api;
         api = async (path, options={}) => String(path) === '/api/named-workspaces' && !options.method ? scenarioWorkspaces : scenarioApi(path, options);
         try {
-          await openNamedWorkspaceManager();
+          await window.termaNamedWorkspaces.manager();
           await collectTranslatedHan('named-workspaces-open', true, document.getElementById('modal'));
-          const rename = renameNamedWorkspace(910101);
+          const rename = window.termaNamedWorkspacePresets.rename(910101);
           await new Promise(resolve => setTimeout(resolve, 0));
           await collectTranslatedHan('named-workspaces-rename', true, document.getElementById('modal'));
           document.querySelector('#modal .actions button:not(.primary):last-child')?.click();
           await rename;
         } finally {
-          productivityState.workspaces = previousWorkspaces;
           api = scenarioApi;
+          await window.termaNamedWorkspacePresets.list();
           closeModal();
         }
       });
       await runI18nScenario('batch-template-editor', async () => {
-        openCommandTemplateEditor({id:'language-template',name:'Language template',command:'uname -a',description:'Fixture'});
+        const templates=window.termaBatch.templates().model.items;
+        templates.push({id:'language-template',name:'Language template',command:'uname -a',description:'Fixture'});
+        window.termaBatch.templateEditor('language-template');
         const modal = document.getElementById('modal');
         collectVisibleHan('batch-template-editor-immediate', true, modal);
         if (modal?.querySelector('h2')?.textContent.trim() !== 'Edit command template') throw new Error('batch template editor was not generated in English');
         modal?.querySelector('[data-template-cancel]')?.click();
+        templates.splice(templates.findIndex(item=>item.id==='language-template'),1);
+        closeModal();
       });
       await runI18nScenario('command-snippet-manager', async () => {
-        const previousSnippets = productivityState.snippets;
+        const previousSnippets = window.termaSnippets.service.state.items;
         const scenarioApi = api;
         const snippets = [{id:910150,name:'Inspect service',group_name:'Operations',command:'systemctl status example.service',description:'Service status',tags:'service',favorite:1,quick_visible:1,quick_action:'execute',quick_badge:'服',quick_color:'blue'}];
-        productivityState.snippets = [{id:910150,name:'Inspect service',group_name:'Operations',command:'systemctl status example.service',description:'Service status',tags:'service',favorite:1,quick_visible:1,quick_action:'execute',quick_badge:'服',quick_color:'blue'}];
+        window.termaSnippets.service.replaceItems(snippets);
         api = async (path, options={}) => String(path) === '/api/command-snippets' && !options.method ? snippets : scenarioApi(path, options);
         try {
-          await openCommandSnippetManager();
+          await window.termaSnippets.navigate('manager');
           const modal = document.getElementById('modal');
           collectVisibleHan('command-snippet-manager-immediate', true, modal);
           if (!modal?.innerText.includes('Command snippets') || !modal?.innerText.includes('Command bar')) throw new Error('command snippet manager was not generated in English');
-          openCommandSnippetEditor(910150);
+          window.termaSnippets.navigate('editor', 910150);
           collectVisibleHan('command-snippet-editor-immediate', true, modal);
           if (!modal?.innerText.includes('Edit command snippet') || !modal?.innerText.includes('Click action')) throw new Error('command snippet editor was not generated in English');
         } finally {
-          productivityState.snippets = previousSnippets;
+          window.termaSnippets.service.replaceItems(previousSnippets);
           api = scenarioApi;
           closeModal();
         }
       });
       await runI18nScenario('sftp-clipboard-actions', async () => {
-        const previousClipboard = sftpClipboard;
-        const previousState = {...sftpState};
+        const previousClipboard = window.termaSftpFileActions.clipboard.value;
         const tabKey = 'language-sftp-clipboard';
+        const runtime = window.termaSftpTabs.runtime.ensure(tabKey, Number(languageRemoteConnection.id));
         const host = document.createElement('div');
         document.body.appendChild(host);
         try {
-          sftpClipboard = {mode:'copy',connectionId:Number(languageRemoteConnection.id),connectionName:'Language SSH',paths:['/one.txt','/two.txt']};
-          sftpState.connectionId = Number(languageRemoteConnection.id) + 1;
+          window.termaSftpFileActions.clipboard.value = {mode:'copy',connectionId:Number(languageRemoteConnection.id),connectionName:'Language SSH',paths:['/one.txt','/two.txt']};
+          runtime.state.connectionId = Number(languageRemoteConnection.id) + 1;
           host.innerHTML = renderSftpClipboardActions(tabKey);
           collectVisibleHan('sftp-copy-queue-immediate', true, host);
           if (!host.innerText.includes('Copy queue')) throw new Error('cross-host SFTP copy queue was not generated in English');
-          sftpState.connectionId = Number(languageRemoteConnection.id);
-          sftpClipboard = {...sftpClipboard,mode:'move'};
+          runtime.state.connectionId = Number(languageRemoteConnection.id);
+          window.termaSftpFileActions.clipboard.value = {...window.termaSftpFileActions.clipboard.value,mode:'move'};
           host.innerHTML = renderSftpClipboardActions(tabKey);
           collectVisibleHan('sftp-move-queue-immediate', true, host);
           if (!host.innerText.includes('Move queue') || !host.innerText.includes('Paste')) throw new Error('SFTP move queue actions were not generated in English');
         } finally {
-          sftpClipboard = previousClipboard;
-          Object.assign(sftpState, previousState);
+          window.termaSftpFileActions.clipboard.value = previousClipboard;
+          window.termaSftpTabs.runtime.dispose(tabKey);
           host.remove();
         }
       });
       await runI18nScenario('remote-protocol-forms', async () => {
         for (const protocol of ['ftp','vnc','xdmcp','telnet','serial']) {
-          renderRemoteProfileForm({protocol,name:'Language ' + protocol.toUpperCase(),group_name:'Default',options:{}});
+          window.termaRemoteProfiles.editor.render({protocol,name:'Language ' + protocol.toUpperCase(),group_name:'Default',options:{}});
           const view = document.getElementById('view-edit');
           collectVisibleHan(protocol + '-form-immediate', true, view);
           const formText = view?.innerText || '';
@@ -2871,11 +2942,11 @@ app.whenReady().then(async () => {
         host.innerHTML = '<form id="languageConnectionForm"><textarea id="conn_extra"></textarea><div id="connExtraDiagnostics"></div><div id="connAdvancedStatus"></div></form>';
         document.body.appendChild(host);
         const form = host.querySelector('#languageConnectionForm');
-        renderConnectionExtraArgsDiagnostics(form, [{severity:'warning',code:'SSH_EXTRA_ARGS_DUPLICATES_STRUCTURED_FIELD',line:2,start:8,end:27,option:'KeepAliveInterval',message:'与上方“KeepAliveInterval”设置重复（当前：60）',suggestion:'删除这一项并使用上方结构化设置，避免两处数值不一致。'}]);
+        window.termaConnectionFormWorkspace.advanced.render(form, [{severity:'warning',code:'SSH_EXTRA_ARGS_DUPLICATES_STRUCTURED_FIELD',line:2,start:8,end:27,option:'KeepAliveInterval',message:'与上方“KeepAliveInterval”设置重复（当前：60）',suggestion:'删除这一项并使用上方结构化设置，避免两处数值不一致。'}]);
         const diagnostics = document.getElementById('connExtraDiagnostics');
         collectVisibleHan('ssh-extra-args-validation-immediate', true, diagnostics);
         if (!diagnostics?.innerText.includes('current: 60') || !diagnostics?.innerText.includes('argument warning')) throw new Error('SSH additional-argument diagnostics were not generated in English');
-        renderConnectionExtraArgsDiagnostics(form, []);
+        window.termaConnectionFormWorkspace.advanced.render(form, []);
         host.remove();
       });
       await runI18nScenario('connection-terminal-startup-form', async () => {
@@ -2883,8 +2954,8 @@ app.whenReady().then(async () => {
         host.innerHTML = '<form id="languageTerminalForm"><select id="conn_terminal_startup_mode"><option value="default">default</option><option value="program">program</option></select><input id="conn_terminal_profile_name"><input id="conn_terminal_profile_kind"><input id="conn_terminal_program_path"><input id="conn_terminal_program_args"><input id="conn_terminal_working_directory"><select id="conn_terminal_program_platform"><option value="auto">auto</option></select><select id="conn_terminal_profile_select"></select><div id="connTerminalProgramFields"></div><div id="connTerminalDetectionStatus"></div><div id="connTerminalCapabilities"></div></form>';
         document.body.appendChild(host);
         const form = host.querySelector('#languageTerminalForm');
-        resetConnectionTerminalStartup(form);
-        renderConnectionTerminalProfiles(form, {platform:'linux',platform_label:'Linux',default_shell:{name:'bash',label:'Bash',path:'/bin/bash'},profiles:[{name:'python',label:'Python',path:'/usr/bin/python3',kind:'repl'}],tools:[{label:'Git',version:'2.51'}],warnings:[]});
+        window.termaConnectionTerminal.resetStartup(form);
+        window.termaConnectionTerminal.renderProfiles(form, {platform:'linux',platform_label:'Linux',default_shell:{name:'bash',label:'Bash',path:'/bin/bash'},profiles:[{name:'python',label:'Python',path:'/usr/bin/python3',kind:'repl'}],tools:[{label:'Git',version:'2.51'}],warnings:[]});
         const startupRoot = document.getElementById('connTerminalStartupFields') || form;
         collectVisibleHan('connection-terminal-startup-form-immediate', true, startupRoot);
         const text = startupRoot.innerText || '';
@@ -2896,7 +2967,7 @@ app.whenReady().then(async () => {
         const previousForwards = languageRemoteConnection.forwards;
         languageRemoteConnection.forwards = [];
         try {
-          openForwards(Number(languageRemoteConnection.id), false);
+          window.termaForwardWorkspace.openConnection(Number(languageRemoteConnection.id), false);
           const view = $('view-forwards') || document.getElementById('view-forwards');
           collectVisibleHan('forward-empty-immediate', true, view);
           const forwardEmptyText = view?.textContent || '';
@@ -2909,14 +2980,14 @@ app.whenReady().then(async () => {
         const previousForwards = languageRemoteConnection.forwards;
         languageRemoteConnection.forwards = [{id:910201,connection_id:Number(languageRemoteConnection.id),mode:'local',bind_host:'127.0.0.1',bind_port:3210,target_host:'127.0.0.1',target_port:8080,service_name:'Language service',service_type:'web',status:'running',started_at:Date.now()/1000-36,reconnect_count:2}];
         try {
-          openForwards(Number(languageRemoteConnection.id), false);
+          window.termaForwardWorkspace.openConnection(Number(languageRemoteConnection.id), false);
           await new Promise(resolve => setTimeout(resolve, 0));
           const forwardView = $('view-forwards') || document.getElementById('view-forwards');
           applyTermaTranslations(forwardView);
           await collectTranslatedHan('forward-list-open', true, forwardView);
           await runI18nScenario('forward-runtime', async () => {
             await collectTranslatedHan('forward-runtime-open', true, forwardView);
-            const runtime = forwardView?.querySelector('.forward-card-runtime')?.textContent || '';
+            const runtime = forwardView?.querySelector('.forward-runtime')?.textContent || '';
             if (!runtime.includes('Running for') || !runtime.includes('Reconnected 2 times')) throw new Error('forward runtime was not localized');
           });
         } finally {
@@ -2931,23 +3002,23 @@ app.whenReady().then(async () => {
           ? {capabilities:{platform:'linux',platform_label:'Linux',default_shell:{name:'bash',label:'Bash'},profiles:[{name:'bash',label:'Bash',path:'/bin/bash',kind:'shell',is_default:true}],tools:[{name:'git',label:'Git',version:'2.51'}],warnings:[]}}
           : scenarioApi(path, options);
         try {
-          showTerminalStartupSettings('language-terminal-startup', Number(languageRemoteConnection.id));
+          window.termaTerminalStartup.open('language-terminal-startup', Number(languageRemoteConnection.id));
           await new Promise(resolve => setTimeout(resolve, 20));
           await collectTranslatedHan('terminal-startup-dialog-open', true, document.getElementById('modal'));
         } finally {
-          closeTerminalStartupSettings('language-terminal-startup', false, true);
+          window.termaTerminalViews.startupOptions()?.actions.close();
           api = scenarioApi;
           requireConfigEncryptionUnlocked = scenarioRequireUnlocked;
         }
       });
       await runI18nScenario('terminal-x11-menu', async () => {
-        showActionMenu({preventDefault(){},stopPropagation(){},clientX:200,clientY:140}, x11LaunchActions(Number(languageRemoteConnection.id), ''));
+        showActionMenu({preventDefault(){},stopPropagation(){},clientX:200,clientY:140}, window.termaX11TerminalMenu.actions(Number(languageRemoteConnection.id), ''));
         await collectTranslatedHan('terminal-x11-menu-open', true, document.getElementById('actionMenu'));
         hideActionMenu();
       });
       await runI18nScenario('terminal-context-menu', async () => {
         const key = 'language-terminal-context';
-        terminalSessions.set(key, {
+        window.termaTerminalState.terminalSessions.set(key, {
           id:Number(languageRemoteConnection.id),
           connected:true,
           connection:languageRemoteConnection,
@@ -2956,14 +3027,14 @@ app.whenReady().then(async () => {
           }
         });
         try {
-          showTerminalContextMenu({preventDefault(){},stopPropagation(){},clientX:200,clientY:140}, key, Number(languageRemoteConnection.id));
+          window.termaTerminalPage.showTerminalContextMenu({preventDefault(){},stopPropagation(){},clientX:200,clientY:140}, key, Number(languageRemoteConnection.id));
           const menu = document.getElementById('actionMenu');
           collectVisibleHan('terminal-context-menu-immediate', true, menu);
           const labels = [...menu.querySelectorAll('button span')].map(item => item.textContent.trim());
           if (!labels.includes('Copy selection') || !labels.includes('Open current directory in SFTP') || !labels.includes('Global terminal settings')) throw new Error('terminal context menu was not generated in English');
         } finally {
           hideActionMenu();
-          terminalSessions.delete(key);
+          window.termaTerminalState.terminalSessions.delete(key);
         }
       });
       await runI18nScenario('download-complete-notification', async () => {
@@ -2987,30 +3058,30 @@ app.whenReady().then(async () => {
       });
       await runI18nScenario('desktop-notification-toggle', async () => {
         const savedApi = api;
-        const savedSettings = runtimeSettings;
+        const savedSettings = window.termaRuntimeSettingsModel.snapshot;
         const descriptor = Object.getOwnPropertyDescriptor(window, 'Notification');
         try {
           Object.defineProperty(window, 'Notification', {configurable:true,value:{permission:'granted'}});
-          runtimeSettings = {...runtimeSettings,saved:{...runtimeSettings.saved,desktop_notifications_enabled:true}};
+          window.termaRuntimeSettingsModel.snapshot = {...window.termaRuntimeSettingsModel.snapshot,saved:{...window.termaRuntimeSettingsModel.snapshot.saved,desktop_notifications_enabled:true}};
           api = async (pathname, options={}) => {
             if (pathname === '/api/runtime-settings' && options.method === 'PUT') {
-              return {saved:{...runtimeSettings.saved,...JSON.parse(options.body)}};
+              return {saved:{...window.termaRuntimeSettingsModel.snapshot.saved,...JSON.parse(options.body)}};
             }
             return savedApi(pathname, options);
           };
-          renderSettings();
-          await toggleDesktopNotifications();
+          window.termaSettingsViews.render();
+          (document.getElementById('desktopNotificationToggleBtn')?.click(),await new Promise(resolve=>setTimeout(resolve,60)));
           const button = document.getElementById('desktopNotificationToggleBtn');
           if (button.textContent.trim() !== tr('settings:auto.enable_desktop_notifications') || button.disabled || button.hasAttribute('aria-busy')) throw new Error('desktop notification toggle restored its old label after saving');
           collectVisibleHan('desktop-notification-disabled', true, document.getElementById('settings-notifications'));
-          await toggleDesktopNotifications();
+          (document.getElementById('desktopNotificationToggleBtn')?.click(),await new Promise(resolve=>setTimeout(resolve,60)));
           if (button.textContent.trim() !== tr('settings:auto.disable_desktop_notifications')) throw new Error('desktop notifications could not be enabled again');
         } finally {
           api = savedApi;
-          runtimeSettings = savedSettings;
+          window.termaRuntimeSettingsModel.snapshot = savedSettings;
           if (descriptor) Object.defineProperty(window, 'Notification', descriptor);
           else delete window.Notification;
-          renderSettings();
+          window.termaSettingsViews.render();
         }
       });
       await runI18nScenario('task-confirmations', async () => {
@@ -3029,72 +3100,72 @@ app.whenReady().then(async () => {
       });
       await runI18nScenario('batch-log-label', async () => {
         const host = document.createElement('div');
-        host.innerHTML = renderLogButton({path:'batch/sample.log',label:'批量执行-8月14日 21:15:24'}, 'batch');
+        host.textContent = window.termaLogList.label('批量执行-8月14日 21:15:24');
         document.body.appendChild(host);
         await collectTranslatedHan('batch-log-label-open', true, host);
         if (!host.innerText.includes('Batch execution - Aug 14 21:15:24')) throw new Error('batch log label was not localized');
         host.remove();
       });
       await runI18nScenario('quick-open-notice', async () => {
-        const previousQuickOpen = remoteDesktopQuickOpen;
-        const previousRuntimeSettings = runtimeSettings;
-        const previousQuickOpenToggleQueue = remoteDesktopQuickOpenToggleQueue;
-        const previousQuickOpenToggleTarget = remoteDesktopQuickOpenToggleTarget;
-        const previousQuickOpenTogglePending = remoteDesktopQuickOpenTogglePending;
+        const previousQuickOpen = localStorage.getItem('remoteDesktopQuickOpen');
+        const previousRuntimeSettings = window.termaRuntimeSettingsModel.snapshot;
         const quickOpenApi = api;
         const writes = [];
-        remoteDesktopQuickOpen = false;
+        localStorage.setItem('remoteDesktopQuickOpen','0');
         api = async (path, options={}) => {
+          if (path === '/api/runtime-settings' && !options.method) return previousRuntimeSettings;
           if (String(path) === '/api/runtime-settings' && String(options.method || 'GET').toUpperCase() === 'PUT') {
             const body = JSON.parse(options.body || '{}');
             writes.push(body.remote_desktop_quick_open_enabled === true);
             await Promise.resolve();
-            return normalizeRuntimeSettingsResponse({
-              ...runtimeSettings,
-              saved:{...runtimeSettings.saved, remote_desktop_quick_open_enabled:body.remote_desktop_quick_open_enabled === true}
+            return window.termaRuntimeSettingsModel.normalize({
+              ...window.termaRuntimeSettingsModel.snapshot,
+              saved:{...window.termaRuntimeSettingsModel.snapshot.saved, remote_desktop_quick_open_enabled:body.remote_desktop_quick_open_enabled === true}
             });
           }
           return quickOpenApi(path, options);
         };
         try {
-          await Promise.all([toggleRemoteDesktopQuickOpen(), toggleRemoteDesktopQuickOpen()]);
+          await window.termaRuntimeReader.load();
+          window.termaWorkspaceShell.showPrimary('remote');
+          const button = document.getElementById('workspace-remote-quick-open');
+          button.click(); button.click();
+          for (let attempt=0; attempt<100 && (writes.length<2 || button.getAttribute('aria-busy')==='true'); attempt++) {
+            await new Promise(resolve=>setTimeout(resolve,10));
+          }
           if (JSON.stringify(writes) !== JSON.stringify([true,false])) throw new Error('quick-open toggles were not serialized against the latest requested state');
-          if (remoteDesktopQuickOpen || remoteDesktopQuickOpenTogglePending !== 0 || remoteDesktopQuickOpenToggleTarget !== null) throw new Error('quick-open double toggle did not restore the original state');
+          if (button.getAttribute('aria-pressed')!=='false' || button.getAttribute('aria-busy')!=='false') throw new Error('quick-open double toggle did not restore the original state');
           await collectTranslatedHan('quick-open-notice-open', true, document.getElementById('toast'));
         } finally {
+          if(previousQuickOpen===null) localStorage.removeItem('remoteDesktopQuickOpen');
+          else localStorage.setItem('remoteDesktopQuickOpen',previousQuickOpen);
+          await window.termaRuntimeReader.load();
           api = quickOpenApi;
-          runtimeSettings = previousRuntimeSettings;
-          remoteDesktopQuickOpen = previousQuickOpen;
-          remoteDesktopQuickOpenToggleQueue = previousQuickOpenToggleQueue;
-          remoteDesktopQuickOpenToggleTarget = previousQuickOpenToggleTarget;
-          remoteDesktopQuickOpenTogglePending = previousQuickOpenTogglePending;
-          localStorage.setItem('remoteDesktopQuickOpen', previousQuickOpen ? '1' : '0');
-          renderExplorerTools();
+          window.termaRuntimeSettingsModel.snapshot = previousRuntimeSettings;
+          window.termaConnectionViews.renderExplorerTools();
         }
       });
       await runI18nScenario('connection-controls', async () => {
-        showPrimary('connections');
+        window.termaWorkspaceShell.showPrimary('connections');
         connectionBulkMode = true;
         selectedConnectionIds.clear();
-        renderConnections();
+        window.termaConnectionViews.renderConnections();
         await collectTranslatedHan('connection-bulk-open', true, document.getElementById('connectionGroups'));
         const menuEvent = {preventDefault(){},stopPropagation(){},clientX:120,clientY:120};
-        showConnectionExplorerMenu(menuEvent);
-        await collectTranslatedHan('connection-actions-open', true, document.getElementById('actionMenu'));
-        hideActionMenu();
-        showConnectionGroupMenu(menuEvent, languageRemoteConnection.group_name || 'UI Smoke');
+        await collectTranslatedHan('connection-explorer-actions', true, document.getElementById('explorerTools'));
+        window.termaConnectionMenu.openGroup(menuEvent, languageRemoteConnection.group_name || 'UI Smoke');
         await collectTranslatedHan('connection-group-menu-open', true, document.getElementById('actionMenu'));
         hideActionMenu();
-        openGroupModal(() => {});
+        window.termaConnectionViews.openGroupModal(() => {});
         await collectTranslatedHan('connection-group-modal-open', true, document.getElementById('modal'));
         closeModal();
         connectionBulkMode = false;
         selectedConnectionIds.clear();
-        renderConnections();
+        window.termaConnectionViews.renderConnections();
       });
       await runI18nScenario('connection-row-menu', async () => {
         const menuEvent = {preventDefault(){},stopPropagation(){},clientX:120,clientY:120};
-        showConnectionMenu(menuEvent, Number(languageRemoteConnection.id));
+        window.termaConnectionMenu.open(menuEvent, Number(languageRemoteConnection.id));
         const menu = document.getElementById('actionMenu');
         collectVisibleHan('connection-row-menu-immediate', true, menu);
         const labels = [...menu.querySelectorAll('button span')].map(item => item.textContent.trim());
@@ -3109,9 +3180,9 @@ app.whenReady().then(async () => {
         const host = document.createElement('div');
         document.body.appendChild(host);
         try {
-          host.innerHTML = renderRemoteProfileRow(profile);
+          host.innerHTML = window.termaConnectionViews.renderRemoteProfileRow(profile);
           collectVisibleHan('remote-profile-row-immediate', true, host);
-          showRemoteProfileMenu({preventDefault(){},stopPropagation(){},clientX:140,clientY:140}, profile.id);
+          window.termaRemoteList.show({preventDefault(){},stopPropagation(){},clientX:140,clientY:140}, profile.id);
           const menu = document.getElementById('actionMenu');
           collectVisibleHan('remote-profile-menu-immediate', true, menu);
           const labels = [...menu.querySelectorAll('button span')].map(item => item.textContent.trim());
@@ -3124,29 +3195,29 @@ app.whenReady().then(async () => {
         }
       });
       await runI18nScenario('quick-connection', async () => {
-        openQuickConnectionLauncher();
+        window.termaQuickViews.openQuickConnectionLauncher();
         await collectTranslatedHan('quick-connection-open', true, document.getElementById('modal'));
-        closeQuickConnectionLauncher();
+        window.termaQuickViews.closeQuickConnectionLauncher();
       });
       await runI18nScenario('linux-desktop-empty', async () => {
-        const previousState = {...linuxDesktopManagerState};
-        Object.assign(linuxDesktopManagerState, {connectionId:0,diagnostics:null,sshX11:null,error:null,loading:false,taskId:'',task:null,logs:[]});
+        const previousState = {...window.termaRemoteManagement.desktop.state};
+        Object.assign(window.termaRemoteManagement.desktop.state, {connectionId:0,diagnostics:null,sshX11:null,error:null,loading:false,taskId:'',task:null,logs:[]});
         try {
-          renderLinuxDesktopManager();
+          window.termaRemoteManagement.paintDesktop();
           await collectTranslatedHan('linux-desktop-empty-open', true, document.getElementById('view-linux-desktop'));
         } finally {
-          Object.assign(linuxDesktopManagerState, previousState);
+          Object.assign(window.termaRemoteManagement.desktop.state, previousState);
         }
       });
       await runI18nScenario('linux-desktop-error', async () => {
-        const previousState = {...linuxDesktopManagerState};
-        Object.assign(linuxDesktopManagerState, {connectionId:Number(languageRemoteConnection.id),diagnostics:null,sshX11:null,error:{message:'SSH 握手超时，请检查主机地址、端口和 SSH 服务',code:'SSH_HANDSHAKE_TIMEOUT'},loading:false,taskId:'',task:null,logs:[]});
+        const previousState = {...window.termaRemoteManagement.desktop.state};
+        Object.assign(window.termaRemoteManagement.desktop.state, {connectionId:Number(languageRemoteConnection.id),diagnostics:null,sshX11:null,error:{message:'SSH 握手超时，请检查主机地址、端口和 SSH 服务',code:'SSH_HANDSHAKE_TIMEOUT'},loading:false,taskId:'',task:null,logs:[]});
         try {
-          renderLinuxDesktopManager();
+          window.termaRemoteManagement.paintDesktop();
           await collectTranslatedHan('linux-desktop-error-open', true, document.getElementById('view-linux-desktop'));
           if (!(document.getElementById('view-linux-desktop')?.innerText || '').includes('SSH handshake timed out')) throw new Error('Linux desktop SSH error was not localized');
         } finally {
-          Object.assign(linuxDesktopManagerState, previousState);
+          Object.assign(window.termaRemoteManagement.desktop.state, previousState);
         }
       });
       await runI18nScenario('migration-snapshots', async () => {
@@ -3160,52 +3231,58 @@ app.whenReady().then(async () => {
           return scenarioApi(path, options);
         };
         try {
-          showImport(false);
-          await renderConfigSnapshots();
+          const service = exchange.open();
+          await service.snapshotList();
+          service.select('configSnapshots', false);
           await collectTranslatedHan('config-snapshots-open', true, document.getElementById('configSnapshots'));
         } finally {
           api = scenarioApi;
         }
       });
       await runI18nScenario('storage-update-status', async () => {
-        const previousDesktopSettings = desktopSettings;
-        const previousUpdateSettings = updateSettings;
-        desktopSettings = {
-          ...desktopSettings,
+        const previousDesktopSettings = window.termaDesktopStorage.snapshot;
+        const previousUpdateSettings = window.termaUpdateStatus.current();
+        window.termaDesktopStorage.snapshot = {
+          ...window.termaDesktopStorage.snapshot,
           available:true,
           storage_management_available:true,
           xserver:{available:true,installed:true,display:'127.0.0.1:0.0'},
           paths:{dataDir:'C:\\TermaSmoke\\data',sshDir:'C:\\TermaSmoke\\.ssh'},
-          settings:{...(desktopSettings?.settings || {}),dataMode:'user'}
+          settings:{...(window.termaDesktopStorage.snapshot?.settings || {}),dataMode:'user'}
         };
-        updateSettings = {current_version:'1.4.6',latest_version:'1.4.6',checked_at:'2026-08-15T07:58:07.000Z',published_at:'2026-08-15T00:00:00.000Z',update_available:false,release_notes:[{version:'1.4.6',published_at:'2026-08-15T00:00:00.000Z',notes:'Release notes fixture'}]};
+        await loadUpdate({current_version:'1.4.6',latest_version:'1.4.6',checked_at:'2026-08-15T07:58:07.000Z',published_at:'2026-08-15T00:00:00.000Z',update_available:false,release_notes:[{version:'1.4.6',published_at:'2026-08-15T00:00:00.000Z',notes:'Release notes fixture'}]});
         try {
-          renderSettings();
-          showSettingsSection('settings-general', {moveToWorkspace:false});
+          window.termaSettingsViews.render();
+          window.termaSettingsNavigation.show('settings-general', {moveToWorkspace:false});
           await collectTranslatedHan('storage-status-open', true, document.getElementById('settings-general'));
-          showSettingsSection('settings-about', {moveToWorkspace:false});
+          window.termaSettingsNavigation.show('settings-about', {moveToWorkspace:false});
           await collectTranslatedHan('update-status-open', true, document.getElementById('settings-about'));
         } finally {
-          desktopSettings = previousDesktopSettings;
-          updateSettings = previousUpdateSettings;
+          window.termaDesktopStorage.snapshot = previousDesktopSettings;
+          await loadUpdate(previousUpdateSettings);
         }
       });
         await runI18nScenario('fnos-managed-settings', async () => {
-          const host = document.createElement('div');
-          const previousUpdateSettings = updateSettings;
-          updateSettings = {current_version:'1.7.9',download_status:{managed_by:'fnos'}};
-          host.innerHTML = updateStatusHtml() + runtimeSettingsPanelHtml({listen_locked:true,saved:{listen_hosts:['0.0.0.0'],listen_port:8088},available_hosts:[]});
-          document.body.appendChild(host);
+          const host = $('view-settings');
+          const previousRuntime = window.termaRuntimeSettingsModel.snapshot;
+          const previousSection = window.termaSettingsNavigation.section;
+          const previousUpdateSettings = window.termaUpdateStatus.current();
+          await loadUpdate({current_version:'1.7.9',download_status:{managed_by:'fnos'}});
+          window.termaRuntimeSettingsModel.snapshot = window.termaRuntimeSettingsModel.normalize({...previousRuntime,listen_locked:true,saved:{...previousRuntime?.saved,listen_hosts:['0.0.0.0'],listen_port:8088}});
+          window.termaSettingsNavigation.show('settings-runtime', {moveToWorkspace:false});
+          window.termaSettingsViews.render();
           try {
             await collectTranslatedHan('fnos-managed-settings-open', true, host);
             if (host.querySelector('#downloadUpdateBtn') || !host.querySelector('#runtimeListenPort')?.disabled) throw new Error('fnOS package management controls are not restricted');
           } finally {
-            host.remove();
-            updateSettings = previousUpdateSettings;
+            window.termaRuntimeSettingsModel.snapshot = previousRuntime;
+            window.termaSettingsNavigation.show(previousSection,{moveToWorkspace:false});
+            window.termaSettingsViews.render();
+            await loadUpdate(previousUpdateSettings);
           }
         });
         await runI18nScenario('cache-clear-confirmation', async () => {
-        const decision = clearProgramCache('', null);
+        const decision = window.termaProgramCache.clear();
         await new Promise(resolve => setTimeout(resolve, 0));
         const modal = document.getElementById('modal');
         collectVisibleHan('cache-clear-confirmation-immediate', true, modal);
@@ -3214,16 +3291,19 @@ app.whenReady().then(async () => {
         await decision;
       });
       await runI18nScenario('sftp-single-download-task', async () => {
-        const host = document.createElement('div');
         const job = {id:'language-download-task',status:'done',type:'download',label:'SFTP 下载到本机',phase:'delivering',current:'发送到桌面',connection_name:'Language SSH',size:1,transferred:1,progress_unit:'items',delivery_status:'done',delivery_path:'C:/Desktop/notes.txt'};
-        host.innerHTML = renderSftpJob(job);
-        document.body.appendChild(host);
+        const previousTaskView = window.termaSftpTaskWorkspace.state.view;
+        window.termaSftpTaskWorkspace.state.view = 'history';
+        window.termaSftpTaskWorkspace.state.paint([job]);
         try {
+          const host = document.querySelector('#sftpTaskCenterList .sftp-job');
+          if (!host) throw new Error('single-item SFTP task was not rendered');
           collectVisibleHan('sftp-single-download-task-immediate', true, host);
-          const text = host.innerText || '';
+          const text = host.textContent || '';
           if (/\\b1 items\\b/.test(text) || !text.includes('1 item')) throw new Error('single-item SFTP task did not use the English singular');
         } finally {
-          host.remove();
+          window.termaSftpTaskWorkspace.state.view = previousTaskView;
+          window.termaSftpTaskWorkspace.state.paint(window.termaSftpTaskWorkspace.state.jobs);
         }
       });
       await runI18nScenario('system-log-compatibility', async () => {
@@ -3236,9 +3316,22 @@ app.whenReady().then(async () => {
           '[08:00:05] 通知：SFTP 下载到本机已完成：Game · 发送到桌面',
           '[08:00:06] 已保存到 C:/Desktop'
         ].join('\\n');
-        const translated = localizedSystemLogText(source, {sourceTitle:'system-2026-08-15'});
-        if (/[\u3400-\u9fff]/.test(translated)) throw new Error('known system log lines still contain Chinese: ' + translated);
-        if (!translated.includes('Terma is shutting down') || !translated.includes('Saved to C:/Desktop')) throw new Error('known system log templates were not localized');
+        const fixturesPath = 'system/language-smoke.log';
+        const fixturesKey = 'log-' + fixturesPath;
+        const previousApi = api;
+        api = async (path, options) => path.startsWith('/api/logs/read?')
+          && new URLSearchParams(path.split('?')[1]).get('path') === fixturesPath
+          ? {text:source,offset:0,end_offset:source.length,has_older:false,has_newer:false}
+          : previousApi(path, options);
+        try {
+          await window.termaLogReader.feature().service.open(fixturesPath, 'system-2026-08-15', true, fixturesKey, '');
+          const translated = window.termaLogReader.feature().element(fixturesKey)?.querySelector('.log-view')?.textContent || '';
+          if (/[㐀-鿿]/.test(translated)) throw new Error('known system log lines still contain Chinese: ' + translated);
+          if (!translated.includes('Terma is shutting down') || !translated.includes('Saved to C:/Desktop')) throw new Error('known system log templates were not localized');
+        } finally {
+          api = previousApi;
+          closeTabsByKey([fixturesKey]);
+        }
       }, {translate:false});
       const terminalSystemSamples = [
         tr('terminal:system.connecting', {endpoint:'tester@127.0.0.1:22'}),
@@ -3248,10 +3341,10 @@ app.whenReady().then(async () => {
         tr('terminal:system.reconnecting_preserved')
       ];
       for (const value of terminalSystemSamples) {
-        if (/[\u3400-\u9fff]/.test(value)) visibleHan.push('terminal-system: ' + value);
+        if (/[㐀-鿿]/.test(value)) visibleHan.push('terminal-system: ' + value);
       }
-      sftpLatestJobs = languageTaskFixtures;
-      updateSftpTaskCenter(languageTaskFixtures);
+      window.termaSftpTaskWorkspace.state.jobs = languageTaskFixtures;
+      window.termaSftpTaskWorkspace.state.paint(languageTaskFixtures);
       const forbiddenMixedTranslations = [
         '根Directory',
         'SFTP Connection已断开',
@@ -3272,8 +3365,8 @@ app.whenReady().then(async () => {
         activityOrder:Boolean(languageRect && themeRect && languageRect.bottom <= themeRect.top + 0.5),
         persisted:languageRequests.length === 1 && JSON.stringify(languageRequests[0]) === JSON.stringify({language:'en-US'}),
         settingsSelectorRemoved:!document.querySelector('#interfaceLanguage'),
-        resumeButton:englishTaskMarkup.includes('>Resume</button>'),
-        pauseButton:englishTaskMarkup.includes('>Pause</button>'),
+        resumeButton:englishTaskButtons.includes('Resume'),
+        pauseButton:englishTaskButtons.includes('Pause'),
         visibleHan:[...new Set([
           ...visibleHan,
           ...i18nScenarioErrors.map(value => 'scenario-error: ' + value),
@@ -3282,22 +3375,20 @@ app.whenReady().then(async () => {
         scenarioErrors:i18nScenarioErrors,
         mixedTranslations,
         thirdPartyLiveSwitch,
-        tasksPreserved:JSON.stringify(sftpLatestJobs.map(job=>job.id)) === JSON.stringify(languageTaskFixtures.map(job=>job.id)),
+        tasksPreserved:JSON.stringify(window.termaSftpTaskWorkspace.state.jobs.map(job=>job.id)) === JSON.stringify(languageTaskFixtures.map(job=>job.id)),
         tabsPreserved:JSON.stringify(tabs.map(tab=>tab.key)) === JSON.stringify(tabsBeforeLanguageSwitch)
       };
       if (i18nUi.visibleHan.length) console.log("[ui-smoke] visible Chinese in English mode: " + JSON.stringify(i18nUi.visibleHan));
-      updateNoticeReadVersion = '';
       sessionStorage.removeItem(UPDATE_NOTICE_SESSION_KEY);
-      syncUpdateNoticeDots();
-      showPrimary('settings');
-      activeSettingsSection = 'settings-general';
-      showSettingsSection('settings-general', {moveToWorkspace:false});
+      window.termaUpdateNotice.paint();
+      window.termaWorkspaceShell.showPrimary('settings');
+      window.termaSettingsNavigation.show('settings-general', {moveToWorkspace:false});
       await setTermaLanguage('zh-CN');
-      renderSettings();
-      renderExplorerTools();
-      showSettingsSection('settings-general', {moveToWorkspace:false});
-      sftpLatestJobs = previousLatestJobs;
-      updateSftpTaskCenter(previousLatestJobs);
+      window.termaSettingsViews.render();
+      window.termaConnectionViews.renderExplorerTools();
+      window.termaSettingsNavigation.show('settings-general', {moveToWorkspace:false});
+      window.termaSftpTaskWorkspace.state.jobs = previousLatestJobs;
+      window.termaSftpTaskWorkspace.state.paint(previousLatestJobs);
       const storagePrimaryRow = document.querySelector('.storage-settings-primary-row');
       const storagePrimaryControl = storagePrimaryRow?.firstElementChild;
       const storageSaveButton = storagePrimaryRow?.querySelector('.storage-settings-save');
@@ -3312,8 +3403,7 @@ app.whenReady().then(async () => {
       const storageCustomPath = document.querySelector('#desktopCustomDataDir');
       const originalStorageMode = storageMode?.value || '';
       const originalStorageCustomPath = storageCustomPath?.value || '';
-      const originalStorageButtonHtml = storageSaveButton?.innerHTML || '';
-      const originalChooseModal = chooseModal;
+      document.documentElement.dataset.uiSmokeStage = 'desktop-storage-migration';
       const originalApi = api;
       let storageMigrationCalls = [];
       let storageMigrationActions = [];
@@ -3321,44 +3411,49 @@ app.whenReady().then(async () => {
       let storageMigrationPayload = null;
       try {
         if (storageMode && storageSaveButton) {
-          const alternateMode = originalStorageMode === 'user'
+          const alternateMode = window.termaDesktopStorage.snapshot?.settings?.dataMode === 'user'
             ? (storageMode.querySelector('option[value="project"]') ? 'project' : 'custom')
             : 'user';
           storageMode.value = alternateMode;
           if (alternateMode === 'custom' && storageCustomPath) storageCustomPath.value = 'C:\\TermaSmokeMigration';
-          syncDesktopCustomDataMode();
+          window.termaDesktopStorage.syncDesktopCustomDataMode();
           api = async (path, options) => {
             storageMigrationCalls.push({path, options});
             storageMigrationPayload = JSON.parse(options?.body || '{}');
             return {ok:true, restart_required:true, migration_requested:Boolean(storageMigrationPayload.migrateData)};
           };
-          chooseModal = async (_title, _message, actions) => {
-            storageMigrationActions = actions.map(item=>item.label);
-            return 'cancel';
-          };
-          await saveDesktopSettings(storageSaveButton);
+          async function saveAndChoose(index) {
+            const operation = window.termaDesktopStorage.saveDesktopSettings(storageSaveButton);
+            const selector = '#modal [data-choice="' + index + '"]';
+            for (let frame = 0; frame < 20 && !document.querySelector(selector); frame++) await Promise.resolve();
+            const button = document.querySelector(selector);
+            if (!button) {closeModal(); await operation; throw new Error('Missing storage migration choice ' + index);}
+            storageMigrationActions = [...document.querySelectorAll('#modal [data-choice]')].map(item => item.textContent.trim());
+            button.click();
+            await operation;
+          }
+          await saveAndChoose(2);
           storageCancelBlockedRequest = storageMigrationCalls.length === 0;
-          chooseModal = async () => 'migrate';
-          await saveDesktopSettings(storageSaveButton);
+          await saveAndChoose(0);
         }
       } finally {
         api = originalApi;
-        chooseModal = originalChooseModal;
         if (storageMode) storageMode.value = originalStorageMode;
         if (storageCustomPath) storageCustomPath.value = originalStorageCustomPath;
         if (storageSaveButton) {
           storageSaveButton.disabled = false;
           storageSaveButton.removeAttribute('aria-busy');
-          storageSaveButton.innerHTML = originalStorageButtonHtml;
+          window.termaUiActions.end('settings:storage:save', storageSaveButton);
         }
-        syncDesktopCustomDataMode();
+        window.termaDesktopStorage.syncDesktopCustomDataMode();
       }
       const storageMigrationUi = {
         controlsFound:Boolean(storageMode && storageSaveButton),
         threeChoices:JSON.stringify(storageMigrationActions) === JSON.stringify(['迁移并重启','仅切换并重启','取消']),
         cancelBlockedRequest:storageCancelBlockedRequest,
         oneMigrationRequest:storageMigrationCalls.length === 1,
-        migrationRequested:storageMigrationPayload?.migrateData === true
+        migrationRequested:storageMigrationPayload?.migrateData === true,
+        actions:storageMigrationActions,payload:storageMigrationPayload,mode:originalStorageMode,currentSettings:window.termaDesktopStorage.snapshot?.settings
       };
       const tools = document.querySelector('#explorerTools');
       const settingsButtons = [...tools.querySelectorAll(':scope > button[data-explorer-section]')];
@@ -3385,49 +3480,45 @@ app.whenReady().then(async () => {
         absentFromGeneral:!document.querySelector('#settings-general #cacheManagementPanel')
       };
       const themeButton = tools.querySelector('[data-explorer-section="settings-theme"]');
-      localStorage.setItem(TERMA_APPEARANCE_STORAGE_KEY, JSON.stringify({preset:'luminous',frosted_strength:53,liquid_strength:39}));
-      termaAppearanceSettings = readTermaAppearanceSettings();
-      applyTermaAppearanceSettings();
-      syncTermaLiquidNavigation();
+      localStorage.setItem('termaAppearanceV1', JSON.stringify({preset:'luminous',frosted_strength:53,liquid_strength:39}));
+      await (${replayAppearanceBootstrap.toString()})();
       const themeUi = {
         entryHidden:!themeButton && !document.querySelector('#settings-theme'),
         controlsHidden:!document.querySelector('#themeAppearancePanel, #themeFrostedStrength, #themeLiquidStrength'),
-        oldConfigIgnored:localStorage.getItem(TERMA_APPEARANCE_STORAGE_KEY) === null,
-        clearPreset:document.documentElement.dataset.appearancePreset === 'clear' && termaAppearanceSettings.preset === 'clear',
+        oldConfigIgnored:localStorage.getItem('termaAppearanceV1') === null,
+        clearPreset:document.documentElement.dataset.appearancePreset === 'clear',
         noEffects:!document.documentElement.classList.contains('terma-liquid-enabled')
           && document.querySelectorAll('.terma-liquid-lens, .terma-liquid-track').length === 0,
         zeroBlur:getComputedStyle(document.documentElement).getPropertyValue('--terma-frosted-backdrop-blur').trim() === '0px'
       };
-      updateSettings = {current_version:'1.0.8',latest_version:'1.0.9',update_available:true,update_ignored:false};
-      updateNoticeReadVersion = '';
+      await loadUpdate({current_version:'1.0.8',latest_version:'1.0.9',update_available:true,update_ignored:false});
       sessionStorage.removeItem(UPDATE_NOTICE_SESSION_KEY);
-      syncUpdateNoticeDots();
+      window.termaUpdateNotice.paint();
       const updateDotIds = ['navSettingsUpdateDot','mobileSettingsUpdateDot','settingsExplorerUpdateDot'];
       const dotsBeforeRead = updateDotIds.map(id => ({id, found:Boolean(document.getElementById(id)), hidden:document.getElementById(id)?.hidden}));
-      updateSettings = {...updateSettings, update_ignored:true};
-      syncUpdateNoticeDots();
-      const ignoredVersionHidesNotice = !shouldShowUpdateNotice() && updateDotIds.every(id => document.getElementById(id)?.hidden === true);
-      updateSettings = {...updateSettings, latest_version:'1.0.10', update_ignored:false};
-      syncUpdateNoticeDots();
-      const newerAfterIgnoredShowsNotice = shouldShowUpdateNotice() && updateDotIds.every(id => document.getElementById(id)?.hidden === false);
-      updateSettings = {...updateSettings, latest_version:'1.0.9', update_ignored:false};
-      syncUpdateNoticeDots();
+      await loadUpdate({...window.termaUpdateStatus.current(), update_ignored:true});
+      window.termaUpdateNotice.paint();
+      const ignoredVersionHidesNotice = !window.termaUpdateNotice.visible() && updateDotIds.every(id => document.getElementById(id)?.hidden === true);
+      await loadUpdate({...window.termaUpdateStatus.current(), latest_version:'1.0.10', update_ignored:false});
+      window.termaUpdateNotice.paint();
+      const newerAfterIgnoredShowsNotice = window.termaUpdateNotice.visible() && updateDotIds.every(id => document.getElementById(id)?.hidden === false);
+      await loadUpdate({...window.termaUpdateStatus.current(), latest_version:'1.0.9', update_ignored:false});
+      window.termaUpdateNotice.paint();
       tools.querySelector('[data-explorer-section="settings-about"]')?.click();
       await Promise.resolve();
       const aboutVisible = [...document.querySelectorAll('#view-settings .settings-group')].filter(group => !group.hidden).map(group => group.id);
       const aboutActive = [...tools.querySelectorAll(':scope > button.active')].map(item => item.dataset.explorerSection);
       const dotsAfterRead = updateDotIds.map(id => ({id, found:Boolean(document.getElementById(id)), hidden:document.getElementById(id)?.hidden}));
       const storedReadVersion = sessionStorage.getItem(UPDATE_NOTICE_SESSION_KEY);
-      const sameVersionStaysRead = !shouldShowUpdateNotice();
-      updateSettings = {...updateSettings, latest_version:'1.0.9', update_available:false, republished_available:true, release_revision:2, update_ignored:false};
-      updateNoticeReadVersion = '';
+      const sameVersionStaysRead = !window.termaUpdateNotice.visible();
+      await loadUpdate({...window.termaUpdateStatus.current(), latest_version:'1.0.9', update_available:false, republished_available:true, release_revision:2, update_ignored:false});
       sessionStorage.removeItem(UPDATE_NOTICE_SESSION_KEY);
-      syncUpdateNoticeDots();
-      const republishedShowsNotice = shouldShowUpdateNotice() && updateDotIds.every(id => document.getElementById(id)?.hidden === false);
+      window.termaUpdateNotice.paint();
+      const republishedShowsNotice = window.termaUpdateNotice.visible() && updateDotIds.every(id => document.getElementById(id)?.hidden === false);
       tools.querySelector('[data-explorer-section="settings-about"]')?.click();
       await Promise.resolve();
       const republishedStoredReadVersion = sessionStorage.getItem(UPDATE_NOTICE_SESSION_KEY);
-      const republishedReadMarksNotice = republishedStoredReadVersion === '1.0.9:r2' && !shouldShowUpdateNotice();
+      const republishedReadMarksNotice = republishedStoredReadVersion === '1.0.9:r2' && !window.termaUpdateNotice.visible();
       tools.querySelector('[data-explorer-section="settings-basic"]')?.click();
       await Promise.resolve();
       const sessionUi = {
@@ -3461,9 +3552,9 @@ app.whenReady().then(async () => {
         && localDirectState.textContent.includes('已启用可信反向代理')
         && localDirectState.textContent.includes('桌面集成继续使用临时授权'));
       const localDirectUi = {control:Boolean(localDirectControl), defaultOff:localDirectDefaultOff, policyCopy:localDirectPolicyCopy, enabled:localDirectEnabled, proxyBlocked:localDirectProxyBlocked};
-      updateSettings = {...updateSettings, latest_version:'1.0.10'};
-      syncUpdateNoticeForCurrentSection();
-      const newerVersionShowsAgain = shouldShowUpdateNotice() && updateDotIds.every(id => document.getElementById(id)?.hidden === false);
+      await loadUpdate({...window.termaUpdateStatus.current(), latest_version:'1.0.10'});
+      window.termaUpdateNotice.sync();
+      const newerVersionShowsAgain = window.termaUpdateNotice.visible() && updateDotIds.every(id => document.getElementById(id)?.hidden === false);
 
       tools.querySelector('[data-explorer-section="settings-runtime"]')?.click();
       await Promise.resolve();
@@ -3472,10 +3563,10 @@ app.whenReady().then(async () => {
       const wildcard = runtimeHosts.find(input => input.value === '0.0.0.0');
       if (!wildcard) {
         const explorerSections = [...tools.querySelectorAll('[data-explorer-section]')].map(item => item.dataset.explorerSection);
-        throw new Error('runtime wildcard host missing; primary=' + primaryView + '; activeView=' + activeView + '; section=' + activeSettingsSection + '; explorer=' + explorerSections.join(','));
+        throw new Error('runtime wildcard host missing; primary=' + primaryView + '; activeView=' + activeView + '; section=' + window.termaSettingsNavigation.section + '; explorer=' + explorerSections.join(','));
       }
-      wildcard.checked = true;
-      syncRuntimeHostOptions(wildcard);
+      if (!wildcard.checked) wildcard.click();
+      await Promise.resolve();
       const wildcardCollapsed = runtimeHosts.filter(input => input !== wildcard).every(input => input.closest('.runtime-host-option')?.hidden);
       const runtimeUrlLinks = [...document.querySelectorAll('#runtimeCurrentUrls .runtime-url-row')];
       const runtimeUi = {
@@ -3483,16 +3574,15 @@ app.whenReady().then(async () => {
         selectedHosts:runtimeHosts.filter(input => input.checked).map(input => input.value),
         port:document.querySelector('#runtimeListenPort')?.value || '',
         sftpSettingsAbsent:!document.querySelector('#settings-general #sftpRecycleBinEnabled') && !document.querySelector('#settings-general #sftpMaxOpenFileSizeMb'),
-        terminalLatencySettingChecked:Boolean(document.querySelector('#terminalLatencyVisible')?.checked),
+        terminalLatencySettingAbsent:!document.querySelector('#terminalLatencyVisible'),
         wildcardCollapsed,
         urlLinks:runtimeUrlLinks.map(link => link.href),
         restartNotice:runtimeGroup?.textContent.includes('等待重启') || false
       };
 
       primaryView = 'import';
-      activeImportSection = 'import-source';
-      showImport(false);
-      renderExplorerTools();
+      exchange.open(true, 'import-source');
+      window.termaConnectionViews.renderExplorerTools();
       await Promise.resolve();
       const importButtons = [...tools.querySelectorAll(':scope > button[data-explorer-section]')];
       const importLabels = importButtons.map(button => button.querySelector('span')?.textContent.trim() || '');
@@ -3505,7 +3595,7 @@ app.whenReady().then(async () => {
       for (const button of importButtons) {
         button.click();
         await Promise.resolve();
-        const visible = Object.keys(IMPORT_SECTION_META).filter(id => document.getElementById(id) && !document.getElementById(id).hidden);
+        const visible = importButtons.map(item => item.dataset.explorerSection).filter(id => document.getElementById(id) && !document.getElementById(id).hidden);
         const active = [...tools.querySelectorAll(':scope > button.active')].map(item => item.dataset.explorerSection);
         importChecks.push({requested:button.dataset.explorerSection, visible, active, resultsVisible: Boolean(importResults?.offsetParent)});
       }
@@ -3547,28 +3637,25 @@ app.whenReady().then(async () => {
         treeHidden:Boolean(document.querySelector('#connectionGroups')?.hidden)
       };
     } finally {
-      try { if (thirdPartyLiveZmodemSession) terminalZmodemRender(thirdPartyLiveZmodemSession, {hidden:true}); } catch {}
+      try { if (thirdPartyLiveZmodemSession) window.termaTerminalZmodem.render(thirdPartyLiveZmodemSession, {hidden:true}); } catch {}
       try { thirdPartyLiveEditor?.destroy(); } catch {}
       thirdPartyLiveFixture?.remove();
-      updateSettings = previousUpdate;
-      runtimeSettings = previousRuntimeSettings;
-      runtimeSettingsMessage = previousRuntimeMessage;
-      runtimeSettingsCheck = previousRuntimeCheck;
+      await loadUpdate(previousUpdate);
+      window.termaRuntimeSettingsModel.snapshot = previousRuntimeSettings;
       securitySettings = previousSecurity;
-      desktopSettings = previousDesktopSettings;
-      sftpLatestJobs = previousLatestJobs;
-      updateSftpTaskCenter(previousLatestJobs);
+      window.termaDesktopStorage.snapshot = previousDesktopSettings;
+      window.termaSftpTaskWorkspace.state.jobs = previousLatestJobs;
+      window.termaSftpTaskWorkspace.state.paint(previousLatestJobs);
       await setTermaLanguage(previousLanguage);
-      updateNoticeReadVersion = previousReadVersion;
-      terminalLatencyVisible = previousLatencyVisible;
-      activeSettingsSection = previousSettingsSection;
-      activeImportSection = previousImportSection;
+      window.termaSettingsNavigation.show(previousSettingsSection, {moveToWorkspace:false});
+      if (previousImportSection) exchange.current()?.select(previousImportSection, false);
       if (previousStoredVersion === null) sessionStorage.removeItem(UPDATE_NOTICE_SESSION_KEY);
       else sessionStorage.setItem(UPDATE_NOTICE_SESSION_KEY, previousStoredVersion);
+      if (workspaceTabByKey(previousTabKey)) activateTab(previousTabKey);
       primaryView = previousPrimary;
       activeView = previousActiveView;
-      renderExplorerTools();
-      syncUpdateNoticeDots();
+      window.termaConnectionViews.renderExplorerTools();
+      window.termaUpdateNotice.paint();
     }
   })().catch(error => {
     const stage = document.documentElement.dataset.uiSmokeStage || 'settings-and-import-navigation';
@@ -3576,44 +3663,55 @@ app.whenReady().then(async () => {
   })`);
   console.log("[ui-smoke] about modal");
   const aboutUi = await window.webContents.executeJavaScript(`(async () => {
+    const loadUpdate = (${loadUpdateFixture.toString()});
+    const originalApi = api;
+    let updateSettings = null;
     try {
-      showPrimary('settings');
+      window.termaWorkspaceShell.showPrimary('settings');
       for (let i = 0; i < 40 && (activeView !== 'settings' || !document.querySelector('#settings-about')); i += 1) {
         await new Promise(resolve => setTimeout(resolve, 50));
       }
       const aboutButton = document.querySelector('#explorerTools [data-explorer-section="settings-about"]');
       aboutButton?.click();
-      await Promise.resolve();
+      for (let i = 0; i < 80; i += 1) {
+        if (document.querySelector('#explorerTools [data-explorer-section="settings-about"]')?.classList.contains('active')
+          && document.querySelector('#settings-about .about-product')
+          && !document.querySelector('#settings-about')?.hidden) break;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
       const section = [...document.querySelectorAll('#settings-about')].find(item=>!item.hidden&&item.getClientRects().length)
         || document.querySelector('#settings-about');
-      const visibleGroups = [...document.querySelectorAll('#view-settings .settings-group')].filter(group => !group.hidden).map(group => group.id);
+      const visibleGroups = [...(section?.closest('[data-terma-settings-owned="page"]')?.querySelectorAll('.settings-group') || [])].filter(group => !group.hidden).map(group => group.id);
       const sourceLink = [...(section?.querySelectorAll('.about-actions a') || [])]
-        .find(link => link.href === aboutSettings?.repository_url);
+        .find(link => link.href === window.termaSettingsViews.currentAbout()?.repository_url);
       const trigger = [...document.querySelectorAll('#openLicenseBtn')].find(item=>item.getClientRects().length)
         || document.querySelector('#openLicenseBtn');
       if (!section || !trigger) return {found:false, visibleGroups};
       trigger.click();
-      for (let i = 0; i < 20 && document.querySelector('#modal')?.hidden; i += 1) {
+      for (let i = 0; i < 80 && !section.querySelector('.terma-about-modal'); i += 1) {
         await new Promise(resolve => setTimeout(resolve, 25));
       }
       const modal = document.querySelector('#modal');
-      const card = modal?.querySelector('.license-modal');
-      const text = modal?.querySelector('#licenseText');
+      const backdrop = section.querySelector('.terma-about-modal-backdrop');
+      const card = backdrop?.querySelector('.terma-about-modal');
+      const text = card?.querySelector('pre');
       const cardRect = card?.getBoundingClientRect();
       const textStyle = text ? getComputedStyle(text) : null;
       const result = {
         found:true,
-        aboutSelected:visibleGroups.length === 1 && visibleGroups[0] === 'settings-about' && aboutButton?.classList.contains('active'),
+        visibleGroups,
+        navigation:{primary:primaryView,section:window.termaSettingsNavigation.section,buttons:[...document.querySelectorAll('#explorerTools [data-explorer-section]')].map(button=>({section:button.dataset.explorerSection,active:button.classList.contains('active'),current:button.getAttribute('aria-current')}))},
+        aboutSelected:visibleGroups.length === 1 && visibleGroups[0] === 'settings-about' && document.querySelector('#explorerTools [data-explorer-section="settings-about"]')?.classList.contains('active'),
         duplicateSettingsNav:document.querySelectorAll('.settings-nav').length,
-        versionMatches:Boolean(aboutSettings?.version && section.textContent.includes('版本 ' + aboutSettings.version)),
+        versionMatches:Boolean(window.termaSettingsViews.currentAbout()?.version && section.textContent.includes('版本 ' + window.termaSettingsViews.currentAbout().version)),
         licenseMetadata:section.textContent.includes('GPL-3.0-only'),
-        sourceLink:Boolean(sourceLink && sourceLink.target === '_blank' && sourceLink.relList.contains('noopener') && sourceLink.href === aboutSettings?.repository_url),
-        modalOpen:Boolean(modal && !modal.hidden && card),
-        accessible:Boolean(card?.getAttribute('role') === 'dialog' && card?.getAttribute('aria-modal') === 'true' && card?.getAttribute('aria-labelledby') === 'licenseModalTitle'),
-        fullText:Boolean(text?.textContent.includes('GNU GENERAL PUBLIC LICENSE') && text?.textContent.includes('END OF TERMS AND CONDITIONS') && text.textContent === aboutSettings?.license_text),
+        sourceLink:Boolean(sourceLink && sourceLink.target === '_blank' && sourceLink.relList.contains('noopener') && sourceLink.href === window.termaSettingsViews.currentAbout()?.repository_url),
+        modalOpen:Boolean(card?.checkVisibility()),
+        accessible:Boolean(card?.getAttribute('role') === 'dialog' && card?.getAttribute('aria-modal') === 'true' && document.getElementById(card?.getAttribute('aria-labelledby'))?.textContent),
+        fullText:Boolean(text?.textContent.includes('GNU GENERAL PUBLIC LICENSE') && text?.textContent.includes('END OF TERMS AND CONDITIONS') && text.textContent === window.termaSettingsViews.currentAbout()?.license_text),
         textScrollable:Boolean(text && text.scrollHeight > text.clientHeight && textStyle?.overflowY === 'auto'),
         cardWithinViewport:Boolean(cardRect && cardRect.left >= -0.5 && cardRect.right <= innerWidth + 0.5 && cardRect.top >= -0.5 && cardRect.bottom <= innerHeight + 0.5),
-        closeFocused:document.activeElement?.id === 'licenseModalClose'
+        closeFocused:document.activeElement === card?.querySelector('.terma-about-close')
       };
       const originalElementFocus = HTMLElement.prototype.focus;
       let triggerFocusCalls = 0;
@@ -3622,12 +3720,12 @@ app.whenReady().then(async () => {
           if (this?.id === 'openLicenseBtn') triggerFocusCalls += 1;
           return originalElementFocus.apply(this, args);
         };
-        modal.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}));
+        backdrop.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}));
         await new Promise(resolve => setTimeout(resolve, 0));
-        result.backdropIgnored = Boolean(!modal.hidden && modal.querySelector('.license-modal') && modal.querySelector('#licenseText')?.textContent === aboutSettings?.license_text);
+        result.backdropIgnored = Boolean(card?.isConnected && card.checkVisibility() && text?.textContent === window.termaSettingsViews.currentAbout()?.license_text);
         document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
         await new Promise(resolve => setTimeout(resolve, 25));
-        result.closedByEscape = Boolean(modal?.hidden && !modal.querySelector('.license-modal'));
+        result.closedByEscape = !section.querySelector('.terma-about-modal');
         result.focusReturned = triggerFocusCalls > 0 || document.activeElement?.id === 'openLicenseBtn';
       } finally {
         HTMLElement.prototype.focus = originalElementFocus;
@@ -3636,7 +3734,17 @@ app.whenReady().then(async () => {
       result.followupBackdropClean = modal.onclick === null;
       modal.querySelector('button[data-choice]')?.click();
       result.followupResolved = await followup === 'ok';
-      const previousUpdate = updateSettings;
+      const previousUpdate = window.termaUpdateStatus.current();
+      // Explicit states below must not race a late settings-entry refresh.
+      api = (url, options) => url.startsWith('/api/updates/check') ? Promise.resolve(window.termaUpdateStatus.current()) : originalApi(url, options);
+      // The settings page starts a real refresh on entry. Keep its response from
+      // replacing the explicit download states exercised below.
+      window.termaSettingsRequests.updates.cancel();
+      window.termaUpdateDownloads.stopPolling();
+      const syncUpdateUi = async () => {
+        await loadUpdate(updateSettings);
+        await new Promise(resolve => setTimeout(resolve, 30));
+      };
       updateSettings = {
         current_version:'1.0.8',
         latest_version:'1.0.9',
@@ -3662,7 +3770,7 @@ app.whenReady().then(async () => {
           can_open:true
         }
       };
-      document.querySelector('#updateCheckArea').innerHTML = updateStatusHtml();
+      await syncUpdateUi();
       const updateArea = document.querySelector('#updateCheckArea');
       const updateLink = updateArea.querySelector('a');
       const releaseEntries = [...updateArea.querySelectorAll('.update-release-entry')];
@@ -3692,7 +3800,7 @@ app.whenReady().then(async () => {
       const notesBeforeRefresh = updateArea.querySelector('.update-notes');
       const requestedNotesScroll = Math.min(120, Math.max(0, notesBeforeRefresh.scrollHeight - notesBeforeRefresh.clientHeight));
       notesBeforeRefresh.scrollTop = requestedNotesScroll;
-      renderUpdateStatus();
+      await syncUpdateUi();
       const preservedNotesScroll = updateArea.querySelector('.update-notes')?.scrollTop || 0;
       const probingStateReady = updateArea.textContent.includes(tr('settings:auto.update_speed_test'))
         && updateArea.textContent.includes(tr('settings:updates.testing_routes'))
@@ -3708,7 +3816,7 @@ app.whenReady().then(async () => {
         bytes_downloaded:5242880,
         progress_percent:50
       };
-      updateArea.innerHTML = updateStatusHtml();
+      await syncUpdateUi();
       const selectedRouteReady = updateArea.textContent.includes('ghfast.top'+tr('settings:updates.speed_suffix',{speed:'2.0 MB/s'}))
         && updateArea.textContent.includes(tr('settings:auto.route_fallback'))
         && updateArea.textContent.includes('50% · 5.0 MB / 10.0 MB');
@@ -3718,7 +3826,7 @@ app.whenReady().then(async () => {
         bytes_downloaded:10485760,
         progress_percent:99
       };
-      updateArea.innerHTML = updateStatusHtml();
+      await syncUpdateUi();
       const verifyingStateReady = updateArea.textContent.includes('正在校验')
         && updateArea.textContent.includes(tr('settings:updates.verifying_sha', {progress:100}));
       updateSettings = {
@@ -3727,7 +3835,7 @@ app.whenReady().then(async () => {
         update_available:false,
         download_status:{state:'failed', error:'fetch failed', progress_percent:18}
       };
-      updateArea.innerHTML = updateStatusHtml();
+      await syncUpdateUi();
       const staleFailureCleared = updateArea.textContent.includes(tr('settings:auto.update_latest'))
         && updateArea.textContent.includes(tr('settings:auto.update_no_download'))
         && !updateArea.textContent.includes(tr('settings:auto.update_failed'))
@@ -3757,7 +3865,7 @@ app.whenReady().then(async () => {
         can_open:true,
         can_open_directory:true
       };
-      updateArea.innerHTML = updateStatusHtml();
+      await syncUpdateUi();
       const portableButtons = [...updateArea.querySelectorAll('button')].map(button=>button.textContent.trim());
       const portableActionsReady = portableButtons.includes(tr('settings:updates.open_download_directory'))
         && portableButtons.includes(tr('settings:auto.update_redownload'))
@@ -3768,31 +3876,27 @@ app.whenReady().then(async () => {
         asset_name:'Terma-1.0.9-windows-x64-installer.exe',
         package_type:'installer'
       };
-      updateArea.innerHTML = updateStatusHtml();
+      await syncUpdateUi();
       const installerButtons = [...updateArea.querySelectorAll('button')].map(button=>button.textContent.trim());
       const installerActionsReady = installerButtons.includes(tr('settings:updates.open_verified_package'))
         && installerButtons.includes(tr('settings:updates.open_download_directory'))
         && installerButtons.includes(tr('settings:auto.update_redownload'));
-      const previousConfirmModal = confirmModal;
+      document.documentElement.dataset.uiSmokeStage = 'update-republished-confirmation';
+      updateSettings = {
+        ...updateSettings,
+        current_version:'1.0.9',
+        latest_version:'1.0.9',
+        update_available:false,
+        republished_available:true,
+        release_revision:2,
+        download_status:{state:'idle'}
+      };
+      await loadUpdate(updateSettings);
       let republishedConfirmation = '';
-      try {
-        confirmModal = async message => {
-          republishedConfirmation = String(message || '');
-          return false;
-        };
-        updateSettings = {
-          ...updateSettings,
-          current_version:'1.0.9',
-          latest_version:'1.0.9',
-          update_available:false,
-          republished_available:true,
-          release_revision:2,
-          download_status:{state:'idle'}
-        };
-        await downloadUpdatePackage();
-      } finally {
-        confirmModal = previousConfirmModal;
-      }
+      await window.termaUpdateDownloads.download(false, async message => {
+        republishedConfirmation = String(typeof message === 'function' ? message() : message || '');
+        return false;
+      });
       const republishedConfirmationReady = republishedConfirmation.includes('v1.0.9')
         && !republishedConfirmation.includes('{{version}}');
       result.updateUiParts = {updateCardReady,probingStateReady,selectedRouteReady,verifyingStateReady,staleFailureCleared,portableActionsReady,installerActionsReady,republishedConfirmationReady,republishedConfirmation,portableButtons,installerButtons,text:updateArea.textContent.replace(/\s+/g,' ').trim()};
@@ -3805,15 +3909,18 @@ app.whenReady().then(async () => {
         && installerActionsReady
         && republishedConfirmationReady;
       updateSettings = previousUpdate;
+      await syncUpdateUi();
       return result;
     } catch (error) {
       return {error:error?.stack || error?.message || String(error)};
+    } finally {
+      api = originalApi;
     }
   })()`);
   console.log("[ui-smoke] ssh host trust");
   const hostTrustUi = await window.webContents.executeJavaScript(`(async () => {
     const modal=document.querySelector('#modal');
-    const unknownPromise=sshHostTrustModal({
+    const unknownPromise=window.termaWorkspaceRequestPort.confirmHost({
       token:'unknown-token',state:'unknown',host_label:'server.example:22',key_type:'ssh-ed25519',
       fingerprint:'SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
     });
@@ -3830,7 +3937,7 @@ app.whenReady().then(async () => {
     modal.querySelector('#sshHostTrustOnce')?.click();
     unknown.result=await unknownPromise;
 
-    const changedPromise=sshHostTrustModal({
+    const changedPromise=window.termaWorkspaceRequestPort.confirmHost({
       token:'changed-token',state:'changed',host_label:'server.example:22',key_type:'ssh-ed25519',
       previous_fingerprint:'SHA256:OLD',fingerprint:'SHA256:NEW'
     });
@@ -3846,16 +3953,22 @@ app.whenReady().then(async () => {
     changedCard?.querySelector('#sshHostTrustPersist')?.click();
     changed.result=await changedPromise;
 
-    const cancelPromise=sshHostTrustModal({state:'unknown',host_label:'cancel.example:22',key_type:'ssh-rsa',fingerprint:'SHA256:CANCEL'});
+    const cancelPromise=window.termaWorkspaceRequestPort.confirmHost({state:'unknown',host_label:'cancel.example:22',key_type:'ssh-rsa',fingerprint:'SHA256:CANCEL'});
     await Promise.resolve();
     modal.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
     const escapeCancelled=await cancelPromise===null&&modal.hidden;
 
-    const previousHosts=sshTrustedHosts;
-    sshTrustedHosts=[{id:'host-record',host:'server.example',port:22,host_label:'server.example:22',key_type:'ssh-ed25519',fingerprint:'SHA256:TRUSTED',updated_at:Date.now()}];
-    const fixture=document.createElement('div');
-    fixture.innerHTML=sshHostTrustPanelHtml();
-    document.body.appendChild(fixture);
+    const requestPort=window.termaWorkspaceRequestPort, previousFetch=requestPort.fetch;
+    let observedPageSize;
+    requestPort.fetch=async (pathname, options) => {
+      if(!pathname.startsWith('/api/ssh/trusted-hosts?')) return previousFetch(pathname, options);
+      observedPageSize=new URL(pathname,location.origin).searchParams.get('page_size');
+      return Response.json({page:1,page_size:5,total:1,total_pages:1,hosts:[{id:'host-record',host:'server.example',port:22,host_label:'server.example:22',key_type:'ssh-ed25519',fingerprint:'SHA256:TRUSTED',updated_at:Date.now()}]});
+    };
+    const previousTab = activeTabKey, previousSection = window.termaSettingsNavigation.section;
+    try { await window.termaSettingsViews.open(); } finally { requestPort.fetch=previousFetch; }
+    const fixture = $('view-settings');
+    window.termaSettingsNavigation.show('settings-basic', {moveToWorkspace:false});
     const trustPanel=fixture.querySelector('#sshHostTrustPanel');
     const settings={
       visible:Boolean(trustPanel&&getComputedStyle(trustPanel).display!=='none'),
@@ -3863,15 +3976,16 @@ app.whenReady().then(async () => {
       removeButton:Boolean(trustPanel?.querySelector('button[aria-label="删除信任记录"]')),
       searchInput:Boolean(trustPanel?.querySelector('#sshHostTrustSearch')),
       searchPlaceholder:Boolean(trustPanel?.querySelector('#sshHostTrustSearch')?.placeholder),
-      pageSizeDefault:sshTrustedHostsPageSize===5
+      pageSizeDefault:observedPageSize==='5'
     };
-    fixture.remove();
-    sshTrustedHosts=previousHosts;
+    window.termaSettingsNavigation.show(previousSection,{moveToWorkspace:false});
+    if (workspaceTabByKey(previousTab)) activateTab(previousTab);
+    await window.termaTrustedHosts.load();
     return {unknown,changed,escapeCancelled,settings};
   })()`);
   console.log("[ui-smoke] menus and actions");
   const desktopMenu = await window.webContents.executeJavaScript(`(async () => {
-    showPrimary('connections');
+    window.termaWorkspaceShell.showPrimary('connections');
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     if (!document.querySelector('.conn-row')) document.querySelector('.group-head')?.click();
     document.querySelector('.conn-actions .icon-button[title="更多操作"]')?.click();
@@ -3906,7 +4020,7 @@ app.whenReady().then(async () => {
   const runningActions = await window.webContents.executeJavaScript(`(() => {
     const connection = connections[0];
     const previousForwards = connection?.forwards;
-    const previousRunningFilter = runningFilter;
+    const previousRunningFilter = localStorage.getItem('runningFilter');
     const fixture = {
       id:990001,
       connection_id:Number(connection?.id || 0),
@@ -3925,10 +4039,11 @@ app.whenReady().then(async () => {
     try {
       if (!connection) return {found:false,reason:'connection fixture missing'};
       connection.forwards = [fixture];
-      runningFilter = '';
+      localStorage.removeItem('runningFilter');
       runningOpen.add(connection.name);
-      showPrimary('running');
-      renderRunningForwards();
+      window.termaWorkspaceShell.showPrimary('running');
+      window.termaForwardWorkspace.renderRunning();
+      window.termaRunning.service().search('');
       const actions = document.querySelector('.running-actions');
       const open = actions?.querySelector('.open-forward-link');
       const buttons = [...(actions?.querySelectorAll('button') || [])];
@@ -3963,36 +4078,39 @@ app.whenReady().then(async () => {
       };
     } finally {
       if (connection) connection.forwards = previousForwards;
-      runningFilter = previousRunningFilter;
+      window.termaRunning.service().search(previousRunningFilter || '');
+      if (previousRunningFilter === null) localStorage.removeItem('runningFilter');
     }
   })()`);
   console.log("[ui-smoke] auth fields");
-  const authUi = await window.webContents.executeJavaScript(`(() => {
-    newConnection();
+  const authUi = await window.webContents.executeJavaScript(`(async () => {
+    window.termaConnectionFormWorkspace.create();
     const auth = document.querySelector('#conn_auth_type');
     const keyBox = document.querySelector('#keyAuthBox');
     const passwordBox = document.querySelector('#passwordAuthBox');
     if (!auth || !keyBox || !passwordBox) return {found:false};
     auth.value = 'password';
-    toggleAuthFields();
+    window.termaConnectionFormWorkspace.updateAuth($('connectionForm'));
     const passwordMode = {
       keyHidden:keyBox.hidden && getComputedStyle(keyBox).display === 'none',
       keyDisabled:Array.from(keyBox.querySelectorAll('input,select,button')).every(control=>control.disabled),
       passwordVisible:!passwordBox.hidden && getComputedStyle(passwordBox).display !== 'none',
       passwordEnabled:Array.from(passwordBox.querySelectorAll('input,select,button')).every(control=>!control.disabled)
     };
-    const passwordInputs=[...document.querySelectorAll('#connectionForm input[data-password-visibility-input]')];
+    const passwordInputs=[...document.querySelectorAll('#connectionForm .password-input-control input')];
     const passwordToggleCount=passwordInputs.length===2&&passwordInputs.every(input=>input.closest('.password-input-control')?.querySelectorAll('.password-visibility-toggle').length===1);
     const passwordInput=document.querySelector('#conn_password');
     const passwordToggle=passwordInput?.closest('.password-input-control')?.querySelector('.password-visibility-toggle');
     passwordInput.value='connection-visibility-secret';
     passwordToggle?.click();
+    await Promise.resolve();
     const passwordShown=passwordInput.type==='text'&&passwordInput.value==='connection-visibility-secret'&&passwordToggle?.getAttribute('aria-pressed')==='true';
     passwordToggle?.click();
+    await Promise.resolve();
     const passwordHidden=passwordInput.type==='password'&&passwordInput.value==='connection-visibility-secret'&&passwordToggle?.getAttribute('aria-pressed')==='false';
     const passwordEyeToggle=Boolean(passwordToggleCount&&passwordShown&&passwordHidden);
     auth.value = 'key';
-    toggleAuthFields();
+    window.termaConnectionFormWorkspace.updateAuth($('connectionForm'));
     const keyMode = {
       keyVisible:!keyBox.hidden && getComputedStyle(keyBox).display !== 'none',
       keyEnabled:Array.from(keyBox.querySelectorAll('input,select,button')).every(control=>!control.disabled),
@@ -4030,8 +4148,8 @@ app.whenReady().then(async () => {
       return {};
     };
     notify=(...args)=>notices.push(args);
-    showPrimary('connections');
-    newConnection();
+    window.termaWorkspaceShell.showPrimary('connections');
+    window.termaConnectionFormWorkspace.create();
     const form=$("connectionForm");
     const field=id=>form?.querySelector('#'+id);
     if(!form || !field('conn_host')) {
@@ -4049,13 +4167,13 @@ app.whenReady().then(async () => {
     field('conn_terminal_profile_kind').value='custom';
     field('conn_terminal_program_path').value='/custom/my-shell';
     field('conn_terminal_program_args').value='--interactive';
-    toggleConnectionTerminalStartup(form);
-    await testConnectionForm(field('connTestBtn'));
+    window.termaConnectionTerminal.toggleStartup(form);
+    await window.termaConnectionFormActions.test(form, field('connTestBtn'));
     const select=field('conn_terminal_profile_select');
     const customPreserved=field('conn_terminal_program_path').value==='/custom/my-shell'
       && select.value==='__current__';
     const pythonOption=[...select.options].find(option=>option.textContent.includes('Python 3'));
-    if(pythonOption) applyConnectionTerminalProfile(pythonOption.value,select);
+    if(pythonOption) window.termaConnectionTerminal.applyProfile(pythonOption.value,select);
     const detectedApplied=field('conn_terminal_program_path').value==='/usr/bin/python3'
       && field('conn_terminal_program_args').value==='-i'
       && field('conn_terminal_profile_kind').value==='repl'
@@ -4064,7 +4182,7 @@ app.whenReady().then(async () => {
     field('conn_host').dispatchEvent(new Event('input',{bubbles:true}));
     const stale=form._terminalProbeStale===true
       && field('connTerminalDetectionStatus')?.textContent.includes('已变化');
-    renderConnectionExtraArgsDiagnostics(form,[{
+    window.termaConnectionFormWorkspace.advanced.render(form,[{
       severity:'error',
       line:1,
       start:0,
@@ -4079,7 +4197,7 @@ app.whenReady().then(async () => {
     advanced.open=false;
     field('connTerminalDetectionStatus').className='terminal-startup-detection error';
     field('connTerminalDetectionStatus').textContent='无法检测远端启动环境。';
-    updateConnectionAdvancedStatus(form);
+    window.termaConnectionFormWorkspace.advanced.update(form);
     const terminalIssueExpanded=advanced?.open===true
       && field('connAdvancedStatus')?.textContent.includes('终端检测失败');
     const card=form.querySelector('.terminal-startup-card');
@@ -4098,17 +4216,7 @@ app.whenReady().then(async () => {
       parameterIssueExpanded,
       terminalIssueExpanded,
       noOverflow:Boolean(cardRect&&cardRect.left>=formRect.left-0.5&&cardRect.right<=formRect.right+0.5),
-      pathRequired:field('conn_terminal_program_path').required===true,
-      batchHealthIdentifiesServers:(()=>{
-        const text=formatAllHealthMessage([
-          {id:901,name:'生产机 A',ssh_user:'root',ssh_host:'prod-a.test',ssh_port:22,ok:false,status:'异常',ssh:{ok:false,output:'参数错误 A'},forwards:[]},
-          {id:902,name:'生产机 B',ssh_user:'deploy',ssh_host:'prod-b.test',ssh_port:2202,ok:false,status:'异常',ssh:{ok:false,output:'参数错误 B'},forwards:[]}
-        ]);
-        return text.includes('生产机 A · root@prod-a.test:22')
-          && text.includes('参数错误 A')
-          && text.includes('生产机 B · deploy@prod-b.test:2202')
-          && text.includes('参数错误 B');
-      })()
+      pathRequired:field('conn_terminal_program_path').required===true
     };
     api=originalApi;
     notify=originalNotify;
@@ -4117,28 +4225,27 @@ app.whenReady().then(async () => {
   console.log("[ui-smoke] save and clear form");
   const saveAndClearUi = await window.webContents.executeJavaScript(`(async () => {
     const originalApi = api;
-    const originalLoadAll = loadAll;
-    const originalLoadKeys = loadKeys;
+    const originalLoadAll = window.termaWorkspaceRefresh.load;
     const originalNotify = notify;
-    const originalOpenTerminal = openTerminal;
+    const originalSelectForSave = window.termaConnectionController.select;
     const originalCloseTabsByKey = closeTabsByKey;
     const saved = [];
     const notices = [];
     let openedConnectionId = 0;
     let closedSourceTab = false;
     api = async (url, options={}) => {
+      if(url==='/api/identity-files') return [];
       if(url==='/api/connections'&&options.method==='POST') {
         saved.push(JSON.parse(options.body));
         return {id:9902};
       }
       return {};
     };
-    loadAll = async () => {};
-    loadKeys = async () => {};
+    window.termaWorkspaceRefresh.load = async () => {};
     notify = (...args) => notices.push(args);
-    openTerminal = id => { openedConnectionId=Number(id); return 'terminal-'+id; };
+    window.termaConnectionController.select = id => { openedConnectionId=Number(id); };
     closeTabsByKey = keys => { closedSourceTab=Array.isArray(keys)&&keys.includes(activeTabKey); };
-    newConnection();
+    window.termaConnectionFormWorkspace.create();
     document.querySelector('#conn_name').value='save-clear-test';
     document.querySelector('#conn_user').value='root';
     document.querySelector('#conn_host').value='example.test';
@@ -4162,7 +4269,7 @@ app.whenReady().then(async () => {
       notice:notices.some(args=>String(args[0]).includes('表单已清空')),
       readyAgain:button?.disabled===false&&button?.textContent.trim()==='保存并清空'
     };
-    newConnection();
+    window.termaConnectionFormWorkspace.create();
     document.querySelector('#conn_name').value='save-connect-test';
     document.querySelector('#conn_user').value='root';
     document.querySelector('#conn_host').value='connect.example.test';
@@ -4170,13 +4277,13 @@ app.whenReady().then(async () => {
     const connectVisible=Boolean(connectButton&&!connectButton.hidden&&getComputedStyle(connectButton).display!=='none');
     connectButton?.click();
     await new Promise(resolve=>setTimeout(resolve,25));
-    const editFixture={id:9903,name:'edit-save-actions',group_name:TERMA_DEFAULT_CONNECTION_GROUP,ssh_user:'root',ssh_host:'edit.example.test',ssh_port:22,sort_order:1,auth_type:'key',identity_file:'',ssh_agent_mode:'auto',jump_connection_id:null,connect_timeout_seconds:10,keepalive_interval_seconds:60,keepalive_count_max:3,tcp_keepalive:1,x11_mode:'off',tags:'',autostart_forwards:0,extra_args:'',forwards:[]};
+    const editFixture={id:9903,name:'edit-save-actions',group_name:window.termaConnectionList.groupNames(undefined,'ssh').find(name=>name==='默认分组'),ssh_user:'root',ssh_host:'edit.example.test',ssh_port:22,sort_order:1,auth_type:'key',identity_file:'',ssh_agent_mode:'auto',jump_connection_id:null,connect_timeout_seconds:10,keepalive_interval_seconds:60,keepalive_count_max:3,tcp_keepalive:1,x11_mode:'off',tags:'',autostart_forwards:0,extra_args:'',forwards:[]};
     connections.push(editFixture);
-    editConnection(editFixture.id);
+    window.termaConnectionFormWorkspace.edit(editFixture.id);
     const sshEditActions=[...document.querySelectorAll('#connectionForm .actions button')].filter(item=>!item.hidden).map(item=>item.textContent.trim());
     const sshEditSaveActions=['仅保存','保存并关闭','保存并打开'].every(label=>sshEditActions.includes(label))&&document.querySelector('#connSaveAndClear')?.hidden===true;
     connections.splice(connections.indexOf(editFixture),1);
-    renderRemoteProfileForm({id:9904,protocol:'rdp',name:'remote-edit-save-actions',group_name:TERMA_DEFAULT_CONNECTION_GROUP,host:'rdp.example.test',port:3389,username:'',options:{display_mode:'dynamic'}});
+    window.termaRemoteProfiles.editor.render({id:9904,protocol:'rdp',name:'remote-edit-save-actions',group_name:window.termaConnectionList.groupNames(undefined,'ssh').find(name=>name==='默认分组'),host:'rdp.example.test',port:3389,username:'',options:{display_mode:'dynamic'}});
     const remoteEditActions=[...document.querySelectorAll('#remoteProfileForm button[type="submit"]')].map(item=>item.textContent.trim());
     const remoteEditSaveActions=['仅保存','保存并关闭','保存并打开'].every(label=>remoteEditActions.includes(label));
     const result={
@@ -4189,10 +4296,9 @@ app.whenReady().then(async () => {
       remoteEditSaveActions
     };
     api=originalApi;
-    loadAll=originalLoadAll;
-    loadKeys=originalLoadKeys;
+    window.termaWorkspaceRefresh.load=originalLoadAll;
     notify=originalNotify;
-    openTerminal=originalOpenTerminal;
+    window.termaConnectionController.select=originalSelectForSave;
     closeTabsByKey=originalCloseTabsByKey;
     return result;
   })()`);
@@ -4200,22 +4306,25 @@ app.whenReady().then(async () => {
   const notificationUi = await window.webContents.executeJavaScript(`(async () => {
     const originalNotify = notify;
     const originalDesktop = showDesktopNotification;
-    const originalRuntimeSettings = runtimeSettings;
+    const originalRuntimeSettings = window.termaRuntimeSettingsModel.snapshot;
+    const previousTab = activeTabKey;
     const replayed = [];
     notify = (...args) => replayed.push({type:'toast',args});
     showDesktopNotification = event => replayed.push({type:'desktop',id:event?.id});
-    lastNotificationId = 0;
-    notificationCursorInitialized = false;
-    notificationCursorPromise = null;
+    if (window.termaNotificationState) {
+      window.termaNotificationState.state.lastId = 0;
+      window.termaNotificationState.state.cursorInitialized = false;
+      window.termaNotificationState.state.pollInFlight = false;
+    }
     localStorage.removeItem('lastNotificationId');
     await pollNotifications();
-    const result = {replayed:replayed.length,cursor:lastNotificationId,initialized:notificationCursorInitialized,stored:Number(localStorage.getItem('lastNotificationId')||0)};
+    const result = {replayed:replayed.length,cursor:window.termaNotificationState.state.lastId,initialized:window.termaNotificationState.state.cursorInitialized,stored:Number(localStorage.getItem('lastNotificationId')||0)};
     notify = originalNotify;
     showDesktopNotification = originalDesktop;
-    runtimeSettings = normalizeRuntimeSettingsResponse({
-      ...runtimeSettings,
+    window.termaRuntimeSettingsModel.snapshot = window.termaRuntimeSettingsModel.normalize({
+      ...window.termaRuntimeSettingsModel.snapshot,
       saved:{
-        ...runtimeSettings?.saved,
+        ...window.termaRuntimeSettingsModel.snapshot?.saved,
         notification_display:{
           info:{enabled:true,duration_ms:60000},
           success:{enabled:false,duration_ms:3500},
@@ -4224,6 +4333,7 @@ app.whenReady().then(async () => {
         }
       }
     });
+    const displayRuntime = window.termaRuntimeSettingsModel.snapshot;
     dismissToast();
     await new Promise(resolve=>setTimeout(resolve,260));
     const before = document.querySelectorAll('#toast .toast').length;
@@ -4234,7 +4344,9 @@ app.whenReady().then(async () => {
     const progressBefore = document.querySelectorAll('#toast .toast-progress').length;
     createProgressToast({title:'disabled progress category'});
     const progressSuppressed = document.querySelectorAll('#toast .toast-progress').length === progressBefore;
-    renderSettings();
+    await window.termaSettingsViews.open();
+    window.termaRuntimeSettingsModel.snapshot = displayRuntime;
+    window.termaSettingsViews.render();
     result.categoryControls = ['notificationInfoEnabled','notificationInfoDuration','notificationSuccessEnabled','notificationSuccessDuration','notificationErrorEnabled','notificationErrorDuration','notificationProgressEnabled','notificationProgressSuccessDuration','notificationProgressErrorDuration','taskCenterFloatingProgressEnabled'].every(id=>document.getElementById(id));
     result.floatingUnderNotifications = Boolean(document.querySelector('#taskCenterFloatingProgressEnabled')?.closest('#settings-notifications'));
     result.successSuppressed = successSuppressed;
@@ -4243,9 +4355,9 @@ app.whenReady().then(async () => {
     const notificationDescriptor = Object.getOwnPropertyDescriptor(window, 'Notification');
     try {
       Object.defineProperty(window, 'Notification', {configurable:true, value:{permission:'granted'}});
-      runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, saved:{...runtimeSettings?.saved, desktop_notifications_enabled:true}});
-      renderSettings();
-      updateDesktopNotificationControls();
+      window.termaRuntimeSettingsModel.snapshot = window.termaRuntimeSettingsModel.normalize({...window.termaRuntimeSettingsModel.snapshot, saved:{...window.termaRuntimeSettingsModel.snapshot?.saved, desktop_notifications_enabled:true}});
+      window.termaSettingsViews.render();
+      window.termaRefreshVueSettings($('view-settings'));
       const enabledNotificationState = {
         summary:document.querySelector('#notificationPermissionStatus')?.textContent || '',
         status:document.querySelector('#desktopNotificationStatus')?.textContent || '',
@@ -4255,11 +4367,11 @@ app.whenReady().then(async () => {
       try {
         api = async (pathname, options={}) => {
           if (pathname === '/api/runtime-settings' && options.method === 'PUT') {
-            return {saved:{...runtimeSettings.saved,...JSON.parse(options.body)}};
+            return {saved:{...window.termaRuntimeSettingsModel.snapshot.saved,...JSON.parse(options.body)}};
           }
           return savedToggleApi(pathname, options);
         };
-        await toggleDesktopNotifications();
+        (document.getElementById('desktopNotificationToggleBtn')?.click(),await new Promise(resolve=>setTimeout(resolve,60)));
       } finally {
         api = savedToggleApi;
       }
@@ -4285,12 +4397,12 @@ app.whenReady().then(async () => {
     } finally {
       if (notificationDescriptor) Object.defineProperty(window, 'Notification', notificationDescriptor);
       else delete window.Notification;
-      runtimeSettings = originalRuntimeSettings;
-      renderSettings();
+      window.termaRuntimeSettingsModel.snapshot = originalRuntimeSettings;
+      window.termaSettingsViews.render();
     }
     dismissToast();
     await new Promise(resolve=>setTimeout(resolve,240));
-    runtimeSettings.saved.notification_display.info.duration_ms = 180;
+    window.termaRuntimeSettingsModel.snapshot.saved.notification_display.info.duration_ms = 180;
     notify('hovered notification','info');
     const hoveredToast = document.querySelector('#toast .toast:last-child');
     hoveredToast?.dispatchEvent(new Event('pointerenter'));
@@ -4300,137 +4412,18 @@ app.whenReady().then(async () => {
     await new Promise(resolve=>setTimeout(resolve,700));
     const pointerResumesToast = Boolean(hoveredToast && !hoveredToast.isConnected);
     dismissToast();
-    runtimeSettings = originalRuntimeSettings;
+    window.termaRuntimeSettingsModel.snapshot = originalRuntimeSettings;
     result.pointerKeepsToast = pointerKeepsToast;
     result.pointerResumesToast = pointerResumesToast;
     return result;
   })()`);
-  console.log("[ui-smoke] restore key modal");
-  const restoreKeyUi = await window.webContents.executeJavaScript(`(async () => {
-    const originalLoadIdentityBindingOptions = loadIdentityBindingOptions;
-    const windowsIdentityPath = ['C:','Temp','TermaFixture','.ssh','id_ed25519_demo'].join('\\\\');
-    loadIdentityBindingOptions = async () => ({
-      items:[
-        {name:'id_ed25519_demo',path:windowsIdentityPath,source_label:'用户 ~/.ssh'},
-        {name:'id_rsa_project',path:'/project/.ssh/id_rsa_project',source_label:'当前密钥目录'}
-      ],
-      upload_directory:'/project/.ssh'
-    });
-    const items = Array.from({length:12}, (_, index) => ({
-      binding_id:String(index),
-      connection_id:index + 1,
-      key_name:index < 6 ? 'old-key-a' : 'old-key-b',
-      connection_name:'server-'+index,
-      ssh_user:'test',
-      ssh_host:'127.0.0.1',
-      ssh_port:22,
-      missing_identity:true
-    }));
-    const pending = showIdentityBindingModal(items, {subtitle:'UI smoke'});
-    await new Promise(resolve => setTimeout(resolve, 0));
-    const modal = document.querySelector('#modal');
-    const card = modal?.querySelector('.restore-key-modal');
-    const rows = [...modal.querySelectorAll('.identity-binding-row')];
-    const candidates = [...modal.querySelectorAll('#identityBindingCandidate option')].map(item => item.textContent.trim());
-    const candidate = modal.querySelector('#identityBindingCandidate');
-    candidate.value = windowsIdentityPath;
-    const candidateValuePreserved = candidate.value === windowsIdentityPath;
-    modal.querySelector('#identityBindingRows input').checked = true;
-    modal.querySelector('#identityBindingStage').click();
-    const stagesWindowsPath = modal.querySelector('[data-binding-result="0"]')?.textContent.includes('已暂存：id_ed25519_demo');
-    modal.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
-    const backdropIgnored = Boolean(!modal.hidden && modal.querySelector('.restore-key-modal') && modal.querySelector('[data-binding-result="0"]')?.textContent.includes('已暂存：id_ed25519_demo'));
-    const input = modal?.querySelector('#identityBindingUpload');
-    const status = modal?.querySelector('#restoreKeyStatus');
-    const cardRect = card?.getBoundingClientRect();
-    const result = {
-      opened:Boolean(card && !modal.hidden),
-      rowCount:rows.length,
-      originalNames:[...new Set(rows.map(row => row.querySelector('code')?.textContent.trim()))],
-      candidates,
-      candidateValuePreserved,
-      stagesWindowsPath,
-      backdropIgnored,
-      acceptsAll:input?.getAttribute('accept') === '*/*',
-      uploadDirectory:modal.querySelector('#identityBindingDirectory')?.textContent.includes('/project/.ssh'),
-      actions:['identityBindingTest','identityBindingStage','identityBindingFinish'].every(id => Boolean(modal.querySelector('#'+id))),
-      statusReady:Boolean(status?.textContent),
-      cardWithinViewport:Boolean(cardRect && cardRect.left >= -0.5 && cardRect.right <= innerWidth + 0.5 && cardRect.top >= -0.5 && cardRect.bottom <= innerHeight + 0.5)
-    };
-    modal.querySelector('#identityBindingFinish')?.click();
-    const completedBindings = await pending;
-    result.continuedWithUnbound = Array.isArray(completedBindings) && completedBindings.length === 1 && completedBindings[0].identity_path === windowsIdentityPath;
-    const skipPending = showIdentityBindingModal(items, {subtitle:'UI smoke skip'});
-    await new Promise(resolve => setTimeout(resolve, 0));
-    document.querySelector('#identityBindingFinish')?.click();
-    const skippedBindings = await skipPending;
-    result.continuedAllUnbound = Array.isArray(skippedBindings) && skippedBindings.length === 0;
-    const previousImportState = importState;
-    importState = {tunnels:[{name:'unbound',ssh_user:'root',ssh_host:'config.example',ssh_port:22,sort_order:1,missing_identity:true}],missing_keys:['id_rsa_old']};
-    try {
-      importReady();
-      result.configAllowsUnbound = true;
-      renderImport();
-      const sortInput = document.querySelector('#importResults .import-connection-head input');
-      sortInput.value='4';
-      sortInput.dispatchEvent(new Event('change',{bubbles:true}));
-      result.configSortEditable=importState.tunnels[0].sort_order===4;
-    } catch {
-      result.configAllowsUnbound = false;
-      result.configSortEditable = false;
-    }
-    importState = previousImportState;
-    result.closed = document.querySelector('#modal').hidden && !document.querySelector('#modal .restore-key-modal');
-    loadIdentityBindingOptions = originalLoadIdentityBindingOptions;
-    return result;
-  })()`);
-  console.log("[ui-smoke] restore credential modal");
-  const restoreCredentialUi = await window.webContents.executeJavaScript(`(async () => {
-    const originalLoadIdentityBindingOptions = loadIdentityBindingOptions;
-    loadIdentityBindingOptions = async () => ({items:[{name:'id_key',path:'/fixture/.ssh/id_key',source_label:'当前密钥目录'}],upload_directory:'/fixture/.ssh'});
-    const items = [
-      {connection_id:1,connection_name:'key-server',ssh_user:'root',ssh_host:'key.example',ssh_port:22,sort_order:5,original_auth_type:'key',key_name:'id_old',has_password:false},
-      {connection_id:2,connection_name:'password-saved',ssh_user:'root',ssh_host:'saved.example',ssh_port:22,sort_order:1,original_auth_type:'password',has_password:true,password_encrypted:false},
-      {connection_id:3,connection_name:'password-empty',ssh_user:'root',ssh_host:'empty.example',ssh_port:22,sort_order:1,original_auth_type:'password',has_password:false,password_encrypted:false}
-    ];
-    const pending = showDatabaseCredentialModal(items,{subtitle:'credential smoke',password_replacement_allowed:true});
-    await new Promise(resolve => setTimeout(resolve,0));
-    const modal = document.querySelector('#modal');
-    const originalLabels = [...modal.querySelectorAll('.identity-binding-row code')].map(node=>node.textContent.trim());
-    const initialStatuses = [...modal.querySelectorAll('.identity-binding-result')].map(node=>node.textContent.trim());
-    const candidate = modal.querySelector('#identityBindingCandidate');
-    candidate.value='/fixture/.ssh/id_key';
-    modal.querySelector('input[value="1"]').checked=true;
-    modal.querySelector('#identityBindingStage').click();
-    modal.querySelector('#identitySelectNone').click();
-    modal.querySelector('input[value="3"]').checked=true;
-    modal.querySelector('#credentialPassword').value='fixture-password';
-    modal.querySelector('#credentialPasswordStage').click();
-    const stagedStatuses = [...modal.querySelectorAll('.identity-binding-result')].map(node=>node.textContent.trim());
-    const sortFields = [...modal.querySelectorAll('[data-restore-sort]')].map(input=>input.value);
-    modal.querySelector('[data-restore-sort="1"]').value='7';
-    const cardRect = modal.querySelector('.restore-credential-modal')?.getBoundingClientRect();
-    modal.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
-    const backdropIgnored=Boolean(!modal.hidden&&modal.querySelector('.restore-credential-modal')&&modal.querySelector('[data-restore-sort="1"]')?.value==='7');
-    modal.querySelector('#identityBindingFinish').click();
-    const bindings = await pending;
-    loadIdentityBindingOptions = originalLoadIdentityBindingOptions;
-    return {
-      opened:originalLabels.length===3,
-      backdropIgnored,
-      originalLabels,
-      initialStatuses,
-      stagedStatuses,
-      preservesSavedPassword:bindings.some(item=>item.connection_id===2&&item.auth_type==='password'&&item.password_action==='preserve'),
-      replacesMissingPassword:bindings.some(item=>item.connection_id===3&&item.auth_type==='password'&&item.password_action==='replace'&&item.password==='fixture-password'),
-      bindsKey:bindings.some(item=>item.connection_id===1&&item.auth_type==='key'&&item.identity_path==='/fixture/.ssh/id_key'),
-      sortFields:JSON.stringify(sortFields)===JSON.stringify(['5','1','1']),
-      updatesSort:bindings.some(item=>item.connection_id===1&&item.sort_order===7),
-      preservesSort:bindings.some(item=>item.connection_id===2&&item.sort_order===1)&&bindings.some(item=>item.connection_id===3&&item.sort_order===1),
-      cardWithinViewport:Boolean(cardRect&&cardRect.left>=-0.5&&cardRect.right<=innerWidth+0.5&&cardRect.top>=-0.5&&cardRect.bottom<=innerHeight+0.5),
-      closed:modal.hidden&&!modal.querySelector('.restore-credential-modal')
-    };
-  })()`);
+  console.log("[ui-smoke] data exchange and restore dialogs");
+  let restoreKeyUi;
+  const exchangeProbe=new BrowserWindow({show:false,width:1200,height:844,webPreferences:{contextIsolation:true,backgroundThrottling:false,offscreen:true,partition:'exchange-smoke-'+Date.now(),preload:path.join(__dirname,'ui-smoke-preload.js')}});
+  exchangeProbe.webContents.on('console-message',details=>{if(details.level==='error')errors.push(details.message);});
+  try{await exchangeProbe.loadURL(url);await new Promise(resolve=>setTimeout(resolve,1200));restoreKeyUi=await runM6ExchangeUiScenario(exchangeProbe,{viewport:'desktop'});}
+  finally{exchangeProbe.destroy();}
+  const restoreCredentialUi=restoreKeyUi;
   console.log("[ui-smoke] terminal interactions");
   const terminalUi = await window.webContents.executeJavaScript(`(async () => {
     const first = connections[0];
@@ -4438,19 +4431,17 @@ app.whenReady().then(async () => {
     const key = 'terminal-ui-smoke';
     const secondKey = 'terminal-ui-smoke-second';
     const previousTerminalTabKey = activeTabKey;
-    const previousLatencyVisible = terminalLatencyVisible;
-    const previousLatencyStored = localStorage.getItem('terminalLatencyVisible');
     const previousTerminalGlobalSettings = terminalGlobalSettings;
     const previousTheme = document.documentElement.dataset.theme || 'light';
     const numberingConnectionId = Number(first.id) + 900000;
     const tabsBeforeNumberingCheck = tabs;
     tabs = [{key:'terminal-'+numberingConnectionId+'-2',kind:'terminal',id:numberingConnectionId}];
-    terminalCounts.set(numberingConnectionId,5);
-    const numberingContinuesWithOpenTabs=nextTerminalTabIndex(numberingConnectionId)===6;
+    window.termaTerminalState.terminalCounts.set(numberingConnectionId,5);
+    const numberingContinuesWithOpenTabs=window.termaTerminalPage.nextTerminalTabIndex(numberingConnectionId)===6;
     tabs = [];
-    terminalCounts.set(numberingConnectionId,5);
-    const numberingRestartsAfterAllClosed=nextTerminalTabIndex(numberingConnectionId)===1;
-    terminalCounts.delete(numberingConnectionId);
+    window.termaTerminalState.terminalCounts.set(numberingConnectionId,5);
+    const numberingRestartsAfterAllClosed=window.termaTerminalPage.nextTerminalTabIndex(numberingConnectionId)===1;
+    window.termaTerminalState.terminalCounts.delete(numberingConnectionId);
     tabs = tabsBeforeNumberingCheck;
     const fixturePane = workspaceFindPane(focusedPaneId);
     const previousFixtureTabs = fixturePane ? [...fixturePane.tabs] : [];
@@ -4480,7 +4471,7 @@ app.whenReady().then(async () => {
       registerLinkProvider:provider=>{ fakeLinkProvider=provider; return {dispose:()=>{}}; },
       cols:80, rows:24, options:{fontSize:13}, buffer:{active:{length:0,cursorX:0,cursorY:0}}
     };
-    terminalSessions.set(key,{term:fakeTerm,fit:{fit:()=>{}},id:first.id,logId:'1700000000000-terminaluismoke'});
+    window.termaTerminalState.terminalSessions.set(key,{term:fakeTerm,fit:{fit:()=>{}},id:first.id,logId:'1700000000000-terminaluismoke'});
     const inactiveOutputKey = 'terminal-ui-smoke-inactive-output';
     const inactiveOutputWrites = [];
     let inactiveOutputRefreshes = 0;
@@ -4493,16 +4484,17 @@ app.whenReady().then(async () => {
         buffer:{active:{length:0,cursorX:0,cursorY:0}}
       }
     };
-    terminalSessions.set(inactiveOutputKey, inactiveOutputSession);
-    queueTerminalOutput(inactiveOutputSession, 'inactive-tab-output');
+    window.termaTerminalState.terminalSessions.set(inactiveOutputKey, inactiveOutputSession);
+    window.termaTerminalOutputFlow.queue(inactiveOutputSession, 'inactive-tab-output');
     await new Promise(resolve=>setTimeout(resolve,25));
-    refreshTerminalSessionsAfterWindowResume();
+    window.dispatchEvent(new Event('focus'));
+    await new Promise(resolve=>setTimeout(resolve,25));
     const inactiveTerminalOutputContinues = activeTabKey !== inactiveOutputKey
       && inactiveOutputWrites.join('').includes('inactive-tab-output')
       && !inactiveOutputSession.pendingTerminalOutput?.length
       && !inactiveOutputSession.terminalOutputWriting
       && inactiveOutputRefreshes > 0;
-    terminalSessions.delete(inactiveOutputKey);
+    window.termaTerminalState.terminalSessions.delete(inactiveOutputKey);
     const OriginalWebSocket = window.WebSocket;
     class FakeWebSocket extends EventTarget {
       static OPEN = 1;
@@ -4517,7 +4509,7 @@ app.whenReady().then(async () => {
     const fallbackTicketBodies = [];
     tabs.push({key:fallbackKey,title:'X11 fallback',subtitle:'',viewName:'terminal',closable:true,kind:'terminal',id:first.id});
     if (fixturePane) fixturePane.tabs.push(fallbackKey);
-    terminalSessions.set(fallbackKey,{
+    window.termaTerminalState.terminalSessions.set(fallbackKey,{
       term:{cols:80,rows:24,writeln:value=>fallbackMessages.push(String(value||'')),onData:()=>({dispose(){}}),onResize:()=>({dispose(){}})},
       id:first.id,
       connectionAttempt:0
@@ -4536,17 +4528,18 @@ app.whenReady().then(async () => {
       }
       return originalTerminalApi(path, options);
     };
-    await connectTerminal({...first,x11_mode:'trusted'},fallbackKey);
+    await window.termaTerminalConnectionRuntime.connectTerminal({...first,x11_mode:'trusted'},fallbackKey);
     const fallbackSocketUrl=fakeSocketUrl;
     const x11DefaultFallsBack=fallbackTicketBodies.length===2
       && !fallbackTicketBodies[0].x11_mode
       && fallbackTicketBodies[1].x11_mode==='off'
       && fallbackSocketUrl.includes('startup_token=x11-fallback-ticket')
       && fallbackMessages.some(line=>line.includes('已自动降级为普通 SSH 终端'));
-    showX11LaunchMenu(new MouseEvent('click',{bubbles:true,clientX:120,clientY:80}),first.id,key);
+    window.termaX11TerminalMenu.open(new MouseEvent('click',{bubbles:true,clientX:120,clientY:80}),first.id,key);
     const x11ModeButton=[...document.querySelectorAll('#actionMenu button')]
       .find(button=>button.textContent.includes('默认使用受限 X11'));
     x11ModeButton?.click();
+    await new Promise(resolve=>requestAnimationFrame(resolve));
     const x11ScopeLabels=[...document.querySelectorAll('#actionSubMenu button span')]
       .map(node=>node.textContent.trim());
     const x11ScopeMenu=Boolean(x11ModeButton
@@ -4554,56 +4547,61 @@ app.whenReady().then(async () => {
       && document.querySelector('#actionSubMenu')
       && JSON.stringify(x11ScopeLabels)===JSON.stringify(['当前终端生效','新建终端','下次生效']));
     hideActionMenu();
-    terminalSessions.get(fallbackKey)?.socket?.close?.();
-    terminalSessions.delete(fallbackKey);
+    window.termaTerminalState.terminalSessions.get(fallbackKey)?.socket?.close?.();
+    window.termaTerminalState.terminalSessions.delete(fallbackKey);
     tabs=tabs.filter(tab=>tab.key!==fallbackKey);
     if(fixturePane) fixturePane.tabs=fixturePane.tabs.filter(tabKey=>tabKey!==fallbackKey);
     fakeSocketUrl='';
     api = async (path, options={}) => path==='/api/ssh/preflight' ? {ok:true} : originalTerminalApi(path, options);
-    await connectTerminal(first,key);
-    const fakeSocket = terminalSessions.get(key).socket;
-    const ctrlVSession = terminalSessions.get(key);
+    await window.termaTerminalConnectionRuntime.connectTerminal(first,key);
+    const fakeSocket = window.termaTerminalState.terminalSessions.get(key).socket;
+    const ctrlVSession = window.termaTerminalState.terminalSessions.get(key);
     ctrlVSession.connected = true;
     ctrlVSession.connection = {...first, x11_mode:'trusted'};
     ctrlVSession.effectiveX11Mode = 'trusted';
     ctrlVSession.currentDirectoryKnown = true;
     ctrlVSession.currentDirectory = '/home/terma-smoke';
-    const originalClipboardReader = readTerminalClipboardImage;
+    const originalClipboardReader = window.termaTerminalImagePaste.readImage;
     const originalClipboardApi = api;
-    const originalClipboardUpload = uploadSftpFilesToDirectory;
+    const originalClipboardUpload = window.termaSftpTransfers.controller.submit;
     const originalTermaDesktop = window.termaDesktop;
     if (!window.termaDesktop) window.termaDesktop = {readClipboardImage:async () => ({ok:false,reason:'empty'})};
     const ctrlVUploads = [];
     const ctrlVSentBefore = fakeSocket.sent.length;
     const ctrlVImage = new File([Uint8Array.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1,2,3,4])], 'ctrl-v.png', {type:'image/png'});
-    readTerminalClipboardImage = async () => ctrlVImage;
+    window.termaTerminalImagePaste.readImage = async () => ctrlVImage;
     api = async (path, options={}) => String(path).includes('/terminal-clipboard/image')
       ? {ready:false, available:false, reason:'xclip'}
       : originalClipboardApi(path, options);
-    uploadSftpFilesToDirectory = async (files, connectionId, directory, options) => {
+    window.termaSftpTransfers.controller.submit = async (files, connectionId, directory, options) => {
       ctrlVUploads.push({files,connectionId,directory,options});
       return {ok:true};
     };
     fakeInputHandler?.(String.fromCharCode(22));
-    await new Promise(resolve => setTimeout(resolve, 20));
+    for (let attempt=0;attempt<100;attempt+=1) {
+      if(ctrlVUploads.length && fakeSocket.sent.slice(ctrlVSentBefore).some(value=>String(value).includes('/tmp/ctrl-v.png')))break;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
     const ctrlVImageSent = fakeSocket.sent.slice(ctrlVSentBefore);
     const ctrlVImageIntercepted = ctrlVUploads.length === 1
       && ctrlVUploads[0].directory === '/tmp'
       && ctrlVUploads[0].options?.private === true
+      && typeof ctrlVUploads[0].options?.isCurrent === 'function'
+      && ctrlVUploads[0].options.isCurrent()
       && ctrlVImageSent.some(value => String(value).includes('/tmp/ctrl-v.png'))
       && !ctrlVImageSent.includes(String.fromCharCode(22));
     const ctrlVDiagnostics = {
-      uploads:ctrlVUploads.map(item=>({connectionId:item.connectionId,directory:item.directory,options:item.options,fileCount:item.files.length})),
+      uploads:ctrlVUploads.map(item=>({connectionId:item.connectionId,directory:item.directory,options:{conflict:item.options?.conflict,private:item.options?.private,hasCurrentGuard:typeof item.options?.isCurrent==='function'},fileCount:item.files.length})),
       sent:ctrlVImageSent.map(value=>typeof value === 'string' ? value : Object.prototype.toString.call(value))
     };
-    readTerminalClipboardImage = async () => null;
+    window.termaTerminalImagePaste.readImage = async () => null;
     const ctrlVEmptyBefore = fakeSocket.sent.length;
     fakeInputHandler?.(String.fromCharCode(22));
     await new Promise(resolve => setTimeout(resolve, 20));
     const ctrlVEmptyFallsThrough = fakeSocket.sent.slice(ctrlVEmptyBefore).includes(String.fromCharCode(22));
-    readTerminalClipboardImage = originalClipboardReader;
+    window.termaTerminalImagePaste.readImage = originalClipboardReader;
     api = originalClipboardApi;
-    uploadSftpFilesToDirectory = originalClipboardUpload;
+    window.termaSftpTransfers.controller.submit = originalClipboardUpload;
     if (originalTermaDesktop) window.termaDesktop = originalTermaDesktop;
     else delete window.termaDesktop;
     ctrlVSession.connection = first;
@@ -4612,20 +4610,22 @@ app.whenReady().then(async () => {
     const binaryType = fakeSocket.binaryType;
     const stableLogId = fakeSocketUrl.includes('log_id=1700000000000-terminaluismoke');
     fakeSocket.readyState = 3;
-    reconnectTerminal(first.id,key);
+    window.termaTerminalConnectionRuntime.reconnectTerminal(first.id,key);
     await new Promise(resolve=>setTimeout(resolve,10));
-    const reconnectedFakeSocket = terminalSessions.get(key).socket;
+    const reconnectedFakeSocket = window.termaTerminalState.terminalSessions.get(key).socket;
     const reconnectPreservesOutput = terminalResetCalls===0
       && terminalWrites.some(line=>line.includes('以上终端内容已保留'))
       && reconnectedFakeSocket!==fakeSocket;
     api = originalTerminalApi;
-    const originalReconnectForEnter = reconnectTerminal;
+    const originalConnectForEnter = window.termaTerminalConnection.connect;
     const enterReconnects = [];
-    reconnectTerminal = (id, tabKey) => enterReconnects.push({id,tabKey});
+    window.termaTerminalConnection.connect = async (connection, tabKey, session) => {
+      enterReconnects.push({id:connection.id,tabKey,current:window.termaTerminalState.terminalSessions.get(tabKey)===session});
+    };
     reconnectedFakeSocket.readyState = 3;
     fakeInputHandler?.(String.fromCharCode(13));
-    const enterReconnect = enterReconnects.length===1&&enterReconnects[0].id===first.id&&enterReconnects[0].tabKey===key;
-    reconnectTerminal = originalReconnectForEnter;
+    const enterReconnect = enterReconnects.length===1&&enterReconnects[0].id===first.id&&enterReconnects[0].tabKey===key&&enterReconnects[0].current;
+    window.termaTerminalConnection.connect = originalConnectForEnter;
     reconnectedFakeSocket.readyState = 1;
     window.WebSocket = OriginalWebSocket;
     const connectionPendingKey='terminal-ui-smoke-connection-pending';
@@ -4639,7 +4639,7 @@ app.whenReady().then(async () => {
     );
     if(fixturePane) fixturePane.tabs.push(connectionPendingKey,connectionOtherKey);
     const pendingWrites=[];
-    terminalSessions.set(connectionPendingKey,{term:{cols:80,rows:24,writeln:value=>pendingWrites.push(String(value||'')),onData:()=>({dispose(){}}),onResize:()=>({dispose(){}})},id:first.id,connectionAttempt:0,connectionPending:false,socket:null,connected:false});
+    window.termaTerminalState.terminalSessions.set(connectionPendingKey,{term:{cols:80,rows:24,writeln:value=>pendingWrites.push(String(value||'')),onData:()=>({dispose(){}}),onResize:()=>({dispose(){}})},id:first.id,connectionAttempt:0,connectionPending:false,socket:null,connected:false});
     let releasePreflight=null;
     let preflightStarted=false;
     api=async(pathname,options={})=>{
@@ -4649,15 +4649,15 @@ app.whenReady().then(async () => {
       }
       return originalTerminalApi(pathname,options);
     };
-    const pendingConnection=connectTerminal(first,connectionPendingKey);
+    const pendingConnection=window.termaTerminalConnectionRuntime.connectTerminal(first,connectionPendingKey);
     await new Promise(resolve=>setTimeout(resolve,0));
     const loopTimerStarted=await new Promise(resolve=>setTimeout(()=>resolve(true),10));
     activateTab(connectionOtherKey);
     const connectionStageTabSwitch=Boolean(preflightStarted&&loopTimerStarted&&activeTabKey===connectionOtherKey);
     releasePreflight?.();
     await pendingConnection;
-    disconnectTerminal(connectionPendingKey);
-    terminalSessions.delete(connectionPendingKey);
+    window.termaTerminalConnectionRuntime.disconnectTerminal(connectionPendingKey);
+    window.termaTerminalState.terminalSessions.delete(connectionPendingKey);
     tabs=previousConnectionPendingTabs;
     activeTabKey=previousConnectionPendingActive;
     if(fixturePane) {
@@ -4665,39 +4665,39 @@ app.whenReady().then(async () => {
       fixturePane.activeTabKey=key;
     }
     api=originalTerminalApi;
-    const fontSizeField = terminalFontSizeField();
+    const fontSizeField = window.termaTerminalMetadata.terminalFontSizeField();
     const previousFontSize = first[fontSizeField];
     const focusBeforeFont = terminalFocusCalls;
-    changeTerminalFont(key,1);
+    window.termaTerminalPage.changeTerminalFont(key,1);
     await new Promise(resolve=>setTimeout(resolve,5));
     const fontActionRestoresFocus = terminalFocusCalls>focusBeforeFont;
-    clearTimeout(terminalPreferencesSaveTimers.get(first.id));
-    terminalPreferencesSaveTimers.delete(first.id);
+    window.termaTerminalPreferences.cancelPending(first.id);
     first[fontSizeField] = previousFontSize;
-    const previousRecentTerminalCommands = [...recentTerminalCommands];
-    recentTerminalCommands = ['echo terminal focus smoke'];
+    const previousRecentTerminalCommands = [...window.termaTerminalHistory.list()];
+    ((items)=>{window.termaTerminalHistory.clear();[...items].reverse().forEach(window.termaTerminalHistory.save);})(['echo terminal focus smoke']);
     const focusBeforeRecent = terminalFocusCalls;
-    showRecentTerminalCommands(key);
+    window.termaTerminalTextDialogs.recent(key);
     const recentCommandSequenceVisible = document.querySelector('.recent-command-index')?.textContent.trim() === '1'
       && document.querySelector('.recent-command-list button code')?.textContent === 'echo terminal focus smoke';
     document.querySelector('#recentCommandClose')?.click();
     await new Promise(resolve=>setTimeout(resolve,5));
     const recentCommandsRestoreFocus = terminalFocusCalls>focusBeforeRecent;
-    recentTerminalCommands = previousRecentTerminalCommands;
+    ((items)=>{window.termaTerminalHistory.clear();[...items].reverse().forEach(window.termaTerminalHistory.save);})(previousRecentTerminalCommands);
     const connectionAddress=first.ssh_user+'@'+first.ssh_host+':'+first.ssh_port;
-    let terminalTestView=terminalViewForKey(key);
+    let terminalTestView=window.termaTerminalEngineView.terminalViewForKey(key);
     if (!terminalTestView) return {found:false,executeError:'terminal test view unavailable'};
-    terminalTestView.innerHTML='<div id="terminalToolbarMount"><div class="terminal-toolbar"><div class="terminal-title-row"><span class="terminal-connection-dot"></span><span id="terminalStatus" class="terminal-status" data-connection-address="'+connectionAddress+'" data-connection-state="连接中"></span><span id="terminalLatency" class="terminal-latency pending"></span></div><div class="actions terminal-actions"><button class="terminal-action-reconnect"></button></div></div></div><div id="terminalMount" class="terminal-box"></div>';
+    terminalTestView.innerHTML='<div id="terminalToolbarMount"><div class="terminal-toolbar"></div></div><div id="terminalMount" class="terminal-box"></div>';
     setWorkspace('终端测试',connectionAddress,'terminal',key,false,true,{kind:'terminal',id:first.id});
-    terminalTestView=terminalViewForKey(key) || terminalTestView;
+    terminalTestView=window.termaTerminalEngineView.terminalViewForKey(key) || terminalTestView;
     const resourceWindowTitle = document.title === first.ssh_host+':'+first.ssh_port+' · 终端 · 终端测试 · Terma';
     const previousDocumentTitle = document.title;
-    syncWorkspaceDocumentTitle('210.10.1.134 · VNC', '210.10.1.134:5900', 'remote-desktop', 'ui-smoke-vnc-title', {kind:'remote-desktop', protocol:'vnc'});
+    window.termaWorkspaceViews.presentation.syncTitle('210.10.1.134 · VNC', '210.10.1.134:5900', 'remote-desktop', 'ui-smoke-vnc-title', {kind:'remote-desktop', protocol:'vnc'});
     const remoteDesktopTitleDedup = document.title === '210.10.1.134:5900 · VNC · Terma';
     document.title = previousDocumentTitle;
     window.termaDesktop?.setWindowTitle?.(previousDocumentTitle);
     activeTabKey = key;
-    updateTerminalConnectionStatus(first, key, 'connected');
+    window.termaTerminalConnectionRuntime.updateTerminalConnectionStatus(first, key, 'connected');
+    await Promise.resolve();
     const statusIndicator = document.querySelector('#terminalStatus');
     const statusHoverShowsFull = statusIndicator?.title === connectionAddress+' · 已连接';
     const desktopStatusAvoidsDuplicate = statusIndicator?.textContent === ''
@@ -4705,23 +4705,13 @@ app.whenReady().then(async () => {
     const desktopToolbarInHeader = statusIndicator?.closest('#workspaceGlobalHeaderTools') !== null
       && document.querySelector('#workspaceGlobalHeaderTools')?.hidden === false
       && document.querySelector('#terminalToolbarMount')?.children.length === 0;
-    const latencySession = terminalSessions.get(key);
-    latencySession.connected = true;
-    updateTerminalConnectionToggle(key);
+    const fixtureSession = window.termaTerminalState.terminalSessions.get(key);
+    fixtureSession.connected = true;
+    window.termaTerminalPage.updateTerminalConnectionToggle(key);
+    await Promise.resolve();
     const connectionToggle = document.querySelector('.terminal-action-reconnect');
     const connectionToggleUsesLinkAction = Boolean(connectionToggle?.querySelector('.lucide-link-2-off') && connectionToggle.title.includes('断开'));
-    terminalLatencyVisible = true;
-    latencySession.latencyPendingAt = performance.now() - 80;
-    finishTerminalLatencySample(latencySession, key);
-    const latencyIndicator = document.querySelector('#terminalLatency');
-    const latencyMeasured = Number.isFinite(latencySession.latencyMs)
-      && latencySession.latencyMs >= 60
-      && latencySession.latencyMs <= 250
-      && latencyIndicator?.textContent.includes('ms');
-    setTerminalLatencyVisible(false);
-    const latencyCanDisable = latencyIndicator?.hidden === true && localStorage.getItem('terminalLatencyVisible') === '0';
-    setTerminalLatencyVisible(true);
-    const latencyCanEnable = latencyIndicator?.hidden === false && localStorage.getItem('terminalLatencyVisible') === '1';
+    const legacyTerminalControlsAbsent = !document.querySelector('#terminalLatency,.terminal-actions .terminal-action-forward');
     const mount=terminalTestView.querySelector('#terminalMount');
     const terminalBoxStyle=getComputedStyle(mount);
     const terminalFrameColors=[terminalBoxStyle.borderTopColor,terminalBoxStyle.borderRightColor,terminalBoxStyle.borderBottomColor];
@@ -4737,8 +4727,8 @@ app.whenReady().then(async () => {
         && Math.max(...channels)<140
         && Math.max(...channels.map((channel,index)=>Math.abs(channel-backgroundChannels[index])))<=48;
     });
-    latencySession.term.element=mount;
-    startTerminalCursorCopy(key);
+    fixtureSession.term.element=mount;
+    window.termaTerminalCursorCopy.start(key);
     const cursorCopyHint=mount.querySelector('.terminal-cursor-copy-hint');
     const cursorCopyHintRect=cursorCopyHint?.getBoundingClientRect();
     const cursorCopyMountRect=mount.getBoundingClientRect();
@@ -4752,23 +4742,25 @@ app.whenReady().then(async () => {
       && cursorCopyHintRect.top>=cursorCopyMountRect.top-0.5
       && cursorCopyHintRect.bottom<=cursorCopyMountRect.bottom+0.5
     );
-    cancelTerminalCursorCopy(latencySession,key);
-    const desktopCursorCopyHintCleansUp=!mount.querySelector('.terminal-cursor-copy-hint,.terminal-cursor-copy-cancel')&&!latencySession.cursorCopyState;
+    window.termaTerminalCursorCopy.cancel(fixtureSession,key);
+    const desktopCursorCopyHintCleansUp=!mount.querySelector('.terminal-cursor-copy-hint,.terminal-cursor-copy-cancel')&&!fixtureSession.cursorCopyState;
     const dropApi=api;
     const dropChoice=chooseModal;
-    const dropRefreshJobs=refreshSftpJobs;
-    const dropStartJobsTimer=startSftpJobsTimer;
-    const dropUploadWithProgress=uploadWithProgress;
+    const dropRefreshJobs=window.termaSftpTaskWorkspace.runtime.refresh;
+    const dropStartJobsTimer=window.termaSftpTransferLifecycle.polling.start;
+    const dropUploadWithProgress=window.termaSftpTransfers.transport.send;
     const dropNotify=notify;
+    const dropNotification=window.termaNotificationToasts.notify;
     const terminalDropCalls={crossCopies:[],uploadJobs:[],uploads:[],prompts:[],notices:[]};
     const terminalDropFeedbackFixtures=[];
     let terminalDropUi={found:false};
     try {
-      latencySession.connected=true;
-      latencySession.currentDirectory='/workspace/current';
-      latencySession.currentDirectoryKnown=true;
-      latencySession.mount=mount;
-      bindTerminalDropUpload(latencySession,first,key,mount);
+      fixtureSession.connected=true;
+      fixtureSession.currentDirectory='/workspace/current';
+      fixtureSession.currentDirectoryKnown=true;
+      fixtureSession.mount=mount;
+      fixtureSession.key=key;
+      window.termaTerminalDrop.bind(fixtureSession,mount);
       api=async (pathname,options={})=>{
         const body=options.body ? JSON.parse(options.body) : {};
         if(pathname.endsWith('/sftp/upload-plan')) {
@@ -4787,20 +4779,21 @@ app.whenReady().then(async () => {
       };
       chooseModal=async (title,message,actions)=>{
         terminalDropCalls.prompts.push({
-          title:String(title||''),
-          message:String(message||''),
+          title:String(typeof title==='function'?title():title||''),
+          message:String(typeof message==='function'?message():message||''),
           values:actions.map(action=>action.value),
           hint:document.querySelector('#sftpDragHint')?.textContent||''
         });
         return 'rename';
       };
-      refreshSftpJobs=async()=>[];
-      startSftpJobsTimer=()=>{};
-      uploadWithProgress=async (url,body,job)=>{
+      window.termaSftpTaskWorkspace.runtime.refresh=async()=>[];
+      window.termaSftpTransferLifecycle.polling.start=()=>{};
+      window.termaSftpTransfers.transport.send=async (url,body,job)=>{
         terminalDropCalls.uploads.push({url,name:body?.name||'',jobId:job?.id||''});
         return {...job,status:'done',progress:100};
       };
       notify=(text,type='info')=>terminalDropCalls.notices.push({text:String(text||''),type});
+      window.termaNotificationToasts.notify=notify;
       const dispatchDropEvent=(type,dataTransfer)=>{
         const event=new Event(type,{bubbles:true,cancelable:true});
         Object.defineProperty(event,'dataTransfer',{value:dataTransfer});
@@ -4813,45 +4806,45 @@ app.whenReady().then(async () => {
         root.style.cssText='position:fixed;left:8px;top:8px;width:220px;height:160px;';
         root.innerHTML='<div class="sftp-shell" style="width:100%;height:100%"><div id="sftpDropOverlay" class="sftp-drop-overlay" hidden></div></div>';
         document.body.appendChild(root);
-        ensureSftpRuntime(tabKey,first.id,'.',root);
+        window.termaSftpTabs.runtime.ensure(tabKey,first.id,'.',root);
         terminalDropFeedbackFixtures.push({tabKey,root});
         return root.querySelector('#sftpDropOverlay');
       };
       const firstSftpFeedback=createSftpDropFeedbackFixture('ui-drop-feedback-sftp-1');
       const secondSftpFeedback=createSftpDropFeedbackFixture('ui-drop-feedback-sftp-2');
       const targetSwitchDataTransfer={types:['Files'],files:[],items:[],dropEffect:''};
-      setSftpExternalDropState(true,{tabKey:'ui-drop-feedback-sftp-1',path:'/sftp-1'});
+      window.termaSftpDragWorkspace.dropFeedback.external(true,{tabKey:'ui-drop-feedback-sftp-1',path:'/sftp-1'});
       const firstSftpOnly=firstSftpFeedback.hidden===false&&secondSftpFeedback.hidden===true;
       dispatchDropEvent('dragenter',targetSwitchDataTransfer);
       const terminalAfterFirstSftp=mount.querySelector('.terminal-drop-overlay')?.hidden===false
         &&firstSftpFeedback.hidden===true
         &&secondSftpFeedback.hidden===true
         &&!document.querySelector('#sftpDragHint');
-      setSftpExternalDropState(true,{tabKey:'ui-drop-feedback-sftp-2',path:'/sftp-2'});
+      window.termaSftpDragWorkspace.dropFeedback.external(true,{tabKey:'ui-drop-feedback-sftp-2',path:'/sftp-2'});
       const secondSftpAfterTerminal=mount.querySelector('.terminal-drop-overlay')?.hidden===true
         &&firstSftpFeedback.hidden===true
         &&secondSftpFeedback.hidden===false
         &&document.querySelector('#sftpDragHint')?.textContent.includes('/sftp-2');
-      setSftpExternalDropState(true,{tabKey:'ui-drop-feedback-sftp-1',path:'/sftp-1'});
+      window.termaSftpDragWorkspace.dropFeedback.external(true,{tabKey:'ui-drop-feedback-sftp-1',path:'/sftp-1'});
       const firstSftpAfterSecond=mount.querySelector('.terminal-drop-overlay')?.hidden===true
         &&firstSftpFeedback.hidden===false
         &&secondSftpFeedback.hidden===true
         &&document.querySelector('#sftpDragHint')?.textContent.includes('/sftp-1');
-      setSftpExternalDropState(false,{tabKey:'ui-drop-feedback-sftp-2'});
+      window.termaSftpDragWorkspace.dropFeedback.external(false,{tabKey:'ui-drop-feedback-sftp-2'});
       const lateLeaveKeepsCurrentTarget=firstSftpFeedback.hidden===false
         &&secondSftpFeedback.hidden===true
         &&document.querySelector('#sftpDragHint')?.textContent.includes('/sftp-1');
       const singleActiveDropTarget=firstSftpOnly&&terminalAfterFirstSftp&&secondSftpAfterTerminal&&firstSftpAfterSecond&&lateLeaveKeepsCurrentTarget;
-      clearSftpDragFeedback();
+      window.termaSftpDragWorkspace.drag.feedback.clear();
       const copyEntries=[{path:'/remote/source.txt',name:'source.txt',type:'file'}];
       const copyDataTransfer={
-        types:[SFTP_INTERNAL_DRAG_MIME],
+        types:[window.termaSftpDragWorkspace.mime],
         files:[],
         items:[],
         dropEffect:'',
         getData(type){
-          return type===SFTP_INTERNAL_DRAG_MIME
-            ? serializeSftpDragPayload(Number(first.id)+7000,copyEntries,'remote-source-tab')
+          return type===window.termaSftpDragWorkspace.mime
+            ? window.termaDragPayload.serializeDragPayload(Number(first.id)+7000,copyEntries,'remote-source-tab')
             : '';
         }
       };
@@ -4943,7 +4936,7 @@ app.whenReady().then(async () => {
       dispatchDropEvent('dragenter',uploadDataTransfer);
       const staleFeedbackBefore = !dropOverlay.hidden;
       await new Promise(resolve=>setTimeout(resolve,1050));
-      const staleFeedbackClears = staleFeedbackBefore && dropOverlay.hidden && !document.querySelector('#sftpDragHint') && latencySession.terminalDropDepth === 0;
+      const staleFeedbackClears = staleFeedbackBefore && dropOverlay.hidden && !document.querySelector('#sftpDragHint') && fixtureSession.terminalDropDepth === 0;
       terminalDropUi={
         found:Boolean(dropOverlay&&dropHint),
         copyFeedbackVisible,
@@ -4963,19 +4956,20 @@ app.whenReady().then(async () => {
     } finally {
       api=dropApi;
       chooseModal=dropChoice;
-      refreshSftpJobs=dropRefreshJobs;
-      startSftpJobsTimer=dropStartJobsTimer;
-      uploadWithProgress=dropUploadWithProgress;
+      window.termaSftpTaskWorkspace.runtime.refresh=dropRefreshJobs;
+      window.termaSftpTransferLifecycle.polling.start=dropStartJobsTimer;
+      window.termaSftpTransfers.transport.send=dropUploadWithProgress;
       notify=dropNotify;
-      clearSftpDragFeedback?.();
+      window.termaNotificationToasts.notify=dropNotification;
+      window.termaSftpDragWorkspace.drag.feedback.clear?.();
       document.querySelector('#sftpDragHint')?.remove();
       for(const fixture of terminalDropFeedbackFixtures){
-        disposeSftpRuntime(fixture.tabKey);
+        window.termaSftpTabs.runtime.dispose(fixture.tabKey);
         fixture.root.remove();
       }
     }
-    terminalGlobalSettings=normalizeTerminalGlobalSettings(defaultTerminalGlobalSettings);
-    showTerminalEncodingMenu(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:160,clientY:100}),key,first.id);
+    terminalGlobalSettings=window.termaTerminalSettingsModel.normalize(window.termaTerminalSettingsModel.defaults);
+    window.termaTerminalToolbarService.actions.encoding(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:160,clientY:100}),key,first.id);
     const encodingLabels=[...document.querySelectorAll('#actionMenu button span')].map(item=>item.textContent.trim());
     const encodingMenuOpened=['UTF-8','GB18030','GBK','Big5','Shift_JIS','EUC-KR','ISO-8859-1'].every(label=>encodingLabels.includes(label));
     hideActionMenu();
@@ -4985,7 +4979,7 @@ app.whenReady().then(async () => {
     const encodingRequests=[];
     const encodingNotices=[];
     const encodingActions=document.querySelector('.terminal-actions');
-    encodingActions?.insertAdjacentHTML('beforeend','<button class="terminal-action-encoding"><span>'+terminalEncodingLabel(first,key)+'</span></button>');
+    encodingActions?.insertAdjacentHTML('beforeend','<button class="terminal-action-encoding"><span>'+window.termaTerminalMetadata.terminalEncodingLabel(first,key)+'</span></button>');
     api=async (pathname,options={})=>{
       if(pathname.endsWith('/terminal-preferences')) {
         const body=JSON.parse(options.body||'{}');
@@ -4997,40 +4991,40 @@ app.whenReady().then(async () => {
     };
     notify=(text,type='info')=>encodingNotices.push({text:String(text||''),type});
     await Promise.all([
-      applyTerminalPreferences(key,first.id,{terminal_encoding:'gb18030'},'编码已切换为 GB18030'),
-      applyTerminalPreferences(key,first.id,{terminal_encoding:'gbk'},'编码已切换为 GBK')
+      window.termaTerminalPreferences.apply(key,first.id,{terminal_encoding:'gb18030'},'编码已切换为 GB18030'),
+      window.termaTerminalPreferences.apply(key,first.id,{terminal_encoding:'gbk'},'编码已切换为 GBK')
     ]);
     const encodingSelectionUsesLatest=Boolean(
       JSON.stringify(encodingRequests)===JSON.stringify(['gb18030','gbk'])
-      &&terminalSessions.get(key)?.terminalEncoding==='gbk'
+      &&window.termaTerminalState.terminalSessions.get(key)?.terminalEncoding==='gbk'
       &&document.querySelector('.terminal-action-encoding span')?.textContent==='GBK'
       &&encodingNotices.at(-1)?.text.includes('GBK')
       &&reconnectedFakeSocket.sent.some(value=>String(value).includes('"terminal-encoding"')&&String(value).includes('"gbk"'))
     );
     first.terminal_encoding=previousEncoding;
-    terminalSessions.get(key).terminalEncoding=previousEncoding;
+    window.termaTerminalState.terminalSessions.get(key).terminalEncoding=previousEncoding;
     api=encodingApi;
     notify=encodingNotify;
-    showTerminalFontMenu(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:180,clientY:100}),key,first.id);
+    window.termaTerminalToolbarService.actions.font(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:180,clientY:100}),key,first.id);
     const fontLabels=[...document.querySelectorAll('#actionMenu button span')].map(item=>item.textContent.trim());
     const fontMenuOpened=['系统等宽','Cascadia','JetBrains Mono','Consolas','自定义字体…','紧凑行距 1.0','行距 1.4','常规字重','半粗字重','恢复终端显示默认值'].every(label=>fontLabels.includes(label));
     hideActionMenu();
-    bindTerminalGlobalBehavior(terminalSessions.get(key),key,first.id,mount);
+    window.termaTerminalInteraction.bind(window.termaTerminalState.terminalSessions.get(key),key,first.id,mount);
     mount.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:120,clientY:120}));
     const labels=Array.from(document.querySelectorAll('#actionMenu button span')).map(el=>el.textContent.trim());
     hideActionMenu();
-    await showTerminalGlobalSettings(key);
+    await window.termaTerminalSettings.open(key);
     const terminalSettingsCard=document.querySelector('#modal .terminal-settings-modal');
     const terminalSettingsRect=terminalSettingsCard?.getBoundingClientRect();
     const terminalSettingsPanels=document.querySelector('.terminal-settings-panels');
-    selectTerminalSettingsTab('clipboard');
+    window.termaTerminalViews.selectTab('clipboard');
     const terminalClipboardPanel=document.querySelector('#terminalSettingsPanelClipboard');
     const terminalSettingsNoHorizontalOverflow=Boolean(
       terminalSettingsPanels&&terminalClipboardPanel
       &&terminalSettingsPanels.scrollWidth<=terminalSettingsPanels.clientWidth+1
       &&terminalClipboardPanel.scrollWidth<=terminalClipboardPanel.clientWidth+1
     );
-    selectTerminalSettingsTab('appearance');
+    window.termaTerminalViews.selectTab('appearance');
     const terminalSettingsUi={
       open:Boolean(terminalSettingsCard&&!document.querySelector('#modal')?.hidden),
       globalScope:Boolean(terminalSettingsCard?.textContent.includes('应用到继承默认值的连接；连接独立设置优先')),
@@ -5041,13 +5035,13 @@ app.whenReady().then(async () => {
       noHorizontalOverflow:terminalSettingsNoHorizontalOverflow,
       tabs:[...document.querySelectorAll('.terminal-settings-tabs [role="tab"]')].map(tab=>tab.textContent.trim()),
       backgroundModes:[...document.querySelectorAll('input[name="terminalSettingBackgroundMode"]')].map(input=>input.value),
-      requestedDefaults:defaultTerminalGlobalSettings.font_size===13&&defaultTerminalGlobalSettings.scrollback_lines===30000&&defaultTerminalGlobalSettings.font_family.includes('monospace')&&defaultTerminalGlobalSettings.background_mode==='theme'&&defaultTerminalGlobalSettings.url_links_enabled===true&&defaultTerminalGlobalSettings.auto_copy_selection===false&&defaultTerminalGlobalSettings.copy_include_trailing_newline===false,
+      requestedDefaults:window.termaTerminalSettingsModel.defaults.font_size===13&&window.termaTerminalSettingsModel.defaults.scrollback_lines===30000&&window.termaTerminalSettingsModel.defaults.font_family.includes('monospace')&&window.termaTerminalSettingsModel.defaults.background_mode==='theme'&&window.termaTerminalSettingsModel.defaults.url_links_enabled===true&&window.termaTerminalSettingsModel.defaults.auto_copy_selection===false&&window.termaTerminalSettingsModel.defaults.copy_include_trailing_newline===false,
       editablePasteSetting:document.querySelector('#terminalSettingMultilinePaste')?.selectedOptions[0]?.textContent.includes('可编辑命令窗口')
     };
     terminalSettingsUi.drop=terminalDropUi;
     const whiteBackground=document.querySelector('input[name="terminalSettingBackgroundMode"][value="white"]');
     whiteBackground.checked=true;
-    syncTerminalBackgroundForm();
+    window.termaTerminalViews.refreshSettings();
     const whitePreview=document.querySelector('#terminalBackgroundPreview');
     const whitePreviewBackgroundText=whitePreview.style.background;
     const whitePreviewForegroundText=whitePreview.style.color;
@@ -5055,14 +5049,14 @@ app.whenReady().then(async () => {
     const whitePreviewForeground=colorChannels(whitePreviewForegroundText);
     const whitePreviewReadable=whitePreviewBackground.length===3&&whitePreviewBackground.every(channel=>channel>=254)
       &&whitePreviewForeground.length===3&&whitePreviewForeground.every(channel=>channel<=1);
-    selectTerminalCustomBackground('#808080');
+    window.termaTerminalViews.selectBackground('#808080');
     const customPreview=document.querySelector('#terminalBackgroundPreview');
     const customPreviewBackground=colorChannels(customPreview.style.background);
     const customPreviewForeground=colorChannels(customPreview.style.color);
     terminalSettingsUi.backgroundPreview=whitePreviewReadable
       &&customPreviewBackground.length===3&&customPreviewBackground.every(channel=>Math.abs(channel-128)<=1)
       &&customPreviewForeground.length===3&&customPreviewForeground.every(channel=>channel<=1)
-      && selectedTerminalBackgroundMode()==='custom';
+      && window.termaTerminalViews.selectedBackgroundMode()==='custom';
     terminalSettingsUi.backgroundPreviewMetrics={
       whiteBackground:whitePreviewBackgroundText,
       whiteForeground:whitePreviewForegroundText,
@@ -5072,23 +5066,23 @@ app.whenReady().then(async () => {
       customForeground:customPreview.style.color,
       customBackgroundChannels:customPreviewBackground,
       customForegroundChannels:customPreviewForeground,
-      selectedMode:selectedTerminalBackgroundMode(),
+      selectedMode:window.termaTerminalViews.selectedBackgroundMode(),
       pickerValue:document.querySelector('#terminalSettingBackgroundColor')?.value,
-      directCustomBackground:terminalThemeForSettings({background_mode:'custom',background_color:document.querySelector('#terminalSettingBackgroundColor')?.value}).background
+      directCustomBackground:window.termaTerminalSettingsModel.theme({background_mode:'custom',background_color:document.querySelector('#terminalSettingBackgroundColor')?.value}).background
     };
-    closeTerminalGlobalSettings(key);
+    window.termaTerminalViews.closeSettings();
     const secondMount=document.createElement('div');
     secondMount.className='terminal-box';
     document.body.appendChild(secondMount);
     const secondTerm={options:{},rows:24,refresh:()=>{}};
-    terminalSessions.get(key).mount=mount;
-    const firstSession=terminalSessions.get(key);
+    window.termaTerminalState.terminalSessions.get(key).mount=mount;
+    const firstSession=window.termaTerminalState.terminalSessions.get(key);
     firstSession.connection={...firstSession.connection,terminal_font_family_inherit:1,terminal_font_size_inherit:1,terminal_mobile_font_size_inherit:1};
     secondTerm.options.fontFamily='Connection Font';
     secondTerm.options.fontSize=19;
-    terminalSessions.set(secondKey,{term:secondTerm,id:first.id,mount:secondMount,connection:{...first,terminal_font_family:'Connection Font',terminal_font_family_inherit:0,terminal_font_size:19,terminal_font_size_inherit:0,terminal_mobile_font_size:19,terminal_mobile_font_size_inherit:0}});
-    terminalGlobalSettings=normalizeTerminalGlobalSettings({...defaultTerminalGlobalSettings,font_family:'Global Font',font_size:15,background_mode:'custom',background_color:'#808080',word_separators:'-_'});
-    applyTerminalGlobalSettingsToSessions();
+    window.termaTerminalState.terminalSessions.set(secondKey,{term:secondTerm,id:first.id,mount:secondMount,connection:{...first,terminal_font_family:'Connection Font',terminal_font_family_inherit:0,terminal_font_size:19,terminal_font_size_inherit:0,terminal_mobile_font_size:19,terminal_mobile_font_size_inherit:0}});
+    terminalGlobalSettings=window.termaTerminalSettingsModel.normalize({...window.termaTerminalSettingsModel.defaults,font_family:'Global Font',font_size:15,background_mode:'custom',background_color:'#808080',word_separators:'-_'});
+    window.termaTerminalSettings.applyAll();
     const readablePaletteKeys=['black','red','green','yellow','blue','magenta','cyan','white','brightBlack','brightRed','brightGreen','brightYellow','brightBlue','brightMagenta','brightCyan','brightWhite'];
     terminalSettingsUi.appliesToAllOpenSessions=fakeTerm.options.wordSeparator==='-_'&&secondTerm.options.wordSeparator==='-_'
       &&fakeTerm.options.theme?.background==='#808080'&&secondTerm.options.theme?.background==='#808080'
@@ -5098,44 +5092,44 @@ app.whenReady().then(async () => {
       &&secondMount.style.getPropertyValue('--terminal-background')==='#808080';
     terminalSettingsUi.fontInheritance=fakeTerm.options.fontFamily==='Global Font'&&fakeTerm.options.fontSize===15
       &&secondTerm.options.fontFamily==='Connection Font'&&secondTerm.options.fontSize===19;
-    terminalSettingsUi.readableCustomPalette=readablePaletteKeys.every(name=>terminalContrastRatio(fakeTerm.options.theme[name],fakeTerm.options.theme.background)>=4.5);
-    terminalGlobalSettings=normalizeTerminalGlobalSettings({...defaultTerminalGlobalSettings,background_mode:'theme'});
+    terminalSettingsUi.readableCustomPalette=readablePaletteKeys.every(name=>window.termaTerminalSettingsModel.contrast(fakeTerm.options.theme[name],fakeTerm.options.theme.background)>=4.5);
+    terminalGlobalSettings=window.termaTerminalSettingsModel.normalize({...window.termaTerminalSettingsModel.defaults,background_mode:'theme'});
     applyTheme('dark');
     const followsDark=fakeTerm.options.theme?.background==='#000000'&&fakeTerm.options.theme?.foreground==='#ffffff';
     applyTheme('light');
     terminalSettingsUi.followsTheme=followsDark&&fakeTerm.options.theme?.background==='#ffffff'&&fakeTerm.options.theme?.foreground==='#000000';
-    terminalSettingsUi.copyFormatting=formatTerminalCopiedText('one\\t  \\r\\ntwo  ',{...defaultTerminalGlobalSettings,copy_tabs_to_spaces:true,copy_trim_trailing_spaces:true,copy_include_trailing_newline:false})==='one\\ntwo';
-    terminalSettingsUi.singleLinePaste=terminalSingleLinePaste('one\\r\\n two \\n\\nthree')==='one two three';
+    terminalSettingsUi.copyFormatting=window.termaTerminalClipboard.format('one\\t  \\r\\ntwo  ',{...window.termaTerminalSettingsModel.defaults,copy_tabs_to_spaces:true,copy_trim_trailing_spaces:true,copy_include_trailing_newline:false})==='one\\ntwo';
+    terminalSettingsUi.singleLinePaste=window.termaTerminalClipboard.singleLine('one\\r\\n two \\n\\nthree')==='one two three';
     const previousRecentCommandStorage=localStorage.getItem('recentTerminalCommands');
-    const previousRecentCommandsForPaste=[...recentTerminalCommands];
-    recentTerminalCommands=[];
+    const previousRecentCommandsForPaste=[...window.termaTerminalHistory.list()];
+    ((items)=>{window.termaTerminalHistory.clear();[...items].reverse().forEach(window.termaTerminalHistory.save);})([]);
     localStorage.removeItem('recentTerminalCommands');
-    terminalGlobalSettings=normalizeTerminalGlobalSettings({...defaultTerminalGlobalSettings,multiline_paste_mode:'paste'});
-    const pasteSession=terminalSessions.get(key);
-    await sendTerminalPasteText(key,'echo pasted-one\\r\\n');
-    const completedPasteRecorded=recentTerminalCommands[0]==='echo pasted-one'&&pasteSession.commandBuffer==='';
-    await sendTerminalPasteText(key,'echo pasted-two');
-    const incompletePasteBuffered=!recentTerminalCommands.includes('echo pasted-two')&&pasteSession.commandBuffer==='echo pasted-two';
+    terminalGlobalSettings=window.termaTerminalSettingsModel.normalize({...window.termaTerminalSettingsModel.defaults,multiline_paste_mode:'paste'});
+    const pasteSession=window.termaTerminalState.terminalSessions.get(key);
+    await window.termaTerminalClipboard.send(key,'echo pasted-one\\r\\n');
+    const completedPasteRecorded=window.termaTerminalHistory.list()[0]==='echo pasted-one'&&pasteSession.commandBuffer==='';
+    await window.termaTerminalClipboard.send(key,'echo pasted-two');
+    const incompletePasteBuffered=!window.termaTerminalHistory.list().includes('echo pasted-two')&&pasteSession.commandBuffer==='echo pasted-two';
     fakeInputHandler?.('\\r');
-    const bufferedPasteRecordedOnEnter=recentTerminalCommands[0]==='echo pasted-two'&&pasteSession.commandBuffer==='';
-    await sendTerminalPasteText(key,'printf first\\nprintf second\\npartial third');
+    const bufferedPasteRecordedOnEnter=window.termaTerminalHistory.list()[0]==='echo pasted-two'&&pasteSession.commandBuffer==='';
+    await window.termaTerminalClipboard.send(key,'printf first\\nprintf second\\npartial third');
     const multilinePasteUsesPtyReturns=reconnectedFakeSocket.sent.at(-1)==='printf first\\rprintf second\\rpartial third';
-    const multilinePasteRecorded=recentTerminalCommands.includes('printf first')&&recentTerminalCommands.includes('printf second')&&!recentTerminalCommands.includes('partial third')&&pasteSession.commandBuffer==='partial third';
+    const multilinePasteRecorded=window.termaTerminalHistory.list().includes('printf first')&&window.termaTerminalHistory.list().includes('printf second')&&!window.termaTerminalHistory.list().includes('partial third')&&pasteSession.commandBuffer==='partial third';
     fakeInputHandler?.('\\r');
-    const trailingPasteRecordedOnEnter=recentTerminalCommands[0]==='partial third';
+    const trailingPasteRecordedOnEnter=window.termaTerminalHistory.list()[0]==='partial third';
     pasteSession.sensitiveInput=true;
-    await sendTerminalPasteText(key,'very-secret-command\\r');
+    await window.termaTerminalClipboard.send(key,'very-secret-command\\r');
     pasteSession.sensitiveInput=false;
-    terminalSettingsUi.pasteCommandHistory=Boolean(completedPasteRecorded&&incompletePasteBuffered&&bufferedPasteRecordedOnEnter&&multilinePasteUsesPtyReturns&&multilinePasteRecorded&&trailingPasteRecordedOnEnter&&!recentTerminalCommands.includes('very-secret-command')&&pasteSession.commandBuffer==='');
-    recentTerminalCommands=previousRecentCommandsForPaste;
+    terminalSettingsUi.pasteCommandHistory=Boolean(completedPasteRecorded&&incompletePasteBuffered&&bufferedPasteRecordedOnEnter&&multilinePasteUsesPtyReturns&&multilinePasteRecorded&&trailingPasteRecordedOnEnter&&!window.termaTerminalHistory.list().includes('very-secret-command')&&pasteSession.commandBuffer==='');
+    ((items)=>{window.termaTerminalHistory.clear();[...items].reverse().forEach(window.termaTerminalHistory.save);})(previousRecentCommandsForPaste);
     if(previousRecentCommandStorage===null)localStorage.removeItem('recentTerminalCommands');else localStorage.setItem('recentTerminalCommands',previousRecentCommandStorage);
     fakeTerm.buffer.active.getLine=()=>({translateToString:()=> 'open https://example.test/path.',length:32});
-    terminalGlobalSettings=normalizeTerminalGlobalSettings({...defaultTerminalGlobalSettings,url_links_enabled:true,url_prefixes:['https://']});
+    terminalGlobalSettings=window.termaTerminalSettingsModel.normalize({...window.termaTerminalSettingsModel.defaults,url_links_enabled:true,url_prefixes:['https://']});
     let providedLinks;
     fakeLinkProvider?.provideLinks(1,links=>{providedLinks=links;});
     terminalSettingsUi.linkProvider=Boolean(providedLinks?.length===1&&providedLinks[0].text==='https://example.test/path'&&fakeSelectionHandler);
-    terminalGlobalSettings=normalizeTerminalGlobalSettings(defaultTerminalGlobalSettings);
-    const pastePromise=sendTerminalPasteText(key,'first command\\nsecond command');
+    terminalGlobalSettings=window.termaTerminalSettingsModel.normalize(window.termaTerminalSettingsModel.defaults);
+    const pastePromise=window.termaTerminalClipboard.send(key,'first command\\nsecond command');
     await new Promise(resolve=>setTimeout(resolve,0));
     const pasteModal=document.querySelector('#modal .terminal-paste-modal');
     const pasteModalRect=pasteModal?.getBoundingClientRect();
@@ -5150,39 +5144,39 @@ app.whenReady().then(async () => {
     document.querySelector('#terminalPasteConfirm')?.click();
     const pasteSent=await pastePromise;
     terminalSettingsUi.editablePaste=Boolean(pasteBackdropIgnored&&pasteEditable&&pasteSummaryUpdated&&pasteModalRect&&pasteModalRect.left>=-0.5&&pasteModalRect.right<=innerWidth+0.5&&pasteModalRect.top>=-0.5&&pasteModalRect.bottom<=innerHeight+0.5&&pasteSent&&reconnectedFakeSocket.sent.at(-1)==='edited command\\rsecond command');
-    const previousMcpEditorDraft=terminalAiMcpEditorDraft;
-    const mcpSettingsFixture=document.createElement('div');
-    terminalAiMcpEditorDraft=null;
-    mcpSettingsFixture.innerHTML=terminalAiMcpEditorHtml();
-    document.body.appendChild(mcpSettingsFixture);
+    const mcpPreviousTab = activeTabKey, mcpPreviousSection = window.termaSettingsNavigation.section;
+    const mcpPreviousRuntime = window.termaRuntimeSettingsModel.snapshot;
+    await window.termaSettingsViews.open();
+    const mcpSettingsFixture = $('view-settings');
+    const mcpConfig={id:'fixture-edit',name:'Fixture',transport:'streamable-http',url:'https://example.test/mcp',headers:{Authorization:''},
+      enabled:true,tools:[{name:'search',description:'Search',inputSchema:{},enabled:true,requires_approval:true}]};
+    window.termaRuntimeSettingsModel.snapshot = window.termaRuntimeSettingsModel.normalize({...mcpPreviousRuntime,saved:{...mcpPreviousRuntime?.saved,ai:{mcp_servers:[mcpConfig]}}});
+    window.termaSettingsNavigation.show('settings-ai',{moveToWorkspace:false});
+    window.termaSettingsViews.render();
     const mcpStdioFieldsVisible=Boolean(!mcpSettingsFixture.querySelector('#terminalAiMcpCommand')?.hidden&&!mcpSettingsFixture.querySelector('#terminalAiMcpArgs')?.hidden&&mcpSettingsFixture.querySelector('#terminalAiMcpUrl')?.hidden&&mcpSettingsFixture.querySelector('#terminalAiMcpHeaders')?.hidden);
-    terminalAiMcpEditorDraft={transport:'sse'};
-    mcpSettingsFixture.innerHTML=terminalAiMcpEditorHtml();
     const mcpTransport=mcpSettingsFixture.querySelector('#terminalAiMcpTransport');
+    mcpTransport.value='sse';mcpTransport.dispatchEvent(new Event('change',{bubbles:true}));
+    await Promise.resolve();
     const mcpSseFieldsVisible=Boolean(mcpSettingsFixture.querySelector('#terminalAiMcpCommand')?.hidden&&mcpSettingsFixture.querySelector('#terminalAiMcpArgs')?.hidden&&!mcpSettingsFixture.querySelector('#terminalAiMcpUrl')?.hidden&&!mcpSettingsFixture.querySelector('#terminalAiMcpHeaders')?.hidden);
-    terminalAiMcpEditorDraft={id:'fixture-edit',name:'Fixture',transport:'streamable-http',url:'https://example.test/mcp',headers:{Authorization:''},enabled:true};
-    const mcpEditHtml=terminalAiMcpEditorHtml();
-    const mcpRowsBefore=terminalAiMcpServersDraft;
-    terminalAiMcpServersDraft=[{...terminalAiMcpEditorDraft,tools:[{name:'search',description:'Search',inputSchema:{},enabled:true,requires_approval:true}]}];
-    const mcpRowsHtml=terminalAiMcpRowsHtml();
-    const mcpToolsFixture=document.createElement('div');
-    mcpToolsFixture.innerHTML=terminalAiMcpToolsHtml(terminalAiMcpServersDraft[0],0);
-    const mcpToolsCollapsible=Boolean(mcpToolsFixture.querySelector('details.terminal-ai-mcp-tools')&&!mcpToolsFixture.querySelector('details.terminal-ai-mcp-tools').open);
-    terminalSettingsUi.mcpDiagnostics={stdio:mcpStdioFieldsVisible,sse:mcpSseFieldsVisible,streamableOption:Boolean(mcpTransport.querySelector('option[value="streamable-http"]')),editCancel:mcpEditHtml.includes('settings-ai-mcp-edit-cancel'),headerPlaceholder:mcpEditHtml.includes('Authorization'),editAction:mcpRowsHtml.includes('settings-ai-mcp-edit'),toolsCollapsible:mcpToolsCollapsible};
+    const mcpEdit=mcpSettingsFixture.querySelector('[data-mcp-action="edit"]');
+    mcpEdit?.click();await Promise.resolve();
+    const mcpToolsCollapsible=Boolean(mcpSettingsFixture.querySelector('details.terminal-ai-mcp-tools')&&!mcpSettingsFixture.querySelector('details.terminal-ai-mcp-tools').open);
+    terminalSettingsUi.mcpDiagnostics={stdio:mcpStdioFieldsVisible,sse:mcpSseFieldsVisible,streamableOption:Boolean(mcpTransport.querySelector('option[value="streamable-http"]')),editCancel:Boolean(mcpSettingsFixture.querySelector('[data-mcp-action="cancel"]')),headerPlaceholder:JSON.parse(mcpSettingsFixture.querySelector('#terminalAiMcpHeaders').value||'{}').Authorization==='',editAction:Boolean(mcpEdit),toolsCollapsible:mcpToolsCollapsible};
     terminalSettingsUi.mcp=Object.values(terminalSettingsUi.mcpDiagnostics).every(Boolean);
-    terminalAiMcpServersDraft=mcpRowsBefore;
-    terminalAiMcpEditorDraft=previousMcpEditorDraft;
-    mcpSettingsFixture.remove();
-    const previousRuntimeSettingsForAi=runtimeSettings;
-    const previousTerminalAiLayout=localStorage.getItem(TERMINAL_AI_LAYOUT_STORAGE_KEY);
-    localStorage.removeItem(TERMINAL_AI_LAYOUT_STORAGE_KEY);
+    mcpSettingsFixture.querySelector('[data-mcp-action="cancel"]')?.click();
+    window.termaRuntimeSettingsModel.snapshot = mcpPreviousRuntime;
+    window.termaSettingsNavigation.show(mcpPreviousSection,{moveToWorkspace:false});
+    if (workspaceTabByKey(mcpPreviousTab)) activateTab(mcpPreviousTab);
+    const previousRuntimeSettingsForAi=window.termaRuntimeSettingsModel.snapshot;
+    const previousTerminalAiLayout=localStorage.getItem('termaTerminalAiLayout');
+    localStorage.removeItem('termaTerminalAiLayout');
     const aiKey='terminal-ai-ui-smoke';
     const aiSurface=document.createElement('div');
     aiSurface.className='terminal-tab-surface';
     aiSurface.style.cssText='position:fixed;left:-10000px;top:0;width:900px;height:480px;display:flex;flex-direction:column;';
-    aiSurface.innerHTML='<div class="terminal-toolbar"><div class="actions terminal-actions"><button type="button" class="icon-button terminal-ai-button" aria-pressed="false" data-action="terminal-ai-toggle" data-terminal-ai-key="'+aiKey+'">'+icon('bot')+'</button></div></div><div class="terminal-main-row"><div class="terminal-box"></div>'+terminalAiPanelHtml(aiKey)+'</div>';
+    aiSurface.innerHTML='<div class="terminal-toolbar"><div class="actions terminal-actions"><button type="button" class="icon-button terminal-ai-button" aria-pressed="false" data-action="terminal-ai-toggle" data-terminal-ai-key="'+aiKey+'">'+icon('bot')+'</button></div></div><div class="terminal-main-row"><div class="terminal-box"></div>'+window.termaAssistant.placeholder(aiKey)+'</div>';
     document.body.appendChild(aiSurface);
-    runtimeSettings={...runtimeSettings,ai:{...(runtimeSettings?.ai||{}),enabled:true,model:'fixture-model',context_tokens:1000000,terminal_ai_placement:'right',terminal_ai_permission:'confirm'},saved:{...(runtimeSettings?.saved||{}),ai:{...(runtimeSettings?.saved?.ai||{}),enabled:true,model:'fixture-model',context_tokens:1000000,terminal_ai_placement:'right',terminal_ai_permission:'confirm'}}};
+    window.termaRuntimeSettingsModel.snapshot={...window.termaRuntimeSettingsModel.snapshot,ai:{...(window.termaRuntimeSettingsModel.snapshot?.ai||{}),enabled:true,model:'fixture-model',context_tokens:1000000,terminal_ai_placement:'right',terminal_ai_permission:'confirm'},saved:{...(window.termaRuntimeSettingsModel.snapshot?.saved||{}),ai:{...(window.termaRuntimeSettingsModel.snapshot?.saved?.ai||{}),enabled:true,model:'fixture-model',context_tokens:1000000,terminal_ai_placement:'right',terminal_ai_permission:'confirm'}}};
     const aiButton=aiSurface.querySelector('[data-action="terminal-ai-toggle"]');
     const aiPanel=aiSurface.querySelector('.terminal-ai-panel');
     const projectedAiButton=document.createElement('button');
@@ -5199,11 +5193,11 @@ app.whenReady().then(async () => {
     const aiPanelOpens=Boolean(aiPanel&&!aiPanel.hidden&&aiPanel.classList.contains('is-open'));
     const aiRightPlacement=Boolean(aiSurface.classList.contains('terminal-ai-right')&&getComputedStyle(aiMainRow).flexDirection==='row'&&aiPanelRect?.width>0);
     const aiPanelLayoutFits=Boolean(aiPanelRect&&aiSurfaceRect&&aiPanelRect.left>=aiSurfaceRect.left-0.5&&aiPanelRect.right<=aiSurfaceRect.right+0.5&&aiPanelRect.top>=aiSurfaceRect.top-0.5&&aiPanelRect.bottom<=aiSurfaceRect.bottom+0.5);
-    const aiState=terminalAiStateForKey(aiKey);
+    const aiState=window.termaAssistant.service.state(aiKey);
     aiState.mode='agent';
-    renderTerminalAiPanel(aiKey);
+    window.termaAssistant.paint(aiKey);
     const chatModePreviousTurns=aiState.turns;
-    const chatModeSwitched=terminalAiSetMode(aiKey,'chat');
+    const chatModeSwitched=window.termaAssistant.service.mode(aiKey,'chat');
     const chatModeButtons=aiPanel.querySelectorAll('[data-action="terminal-ai-mode"]');
     const chatModeChatButton=aiPanel.querySelector('[data-terminal-ai-mode="chat"]');
     const chatModeAgentButton=aiPanel.querySelector('[data-terminal-ai-mode="agent"]');
@@ -5211,29 +5205,29 @@ app.whenReady().then(async () => {
     const chatModePermissionRow=aiPanel.querySelector('[data-terminal-ai-permission-row="'+aiKey+'"]');
     const chatModeTextarea=aiPanel.querySelector('[data-terminal-ai-prompt="'+aiKey+'"]');
     aiState.turns=[{id:'chat-mode-fixture',taskId:'',mode:'chat',prompt:'查看当前终端',answer:'请在终端运行 df -h，运行后把输出发给我，我可以帮你分析。\\n\\n'+String.fromCharCode(96)+'df -h'+String.fromCharCode(96)+'\\n\\n'+String.fromCharCode(96).repeat(3)+'sh\\nuname -a\\n'+String.fromCharCode(96).repeat(3),reasoning:'',model:'fixture-model',usage:null,busy:false,error:''}];
-    renderTerminalAiPanel(aiKey);
+    window.termaAssistant.paint(aiKey);
     const chatModeCodeActions=aiPanel.querySelectorAll('.terminal-ai-response-content [data-action="terminal-ai-execute-command"],.terminal-ai-response-content [data-action="terminal-ai-insert-command"],.terminal-ai-response-content [data-action="terminal-ai-save-snippet"]');
     const chatModeCopyActions=aiPanel.querySelectorAll('.terminal-ai-response-content [data-action="terminal-ai-copy-code"]');
     const chatModeInlineCommandCopy=aiPanel.querySelector('.terminal-ai-response-content [data-action="terminal-ai-copy-code"][data-code="df -h"]');
     const chatModeRelaySanitized=Boolean(!aiPanel.querySelector('.terminal-ai-response-content')?.textContent.includes('把输出发给我')&&aiPanel.querySelector('.terminal-ai-response-content')?.textContent.includes('自动读取最新终端内容'));
-    const previousChatSession=terminalSessions.get(aiKey);
-    terminalSessions.set(aiKey,{key:aiKey,sensitiveInput:false,term:{getSelection:()=>'',buffer:{active:{length:3,getLine:index=>({translateToString:()=>['root@fixture:~# df -h','Filesystem  Size  Used  Avail  Use%  Mounted on','/dev/test  10G  2G  8G  20%  /'][index]||''})}}}});
-    const chatExecutionGuard=await executeTerminalAiCommand(aiKey,'uname -a',{details:true});
+    const previousChatSession=window.termaTerminalState.terminalSessions.get(aiKey);
+    window.termaTerminalState.terminalSessions.set(aiKey,{key:aiKey,sensitiveInput:false,term:{options:{},getSelection:()=>'',buffer:{active:{length:3,getLine:index=>({translateToString:()=>['root@fixture:~# df -h','Filesystem  Size  Used  Avail  Use%  Mounted on','/dev/test  10G  2G  8G  20%  /'][index]||''})}}}});
+    const chatExecutionGuard=await window.termaAssistant.commands.execute(aiKey,'uname -a',{details:true});
     let chatRequestPayload=null;
-    await submitTerminalAiRequest(aiKey,'当前终端是什么系统？',[],{mode:'chat',agentTask:false,streamRequest:async(payload,handlers)=>{chatRequestPayload=payload;handlers.onDelta?.('只读回答');return {model:'fixture-model',usage:null};}});
-    if(previousChatSession)terminalSessions.set(aiKey,previousChatSession);else terminalSessions.delete(aiKey);
+    await window.termaAssistant.requestWorkflow.submit(aiKey,'当前终端是什么系统？',[],{mode:'chat',agentTask:false,streamRequest:async(payload,handlers)=>{chatRequestPayload=payload;handlers.onDelta?.('只读回答');return {model:'fixture-model',usage:null};}});
+    if(previousChatSession)window.termaTerminalState.terminalSessions.set(aiKey,previousChatSession);else window.termaTerminalState.terminalSessions.delete(aiKey);
     const chatModeRendered=Boolean(chatModeSwitched&&chatModeButtons.length===2&&chatModeChatButton?.classList.contains('active')&&chatModeChatButton?.getAttribute('aria-selected')==='true'&&chatModeAgentButton?.getAttribute('aria-selected')==='false'&&chatModeBlocksWrap?.hidden&&chatModePermissionRow?.hidden&&chatModeTextarea?.placeholder.includes('只读')&&chatModeCodeActions.length===0&&chatModeCopyActions.length===2&&chatModeInlineCommandCopy?.dataset.code==='df -h'&&chatModeRelaySanitized&&chatExecutionGuard?.chatMode===true&&chatRequestPayload?.mode==='chat'&&chatRequestPayload?.contexts?.some(item=>item.source==='terminal-screen'&&item.text.includes('df -h')));
     aiState.turns=chatModePreviousTurns;
-    terminalAiSetMode(aiKey,'agent');
-    renderTerminalAiPanel(aiKey);
+    window.termaAssistant.service.mode(aiKey,'agent');
+    window.termaAssistant.paint(aiKey);
     const planRecoveryKey='terminal-ai-plan-recovery';
-    const planRecoveryState=terminalAiStateForKey(planRecoveryKey);
+    const planRecoveryState=window.termaAssistant.service.state(planRecoveryKey);
     planRecoveryState.mode='agent';
     planRecoveryState.permission='suggest';
     planRecoveryState.open=false;
     let planOnlyRequests=0;
     const planOnlyAnswer='我先检查服务器状态，接下来查看磁盘。';
-    await submitTerminalAiRequest(planRecoveryKey,'检查服务器磁盘空间',[],{agentTask:true,streamRequest:async(payload,handlers)=>{
+    await window.termaAssistant.requestWorkflow.submit(planRecoveryKey,'检查服务器磁盘空间',[],{agentTask:true,streamRequest:async(payload,handlers)=>{
       planOnlyRequests+=1;
       handlers.onDelta?.(planOnlyAnswer);
       return {model:'fixture-model',usage:null};
@@ -5247,32 +5241,37 @@ app.whenReady().then(async () => {
     const aiReasoningControl=aiPanel.querySelector('[data-change-action="terminal-ai-reasoning"]');
     const aiDeepThinkingControl=aiPanel.querySelector('[data-change-action="terminal-ai-deep-thinking"]');
     const aiModelReasoningControlsAvailable=Boolean(aiModelControl&&aiReasoningControl&&aiDeepThinkingControl&&aiPanel.querySelector('.terminal-ai-ai-status')&&['minimal','high','xhigh','max'].every(value=>[...aiReasoningControl.options].some(option=>option.value===value)));
-    const aiBinarySession={key:aiKey,sensitiveInput:false,aiActiveBlockId:''};
-    captureTerminalAiBlockCommand(aiBinarySession,'ls');
-    captureTerminalAiBlockOutput(aiBinarySession,new TextEncoder().encode('fixture-file\\n'));
+    const aiTrackedOriginalSession=window.termaTerminalState.terminalSessions.get(aiKey);
+    const aiBinarySession={key:aiKey,sensitiveInput:false,aiActiveBlockId:'',term:{options:{}}};
+    window.termaTerminalState.terminalSessions.set(aiKey,aiBinarySession);
+    window.termaAssistant.tracker.captureCommand(aiBinarySession,'ls');
+    window.termaAssistant.tracker.captureOutput(aiBinarySession,new TextEncoder().encode('fixture-file\\n'));
     const aiBinaryOutputCaptured=aiState.blocks.some(block=>block.command==='ls'&&block.output.includes('fixture-file'));
-    finalizeTerminalAiActiveBlock(aiBinarySession);
-    const aiPromptSession={term:{buffer:{active:{baseY:0,cursorY:0,cursorX:12,getLine:()=>({translateToString:()=> 'root@Test:~#'})}}}};
-    const aiTrailingPromptDetected=terminalPromptStateAtRow(aiPromptSession)?.command==='';
-    const aiEmptyOutputSession={key:aiKey,sensitiveInput:false,aiActiveBlockId:''};
-    captureTerminalAiBlockCommand(aiEmptyOutputSession,'true');
-    const aiEmptyOutputCompletes=finalizeTerminalAiBlockFromScreen({...aiEmptyOutputSession,term:aiPromptSession.term});
+    window.termaAssistant.tracker.finalize(aiBinarySession);
+    const aiPromptSession={term:{options:{},buffer:{active:{baseY:0,cursorY:0,cursorX:12,getLine:()=>({translateToString:()=> 'root@Test:~#'})}}}};
+    const aiTrailingPromptDetected=window.termaTerminalPrompt.terminalPromptStateAtRow(aiPromptSession)?.command==='';
+    const aiEmptyOutputSession={key:aiKey,sensitiveInput:false,aiActiveBlockId:'',term:aiPromptSession.term};
+    window.termaTerminalState.terminalSessions.set(aiKey,aiEmptyOutputSession);
+    window.termaAssistant.tracker.captureCommand(aiEmptyOutputSession,'true');
+    const aiEmptyOutputCompletes=window.termaAssistant.tracker.fromScreen(aiEmptyOutputSession);
     const aiRaceLines=['root@Test:~#','root@Test:~#'];
-    const aiRaceSession={key:aiKey,sensitiveInput:false,aiActiveBlockId:'',terminalOutputSequence:0,pendingTerminalOutput:[],terminalOutputWriting:false,term:{buffer:{active:{baseY:0,cursorY:0,cursorX:12,getLine:row=>({translateToString:()=>aiRaceLines[row]||''})}}}};
-    const aiRacePromptBefore=terminalPromptStateAtRow(aiRaceSession);
-    captureTerminalAiBlockCommand(aiRaceSession,'find /',{agent:true,promptBefore:aiRacePromptBefore,outputSequenceBefore:0,sentAt:Date.now()});
-    const aiEarlyCompletionGuard=!finalizeTerminalAiBlockFromScreen(aiRaceSession);
+    const aiRaceSession={key:aiKey,sensitiveInput:false,aiActiveBlockId:'',terminalOutputSequence:0,pendingTerminalOutput:[],terminalOutputWriting:false,term:{options:{},buffer:{active:{baseY:0,cursorY:0,cursorX:12,getLine:row=>({translateToString:()=>aiRaceLines[row]||''})}}}};
+    window.termaTerminalState.terminalSessions.set(aiKey,aiRaceSession);
+    const aiRacePromptBefore=window.termaTerminalPrompt.terminalPromptStateAtRow(aiRaceSession);
+    window.termaAssistant.tracker.captureCommand(aiRaceSession,'find /',{agent:true,promptBefore:aiRacePromptBefore,outputSequenceBefore:0,sentAt:Date.now()});
+    const aiEarlyCompletionGuard=!window.termaAssistant.tracker.fromScreen(aiRaceSession);
     aiRaceSession.term.buffer.active.baseY=1;
     aiRaceSession.pendingTerminalOutput=['pending'];
-    const aiQueueCompletionGuard=!finalizeTerminalAiBlockFromScreen(aiRaceSession);
+    const aiQueueCompletionGuard=!window.termaAssistant.tracker.fromScreen(aiRaceSession);
     aiRaceSession.pendingTerminalOutput=[];
     const aiRaceBlock=aiState.blocks.find(block=>block.id===aiRaceSession.aiActiveBlockId);
     if(aiRaceBlock)aiRaceBlock.completionCandidateAt=Date.now()-500;
-    const aiRaceCompletes=finalizeTerminalAiBlockFromScreen(aiRaceSession);
+    const aiRaceCompletes=window.termaAssistant.tracker.fromScreen(aiRaceSession);
+    if(aiTrackedOriginalSession)window.termaTerminalState.terminalSessions.set(aiKey,aiTrackedOriginalSession);else window.termaTerminalState.terminalSessions.delete(aiKey);
     const markdownFence=String.fromCharCode(96).repeat(3);
     const longTableValue='value-'.repeat(80);
     aiState.turns=[{id:'fixture-turn',prompt:'检查当前目录',answer:['**结果**','','| 项目 | 当前值 |','| --- | --- |','| sshd | '+longTableValue+' |','',markdownFence+'shell',"printf '"+longTableValue+"'",markdownFence].join('\\n'),reasoning:'根据已捕获输出整理了只读检查步骤。',model:'fixture-model',usage:{input_tokens:20,output_tokens:30,total_tokens:50},busy:false,error:''}];
-    renderTerminalAiPanel(aiKey);
+    window.termaAssistant.paint(aiKey);
     const aiComposer=aiPanel.querySelector('.terminal-ai-composer');
     const aiComposerRect=aiComposer?.getBoundingClientRect();
     const aiComposeActionsRect=aiPanel.querySelector('.terminal-ai-compose-actions')?.getBoundingClientRect();
@@ -5306,7 +5305,7 @@ app.whenReady().then(async () => {
     const longCodeFence=String.fromCharCode(96).repeat(3);
     const longShellCode=Array.from({length:180},(_,index)=>"printf 'fixture-line-"+String(index).padStart(3,"0")+" %s\\n' '"+String.fromCharCode(120).repeat(70)+"'").join('\\n');
     aiState.turns=[{id:'fixture-long-code',prompt:'执行长脚本',answer:[longCodeFence+'sh',longShellCode,longCodeFence].join('\\n'),reasoning:'',model:'fixture-model',usage:null,busy:false,error:''}];
-    renderTerminalAiPanel(aiKey);
+    window.termaAssistant.paint(aiKey);
     const longCodeView=aiPanel.querySelector('.terminal-ai-code');
     const longCodeActions=aiPanel.querySelector('.terminal-ai-code-actions');
     const longCodeExecute=longCodeActions?.querySelector('[data-action="terminal-ai-execute-command"]');
@@ -5326,7 +5325,7 @@ app.whenReady().then(async () => {
       &&longCodeExecute.getBoundingClientRect().bottom<=longCodePanelRect.bottom+1);
     const aiLongCodeActionsReachable=longCodeScrollable&&longCodeExecuteReachable;
     aiState.turns=[{id:'fixture-turn',prompt:'检查当前目录',answer:['**结果**','','| 项目 | 当前值 |','| --- | --- |','| sshd | '+longTableValue+' |','',markdownFence+'shell',"printf '"+longTableValue+"'",markdownFence].join('\\n'),reasoning:'根据已捕获输出整理了只读检查步骤。',model:'fixture-model',usage:{input_tokens:20,output_tokens:30,total_tokens:50},busy:false,error:''}];
-    renderTerminalAiPanel(aiKey);
+    window.termaAssistant.paint(aiKey);
     const enterEvent=new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true});
     aiTextarea.value='';
     aiTextarea.dispatchEvent(enterEvent);
@@ -5335,92 +5334,96 @@ app.whenReady().then(async () => {
     const aiComposerKeyboard=enterEvent.defaultPrevented&&!shiftEnterEvent.defaultPrevented;
     const toolCallFence=String.fromCharCode(96).repeat(3);
     const aiToolCallAnswer='<tool_call><function=terminal><parameter=action>execute</parameter><parameter=command>find / -name "测试2.svg" -type f 2>/dev/null</parameter><parameter=description>查找 SVG 文件</parameter></function></tool_call>';
-    const aiToolCallCommands=terminalAiResponseCommands(aiToolCallAnswer);
+    const aiToolCallCommands=window.termaAssistant.protocol.terminalAiResponseCommands(aiToolCallAnswer);
     const aiCompatibleToolCalls=[
       '<tool_call><function=exec_command><parameter=command>uname -a</parameter><parameter=timeout>30</parameter></function></tool_call>',
       '<tool_call><function=shell><parameter=command>whoami</parameter></function></tool_call>'
     ];
-    const aiCompatibleToolCallCommands=aiCompatibleToolCalls.map(value => terminalAiResponseCommands(value)[0]);
-    const aiCompatibleToolCallRendered=aiCompatibleToolCalls.every(value => renderTerminalAiMarkdown(aiKey,value).includes('terminal-ai-code-block'));
+    const aiCompatibleToolCallCommands=aiCompatibleToolCalls.map(value => window.termaAssistant.protocol.terminalAiResponseCommands(value)[0]);
+    const aiCompatibleToolCallRendered=aiCompatibleToolCalls.every(value => window.termaAssistant.markup('renderTerminalAiMarkdown',aiKey,value).includes('terminal-ai-code-block'));
     const aiRejectedToolCalls=[
       '<tool_call><function=delete_everything><parameter=command>rm -rf /tmp/example</parameter></function></tool_call>',
       '<tool_call><function=shell><parameter=action>delete</parameter><parameter=command>whoami</parameter></function></tool_call>',
       '<tool_call><function=exec_command><parameter=timeout>30</parameter></function></tool_call>'
     ];
-    const aiCompatibleToolCallRejected=aiRejectedToolCalls.every(value => terminalAiResponseCommands(value).length===0);
-    const aiRejectedToolCallVisible=aiRejectedToolCalls.every(value => /未执行工具调用|Tool call not executed/i.test(renderTerminalAiMarkdown(aiKey,value)));
+    const aiCompatibleToolCallRejected=aiRejectedToolCalls.every(value => window.termaAssistant.protocol.terminalAiResponseCommands(value).length===0);
+    const aiRejectedToolCallVisible=aiRejectedToolCalls.every(value => /未执行工具调用|Tool call not executed/i.test(window.termaAssistant.markup('renderTerminalAiMarkdown',aiKey,value)));
     aiState.turns=[{id:'fixture-tool-call',prompt:'帮我找一下测试2.svg',answer:aiToolCallAnswer,reasoning:'',model:'fixture-model',usage:null,busy:false,error:''}];
-    renderTerminalAiPanel(aiKey);
+    window.termaAssistant.paint(aiKey);
     const aiToolCallRendered=Boolean(aiToolCallCommands[0]==='find / -name "测试2.svg" -type f 2>/dev/null'&&JSON.stringify(aiCompatibleToolCallCommands)==='["uname -a","whoami"]'&&aiCompatibleToolCallRendered&&aiCompatibleToolCallRejected&&aiRejectedToolCallVisible&&aiPanel.querySelector('.terminal-ai-code-block')&&aiPanel.querySelector('[data-action="terminal-ai-insert-command"]')&&!aiPanel.textContent.includes('<tool_call>')&&!aiPanel.textContent.includes('<function=terminal>'));
     const aiXmlAnswer='我先检查真实系统信息。<command>cat /etc/os-release &amp;&amp; uname -a</command><command>whoami</command>未经终端验证的安全报告';
-    const aiXmlCommands=terminalAiResponseCommands(aiXmlAnswer);
-    const aiAnswerThroughFirstCommand=terminalAiAnswerThroughFirstCommand(aiXmlAnswer);
+    const aiXmlCommands=window.termaAssistant.protocol.terminalAiResponseCommands(aiXmlAnswer);
+    const aiAnswerThroughFirstCommand=window.termaAssistant.protocol.terminalAiAnswerThroughFirstCommand(aiXmlAnswer);
     aiState.turns=[{id:'fixture-xml-command',prompt:'检查系统',answer:aiAnswerThroughFirstCommand,reasoning:'',model:'fixture-model',usage:null,busy:false,error:''}];
-    renderTerminalAiPanel(aiKey);
+    window.termaAssistant.paint(aiKey);
     const aiXmlCommandRendered=Boolean(aiXmlCommands[0]==='cat /etc/os-release && uname -a'&&aiPanel.querySelector('.terminal-ai-code-block code')?.textContent==='cat /etc/os-release && uname -a'&&!aiPanel.textContent.includes('<command>'));
     const aiStopsAfterFirstCommand=aiAnswerThroughFirstCommand.includes('</command>')&&!aiAnswerThroughFirstCommand.includes('whoami')&&!aiAnswerThroughFirstCommand.includes('安全报告');
     const aiMcpAnswer='我先查询当前资料。<mcp_call server="brave-search" tool="brave_web_search">{"query":"Terma"}</mcp_call>不应提前给结论';
-    const aiMcpCalls=terminalAiResponseMcpCalls(aiMcpAnswer);
-    const aiMcpCut=terminalAiAnswerThroughFirstCommand(aiMcpAnswer);
-    const aiMcpCatalogBefore=terminalAiMcpCatalogCache;
-    terminalAiMcpCatalogCache={expiresAt:Date.now()+60000,contexts:[],tools:[{server_id:'web-fetch',server_name:'Web Fetch',name:'tavily_search',description:'Search the web',inputSchema:{type:'object',properties:{query:{type:'string'}}},enabled:true,requires_approval:false}]};
+    const aiMcpCalls=window.termaAssistant.protocol.terminalAiResponseMcpCalls(aiMcpAnswer);
+    const aiMcpCut=window.termaAssistant.protocol.terminalAiAnswerThroughFirstCommand(aiMcpAnswer);
+    const aiMcpApiBefore=window.termaWorkspaceRequest;
+    window.termaAssistant.mcp.clear();
+    try {
+      window.termaWorkspaceRequest=async(pathname,options)=>pathname==='/api/ai/mcp/servers'?{servers:[{id:'web-fetch',name:'Web Fetch',enabled:true,tools:[{name:'tavily_search',description:'Search the web',inputSchema:{type:'object',properties:{query:{type:'string'}}},enabled:true,requires_approval:false}]}]}:aiMcpApiBefore(pathname,options);
+      await window.termaAssistant.mcp.catalog();
+    } finally { window.termaWorkspaceRequest=aiMcpApiBefore; }
     const aiGenericMcpAnswer='<tool_call><function>tavily_search><parameter=query>Terma company what is</parameter></tool_call>';
-    const aiGenericMcpCalls=terminalAiResponseMcpCalls(aiGenericMcpAnswer);
-    const aiGenericMcpRendered=!renderTerminalAiMarkdown(aiKey,aiGenericMcpAnswer).includes('<tool_call>')&&!renderTerminalAiMarkdown(aiKey,aiGenericMcpAnswer).includes('<function');
+    const aiGenericMcpCalls=window.termaAssistant.protocol.terminalAiResponseMcpCalls(aiGenericMcpAnswer);
+    const aiGenericMcpRendered=!window.termaAssistant.markup('renderTerminalAiMarkdown',aiKey,aiGenericMcpAnswer).includes('<tool_call>')&&!window.termaAssistant.markup('renderTerminalAiMarkdown',aiKey,aiGenericMcpAnswer).includes('<function');
     const aiJsonMcpAnswer='<tool_call>{"name":"mcp_call","arguments":{"server":"web-fetch.tavily_search","tool":"search","query":"Terma software what is it"}}</tool_call>';
-    const aiJsonMcpCalls=terminalAiResponseMcpCalls(aiJsonMcpAnswer);
-    const aiJsonMcpRendered=!renderTerminalAiMarkdown(aiKey,aiJsonMcpAnswer).includes('<tool_call>')&&!renderTerminalAiMarkdown(aiKey,aiJsonMcpAnswer).includes('<function');
+    const aiJsonMcpCalls=window.termaAssistant.protocol.terminalAiResponseMcpCalls(aiJsonMcpAnswer);
+    const aiJsonMcpRendered=!window.termaAssistant.markup('renderTerminalAiMarkdown',aiKey,aiJsonMcpAnswer).includes('<tool_call>')&&!window.termaAssistant.markup('renderTerminalAiMarkdown',aiKey,aiJsonMcpAnswer).includes('<function');
     const aiMcpMarkerAnswer=[markdownFence+'xml','**MCP · web-fetch / tavily_search**',markdownFence].join('\\n');
-    const aiMcpMarkerCalls=terminalAiResponseMcpCalls(aiMcpMarkerAnswer);
-    const aiMcpMarkerResults=terminalAiTaskMcpResults([{answer:aiMcpMarkerAnswer,agentResults:[]}]);
-    const aiMcpMarkerWithReal=terminalAiTaskMcpResults([{answer:aiMcpMarkerAnswer,agentResults:[{kind:'mcp',server:'web-fetch',tool:'tavily_search',arguments:{query:'Terma'},output:'fixture result',status:'已完成'}]}]);
-    const aiMcpMarkerNormalized=terminalAiNormalizeToolCalls(aiMcpMarkerAnswer);
-    terminalAiMcpCatalogCache=aiMcpCatalogBefore;
+    const aiMcpMarkerCalls=window.termaAssistant.protocol.terminalAiResponseMcpCalls(aiMcpMarkerAnswer);
+    const aiMcpMarkerResults=window.termaAssistant.markup('terminalAiTaskMcpResults',[{answer:aiMcpMarkerAnswer,agentResults:[]}]);
+    const aiMcpMarkerWithReal=window.termaAssistant.markup('terminalAiTaskMcpResults',[{answer:aiMcpMarkerAnswer,agentResults:[{kind:'mcp',server:'web-fetch',tool:'tavily_search',arguments:{query:'Terma'},output:'fixture result',status:'已完成'}]}]);
+    const aiMcpMarkerNormalized=window.termaAssistant.protocol.terminalAiNormalizeToolCalls(aiMcpMarkerAnswer);
+    window.termaAssistant.mcp.clear();
     aiState.turns=[{id:'fixture-mcp-call',prompt:'搜索 Terma',answer:aiMcpCut,reasoning:'',model:'fixture-model',usage:null,busy:false,error:''}];
-    renderTerminalAiPanel(aiKey);
+    window.termaAssistant.paint(aiKey);
     const aiMcpInlineAnswer='开始查询 <mcp_call server="web-fetch" tool="tavily_search">{"query":"Terma"}</mcp_call> 查询完成';
     const aiMcpInlineEntries=[{kind:'mcp',server:'web-fetch',tool:'tavily_search',arguments:{query:'Terma'},output:'fixture inline result',status:'已完成'}];
-    const aiMcpInlineRendered=terminalAiRenderAnswerWithMcp(aiKey,aiMcpInlineAnswer,aiMcpInlineEntries,new Set());
+    const aiMcpInlineRendered=window.termaAssistant.markup('terminalAiRenderAnswerWithMcp',aiKey,aiMcpInlineAnswer,aiMcpInlineEntries,new Set());
     const aiMcpInlineCardIndex=aiMcpInlineRendered.indexOf('terminal-ai-mcp-result-card');
     const aiMcpInlineBefore=aiMcpInlineRendered.indexOf('开始查询');
     const aiMcpInlineAfter=aiMcpInlineRendered.indexOf('查询完成');
     const aiMcpCallRendered=Boolean(aiMcpCalls.length===1&&aiMcpCalls[0].server==='brave-search'&&aiMcpCalls[0].tool==='brave_web_search'&&aiGenericMcpCalls.length===1&&aiGenericMcpCalls[0].server==='web-fetch'&&aiGenericMcpCalls[0].tool==='tavily_search'&&aiGenericMcpCalls[0].arguments.query==='Terma company what is'&&aiGenericMcpRendered&&aiJsonMcpCalls.length===1&&aiJsonMcpCalls[0].server==='web-fetch'&&aiJsonMcpCalls[0].tool==='tavily_search'&&JSON.stringify(aiJsonMcpCalls[0].arguments)==='{"query":"Terma software what is it"}'&&aiJsonMcpRendered&&aiMcpMarkerCalls.length===0&&aiMcpMarkerResults.length===1&&aiMcpMarkerWithReal.length===1&&aiMcpMarkerWithReal[0].output==='fixture result'&&!aiMcpMarkerNormalized.includes('MCP')&&!aiMcpMarkerNormalized.includes('xml')&&aiPanel.querySelector('.terminal-ai-mcp-result-card')&&!aiPanel.textContent.includes('<mcp_call')&&!aiMcpCut.includes('不应提前给结论')&&aiMcpInlineBefore>=0&&aiMcpInlineCardIndex>aiMcpInlineBefore&&aiMcpInlineCardIndex<aiMcpInlineAfter);
-    const aiMultiCommandQueue=JSON.stringify(terminalAiResponseCommands([markdownFence+'shell','uname -a','whoami',markdownFence,markdownFence+'shell','hostname',markdownFence].join('\\n')))==='["uname -a","whoami","hostname"]'
-      &&JSON.stringify(terminalAiResponseCommands([markdownFence+'shell','ls /etc 2>/dev/null && echo ready && hostname',markdownFence].join('\\n')))==='["ls /etc 2>/dev/null && echo ready && hostname"]';
+    const aiMultiCommandQueue=JSON.stringify(window.termaAssistant.protocol.terminalAiResponseCommands([markdownFence+'shell','uname -a','whoami',markdownFence,markdownFence+'shell','hostname',markdownFence].join('\\n')))==='["uname -a","whoami","hostname"]'
+      &&JSON.stringify(window.termaAssistant.protocol.terminalAiResponseCommands([markdownFence+'shell','ls /etc 2>/dev/null && echo ready && hostname',markdownFence].join('\\n')))==='["ls /etc 2>/dev/null && echo ready && hostname"]';
     const escapedFence=markdownFence.split('').map(char=>String.fromCharCode(92)+char).join('');
     const escapedMarkdownAnswer=['检查结果','1'+String.fromCharCode(92)+'. 已确认',escapedFence+'sh','printf '+String.fromCharCode(39)+'%s\\\\n'+String.fromCharCode(39)+' ok',escapedFence].join(String.fromCharCode(10));
-    const escapedMarkdownHtml=renderTerminalAiMarkdown(aiKey,escapedMarkdownAnswer);
-    const aiEscapedMarkdown=Boolean(terminalAiResponseCommands(escapedMarkdownAnswer).length===1&&terminalAiResponseCommands(escapedMarkdownAnswer)[0].includes("printf")&&escapedMarkdownHtml.includes('terminal-ai-code-block')&&escapedMarkdownHtml.includes('<ol>')&&!escapedMarkdownHtml.includes(String.fromCharCode(96)));
+    const escapedMarkdownHtml=window.termaAssistant.markup('renderTerminalAiMarkdown',aiKey,escapedMarkdownAnswer);
+    const aiEscapedMarkdown=Boolean(window.termaAssistant.protocol.terminalAiResponseCommands(escapedMarkdownAnswer).length===1&&window.termaAssistant.protocol.terminalAiResponseCommands(escapedMarkdownAnswer)[0].includes("printf")&&escapedMarkdownHtml.includes('terminal-ai-code-block')&&escapedMarkdownHtml.includes('<ol>')&&!escapedMarkdownHtml.includes(String.fromCharCode(96)));
     const multilineScriptAnswer=[markdownFence+'sh','printf first','if true; then','printf second','fi',markdownFence].join(String.fromCharCode(10));
-    const aiMultilineScriptCommands=terminalAiResponseCommands(multilineScriptAnswer);
+    const aiMultilineScriptCommands=window.termaAssistant.protocol.terminalAiResponseCommands(multilineScriptAnswer);
     const aiMultilineScript=Boolean(aiMultilineScriptCommands.length===1&&aiMultilineScriptCommands[0].includes('if true; then')&&aiMultilineScriptCommands[0].includes('printf second'));
-    const aiIncompleteCommandRecovery=terminalAiResponseCommands(['我先检查系统。',markdownFence+'shell','cat /etc/os-release 2>/dev/null'].join('\\n'),{allowIncomplete:true})[0]==='cat /etc/os-release 2>/dev/null'
-      &&terminalAiResponseCommands(['我先检查系统。',markdownFence+'shell','cat /etc/os-release 2>/'].join('\\n'),{allowIncomplete:true}).length===0
-      &&terminalAiCompleteRecoveredCommandAnswer(['我先检查系统。',markdownFence+'shell','uname -a'].join('\\n'),'uname -a').endsWith(markdownFence);
-    updateTerminalAiLayout(aiKey,{mode:'floating',width:520,minimized:false});
-    const aiFloatingLayout=terminalAiLayoutSettings();
+    const aiIncompleteCommandRecovery=window.termaAssistant.protocol.terminalAiResponseCommands(['我先检查系统。',markdownFence+'shell','cat /etc/os-release 2>/dev/null'].join('\\n'),{allowIncomplete:true})[0]==='cat /etc/os-release 2>/dev/null'
+      &&window.termaAssistant.protocol.terminalAiResponseCommands(['我先检查系统。',markdownFence+'shell','cat /etc/os-release 2>/'].join('\\n'),{allowIncomplete:true}).length===0
+      &&window.termaAssistant.protocol.terminalAiCompleteRecoveredCommandAnswer(['我先检查系统。',markdownFence+'shell','uname -a'].join('\\n'),'uname -a').endsWith(markdownFence);
+    window.termaAssistant.layout.update(aiKey,{mode:'floating',width:520,minimized:false});
+    const aiFloatingLayout=window.termaAssistant.layout.settings();
     const aiFloatingPersisted=Boolean(aiFloatingLayout.mode==='floating'&&aiFloatingLayout.width===520&&aiPanel.classList.contains('terminal-ai-layout-floating')&&aiPanel.style.getPropertyValue('--terminal-ai-width')==='520px');
-    updateTerminalAiLayout(aiKey,{mode:'floating',width:520,height:620,left:innerWidth+900,top:innerHeight+900});
-    clampTerminalAiLayoutsToViewport();
-    const aiClampedLayout=terminalAiLayoutSettings();
+    window.termaAssistant.layout.update(aiKey,{mode:'floating',width:520,height:620,left:innerWidth+900,top:innerHeight+900});
+    window.termaAssistant.layout.resize();
+    const aiClampedLayout=window.termaAssistant.layout.settings();
     const aiFloatingViewportClamped=Boolean(aiClampedLayout.left<=Math.max(0,innerWidth-aiClampedLayout.width)&&aiClampedLayout.top<=Math.max(0,innerHeight-aiClampedLayout.height)&&aiClampedLayout.left>=0&&aiClampedLayout.top>=0);
     const aiTurnsBeforeDrag=aiState.turns;
     const aiBusyBeforeDrag=aiState.busy;
     aiState.turns=[{id:'fixture-drag-scroll',prompt:'拖动面板时保持顶部',answer:Array.from({length:90},(_,index)=>'line '+index).join(String.fromCharCode(10)),reasoning:'',model:'fixture-model',usage:null,busy:true,error:''}];
     aiState.busy=true;
-    updateTerminalAiLayout(aiKey,{mode:'floating',width:520,height:620,left:0,top:0,minimized:false});
+    window.termaAssistant.layout.update(aiKey,{mode:'floating',width:520,height:620,left:0,top:0,minimized:false});
     const aiDragTurns=aiPanel.querySelector('.terminal-ai-turns');
     if (aiDragTurns) aiDragTurns.scrollTop=0;
     const aiDragHead=aiPanel.querySelector('.terminal-ai-head');
     const aiDragRect=aiPanel.getBoundingClientRect();
-    terminalAiBeginPointer({target:aiDragHead,clientX:aiDragRect.left+20,clientY:aiDragRect.top+20,preventDefault(){},stopPropagation(){}},'drag');
-    terminalAiMovePointer({clientX:aiDragRect.left+44,clientY:aiDragRect.top+24,preventDefault(){}});
-    terminalAiEndPointer();
+    window.termaAssistant.layout.begin({target:aiDragHead,clientX:aiDragRect.left+20,clientY:aiDragRect.top+20,preventDefault(){},stopPropagation(){}},'drag');
+    window.termaAssistant.layout.move({clientX:aiDragRect.left+44,clientY:aiDragRect.top+24,preventDefault(){}});
+    window.termaAssistant.layout.end();
     const aiDragTurnsAfter=aiPanel.querySelector('.terminal-ai-turns');
     const aiDragScrollPreserved=Boolean(aiDragTurnsAfter&&aiDragTurnsAfter.scrollHeight>aiDragTurnsAfter.clientHeight&&aiDragTurnsAfter.scrollTop===0);
     aiState.turns=aiTurnsBeforeDrag;
     aiState.busy=aiBusyBeforeDrag;
-    updateTerminalAiLayout(aiKey,{mode:'floating',width:520,height:620,left:0,top:0,minimized:false});
+    window.termaAssistant.layout.update(aiKey,{mode:'floating',width:520,height:620,left:0,top:0,minimized:false});
     const aiModalStackPromise=confirmModal('确认层级测试','启用完全访问','继续','取消');
     await new Promise(resolve=>requestAnimationFrame(resolve));
     const aiModal=document.querySelector('#modal');
@@ -5431,39 +5434,39 @@ app.whenReady().then(async () => {
     await aiModalStackPromise;
     const floatingRect=aiPanel.getBoundingClientRect();
     const floatingResizer=aiPanel.querySelector('.terminal-ai-floating-resizer');
-    terminalAiBeginPointer({target:floatingResizer,clientX:floatingRect.right,clientY:floatingRect.bottom,preventDefault(){},stopPropagation(){}},'floating-resize');
-    terminalAiMovePointer({clientX:floatingRect.right+36,clientY:floatingRect.bottom+24,preventDefault(){}});
-    terminalAiEndPointer();
-    const aiFloatingResizeDebug={before:{width:floatingRect.width,height:floatingRect.height,right:floatingRect.right,bottom:floatingRect.bottom},after:terminalAiLayoutSettings()};
+    window.termaAssistant.layout.begin({target:floatingResizer,clientX:floatingRect.right,clientY:floatingRect.bottom,preventDefault(){},stopPropagation(){}},'floating-resize');
+    window.termaAssistant.layout.move({clientX:floatingRect.right+36,clientY:floatingRect.bottom+24,preventDefault(){}});
+    window.termaAssistant.layout.end();
+    const aiFloatingResizeDebug={before:{width:floatingRect.width,height:floatingRect.height,right:floatingRect.right,bottom:floatingRect.bottom},after:window.termaAssistant.layout.settings()};
     const aiFloatingResizeDirection=aiFloatingResizeDebug.after.width===556
       &&aiFloatingResizeDebug.after.height>floatingRect.height
       &&aiPanel.getBoundingClientRect().bottom<=innerHeight+1;
-    updateTerminalAiLayout(aiKey,{minimized:true});
+    window.termaAssistant.layout.update(aiKey,{minimized:true});
     const aiFloatingMinimized=aiPanel.classList.contains('terminal-ai-layout-floating')&&aiPanel.classList.contains('is-minimized');
-    updateTerminalAiLayout(aiKey,{mode:'fixed',width:430,minimized:true});
+    window.termaAssistant.layout.update(aiKey,{mode:'fixed',width:430,minimized:true});
     const fixedMinimizedRect=aiPanel.getBoundingClientRect();
     const mainRowRect=aiMainRow.getBoundingClientRect();
     const aiFixedMinimized=Boolean(aiPanel.classList.contains('terminal-ai-layout-fixed')&&aiPanel.classList.contains('is-minimized')&&fixedMinimizedRect.width<=45&&fixedMinimizedRect.height>=mainRowRect.height-1);
-    updateTerminalAiLayout(aiKey,{minimized:false});
+    window.termaAssistant.layout.update(aiKey,{minimized:false});
     const fixedRect=aiPanel.getBoundingClientRect();
     const fixedResizer=aiPanel.querySelector('.terminal-ai-fixed-resizer');
-    terminalAiBeginPointer({target:fixedResizer,clientX:fixedRect.left,clientY:fixedRect.top,preventDefault(){},stopPropagation(){}},'fixed-resize');
-    terminalAiMovePointer({clientX:fixedRect.left-35,clientY:fixedRect.top,preventDefault(){}});
-    terminalAiEndPointer();
-    const aiFixedBoundaryResize=terminalAiLayoutSettings().width===465;
-    const aiLayoutRestored=terminalAiLayoutSettings().minimized===false&&!aiPanel.classList.contains('is-minimized')&&aiPanel.style.getPropertyValue('--terminal-ai-width')==='465px';
+    window.termaAssistant.layout.begin({target:fixedResizer,clientX:fixedRect.left,clientY:fixedRect.top,preventDefault(){},stopPropagation(){}},'fixed-resize');
+    window.termaAssistant.layout.move({clientX:fixedRect.left-35,clientY:fixedRect.top,preventDefault(){}});
+    window.termaAssistant.layout.end();
+    const aiFixedBoundaryResize=window.termaAssistant.layout.settings().width===465;
+    const aiLayoutRestored=window.termaAssistant.layout.settings().minimized===false&&!aiPanel.classList.contains('is-minimized')&&aiPanel.style.getPropertyValue('--terminal-ai-width')==='465px';
     const aiComposerFits=Boolean(aiTextarea&&!aiTextarea.disabled&&aiComposerRect&&aiComposeActionsRect&&aiPanelRect&&aiComposerRect.left>=aiPanelRect.left-0.5&&aiComposerRect.right<=aiPanelRect.right+0.5&&aiComposerRect.bottom<=aiPanelRect.bottom+0.5&&aiComposeActionsRect.bottom<=aiPanelRect.bottom+0.5);
     const aiActiveState=aiButton?.getAttribute('aria-pressed')==='true'&&aiButton.classList.contains('active');
     const aiProjectedActiveState=projectedAiButton.getAttribute('aria-pressed')==='true'&&projectedAiButton.classList.contains('active');
-    const aiControlledAllowsLowSensitivity=['pwd','ls -la','git status --short --branch'].every(command=>terminalAiCommandRisk(command).safe);
-    const aiControlledFindAllowed=terminalAiCommandRisk('find / -name "测试2.svg" -type f 2>/dev/null').safe;
-    const aiControlledConfirmsSensitive=['cat ~/.ssh/id_rsa','env','grep token .env','Get-Content $HOME/.ssh/id_rsa'].every(command=>!terminalAiCommandRisk(command).safe);
-    const aiExplicitFileReadAllowed=terminalAiCommandRisk('cat 日志.txt',{userPrompt:'帮我看一下日志.txt内容'}).safe
-      &&terminalAiCommandRisk('head -n 20 "应用 日志.txt"',{userPrompt:'检查应用 日志.txt'}).safe
-      &&terminalAiCommandRisk('Get-Content -LiteralPath C:\\\\logs\\\\app.log -Tail 50',{userPrompt:'分析 C:\\\\logs\\\\app.log'}).safe;
-    const aiUnrequestedFileReadAllowed=terminalAiCommandRisk('cat 其他.txt',{userPrompt:'帮我看一下日志.txt内容'}).safe;
-    const aiPathBoundaryAllowed=terminalAiCommandRisk('cat foo.txt',{userPrompt:'帮我看一下 foo.txt.bak'}).safe;
-    const aiSensitivePathUsesSensitiveRisk=terminalAiCommandRisk('cat ~/.ssh/id_rsa',{userPrompt:'读取 ~/.ssh/id_rsa'}).reason===tr('terminal:ai.risk_sensitive');
+    const aiControlledAllowsLowSensitivity=['pwd','ls -la','git status --short --branch'].every(command=>window.termaAssistant.protocol.terminalAiCommandRisk(command).safe);
+    const aiControlledFindAllowed=window.termaAssistant.protocol.terminalAiCommandRisk('find / -name "测试2.svg" -type f 2>/dev/null').safe;
+    const aiControlledConfirmsSensitive=['cat ~/.ssh/id_rsa','env','grep token .env','Get-Content $HOME/.ssh/id_rsa'].every(command=>!window.termaAssistant.protocol.terminalAiCommandRisk(command).safe);
+    const aiExplicitFileReadAllowed=window.termaAssistant.protocol.terminalAiCommandRisk('cat 日志.txt',{userPrompt:'帮我看一下日志.txt内容'}).safe
+      &&window.termaAssistant.protocol.terminalAiCommandRisk('head -n 20 "应用 日志.txt"',{userPrompt:'检查应用 日志.txt'}).safe
+      &&window.termaAssistant.protocol.terminalAiCommandRisk('Get-Content -LiteralPath C:\\\\logs\\\\app.log -Tail 50',{userPrompt:'分析 C:\\\\logs\\\\app.log'}).safe;
+    const aiUnrequestedFileReadAllowed=window.termaAssistant.protocol.terminalAiCommandRisk('cat 其他.txt',{userPrompt:'帮我看一下日志.txt内容'}).safe;
+    const aiPathBoundaryAllowed=window.termaAssistant.protocol.terminalAiCommandRisk('cat foo.txt',{userPrompt:'帮我看一下 foo.txt.bak'}).safe;
+    const aiSensitivePathUsesSensitiveRisk=window.termaAssistant.protocol.terminalAiCommandRisk('cat ~/.ssh/id_rsa',{userPrompt:'读取 ~/.ssh/id_rsa'}).reason===tr('terminal:ai.risk_sensitive');
     const aiAgentSent=[];
     const aiAgentPayloads=[];
     let aiAgentLoop=false;
@@ -5482,7 +5485,7 @@ app.whenReady().then(async () => {
     };
     const aiAgentExecute=async(_sentKey,command)=>{
       aiAgentSent.push(command);
-      const block={id:createTerminalLogId(),command,output:'',startedAt:Date.now(),completedAt:0};
+      const block={id:window.termaTerminalIdentity.createTerminalLogId(),command,output:'',startedAt:Date.now(),completedAt:0};
       aiState.blocks.push(block);
       setTimeout(()=>{
         block.output='第一行日志\\n第二行日志\\n';
@@ -5490,14 +5493,23 @@ app.whenReady().then(async () => {
       },10);
       return {sent:true,blockId:block.id,command};
     };
-    await submitTerminalAiRequest(aiKey,'帮我看一下日志.txt内容',[],{agentTask:true,streamRequest:aiAgentStream,executeCommand:aiAgentExecute});
+    const aiExecuteBefore=window.termaAssistant.commands.execute;
+    const aiAgentSessionBefore=window.termaTerminalState.terminalSessions.get(aiKey);
+    try {
+      window.termaTerminalState.terminalSessions.set(aiKey,{key:aiKey,sensitiveInput:false,connectionAttempt:1,socket:{readyState:1},term:{options:{}}});
+      window.termaAssistant.commands.execute=aiAgentExecute;
+      await window.termaAssistant.requestWorkflow.submit(aiKey,'帮我看一下日志.txt内容',[],{agentTask:true,streamRequest:aiAgentStream});
+    } finally {
+      window.termaAssistant.commands.execute=aiExecuteBefore;
+      if(aiAgentSessionBefore)window.termaTerminalState.terminalSessions.set(aiKey,aiAgentSessionBefore);else window.termaTerminalState.terminalSessions.delete(aiKey);
+    }
     aiAgentLoop=aiAgentSent.length===1&&aiAgentSent[0]==='cat 日志.txt'
       &&aiAgentPayloads.length===3
       &&aiAgentPayloads[2].contexts?.[0]?.text.includes('第二行日志')
       &&aiState.turns.at(-1)?.agentContinuation===true
       &&aiState.turns.at(-1)?.answer.includes('完成分析')
       &&aiState.busy===false;
-    renderTerminalAiPanel(aiKey);
+    window.termaAssistant.paint(aiKey);
     const aiAgentGroupedReply=Boolean(aiPanel.querySelectorAll('.terminal-ai-task').length===1&&aiPanel.querySelectorAll('.terminal-ai-assistant-message').length===1&&aiPanel.querySelectorAll('.terminal-ai-response-phase').length===3&&aiPanel.textContent.includes('我先检查用户指定的日志文件')&&aiPanel.textContent.includes('cat 日志.txt')&&aiPanel.textContent.includes('完成分析'));
     const aiAgentActionRecovery=Boolean(aiAgentPayloads[1]?.message?.includes('没有给出终端操作或完整结论'));
     const aiInternalCutIsNotUserStop=Boolean(aiState.turns[1]?.streamCutForCommand===true&&Array.isArray(aiAgentPayloads[2]?.history)&&aiAgentPayloads[2].history.length===0);
@@ -5523,7 +5535,7 @@ app.whenReady().then(async () => {
     };
     const aiFullExecute=async(_sentKey,command)=>{
       aiFullSent.push(command);
-      const block={id:createTerminalLogId(),command,output:'',startedAt:Date.now(),completedAt:0,exitCode:0};
+      const block={id:window.termaTerminalIdentity.createTerminalLogId(),command,output:'',startedAt:Date.now(),completedAt:0,exitCode:0};
       aiState.blocks.push(block);
       setTimeout(()=>{
         block.output=command==='false'?'失败输出\\n':command+' 输出\\n';
@@ -5532,7 +5544,14 @@ app.whenReady().then(async () => {
       },5);
       return {sent:true,blockId:block.id,command};
     };
-    await submitTerminalAiRequest(aiKey,'连续执行并在失败后继续',[],{agentTask:true,streamRequest:aiFullStream,executeCommand:aiFullExecute});
+    try {
+      window.termaTerminalState.terminalSessions.set(aiKey,{key:aiKey,sensitiveInput:false,connectionAttempt:1,socket:{readyState:1},term:{options:{}}});
+      window.termaAssistant.commands.execute=aiFullExecute;
+      await window.termaAssistant.requestWorkflow.submit(aiKey,'连续执行并在失败后继续',[],{agentTask:true,streamRequest:aiFullStream});
+    } finally {
+      window.termaAssistant.commands.execute=aiExecuteBefore;
+      if(aiAgentSessionBefore)window.termaTerminalState.terminalSessions.set(aiKey,aiAgentSessionBefore);else window.termaTerminalState.terminalSessions.delete(aiKey);
+    }
     aiFullAccessLoop=aiFullSent.join('|')==='printf first|false|printf third'
       &&aiFullPayloads.length===4
       &&aiFullPayloads[2].contexts?.[0]?.text.includes('失败输出')
@@ -5542,17 +5561,17 @@ app.whenReady().then(async () => {
     } catch (error) {
       console.error('Full access Agent smoke error:', error?.stack || error);
     }
-    const aiSearchApiBefore=api;
-    const aiSearchCatalogBefore=terminalAiMcpCatalogCache;
+    const aiSearchApiBefore=window.termaWorkspaceRequest;
+    window.termaAssistant.mcp.clear();
     const aiSearchEvents=[];
     const aiSearchQueries=[];
     const aiSearchTools=[];
     const aiSearchPayloads=[];
     const aiSearchPrompt='你在网上搜索一下Terma看看是什么东西';
     try {
-      runtimeSettings={...runtimeSettings,saved:{...(runtimeSettings?.saved||{}),ai:{...(runtimeSettings?.saved?.ai||{}),enabled:true,model:'fixture-model',terminal_ai_permission:'full',mcp_servers:[{id:'web-fetch',name:'Web Fetch',transport:'streamable-http',url:'https://example.test/mcp',enabled:true,tools:[{name:'tavily_search',description:'Search the web',inputSchema:{type:'object',properties:{query:{type:'string'}}},enabled:true,requires_approval:false},{name:'tavily_extract',description:'Extract a web page',inputSchema:{type:'object',properties:{urls:{type:'array',items:{type:'string'}},query:{type:'string'}},required:['urls']},enabled:true,requires_approval:false}]}]}}};
-      terminalAiMcpCatalogCache={expiresAt:Date.now()+60000,contexts:[{source:'mcp-tools',title:'MCP Web Fetch',text:'Server ID: web-fetch\\nAvailable tools:\\n- tavily_search\\n- tavily_extract'}],tools:[{server_id:'web-fetch',server_name:'Web Fetch',name:'tavily_search',description:'Search the web',inputSchema:{type:'object',properties:{query:{type:'string'}}},enabled:true,requires_approval:false},{server_id:'web-fetch',server_name:'Web Fetch',name:'tavily_extract',description:'Extract a web page',inputSchema:{type:'object',properties:{urls:{type:'array',items:{type:'string'}},query:{type:'string'}},required:['urls']},enabled:true,requires_approval:false}]};
-      api=async(pathname,options={})=>{
+      window.termaRuntimeSettingsModel.snapshot={...window.termaRuntimeSettingsModel.snapshot,saved:{...(window.termaRuntimeSettingsModel.snapshot?.saved||{}),ai:{...(window.termaRuntimeSettingsModel.snapshot?.saved?.ai||{}),enabled:true,model:'fixture-model',terminal_ai_permission:'full',mcp_servers:[{id:'web-fetch',name:'Web Fetch',transport:'streamable-http',url:'https://example.test/mcp',enabled:true,tools:[{name:'tavily_search',description:'Search the web',inputSchema:{type:'object',properties:{query:{type:'string'}}},enabled:true,requires_approval:false},{name:'tavily_extract',description:'Extract a web page',inputSchema:{type:'object',properties:{urls:{type:'array',items:{type:'string'}},query:{type:'string'}},required:['urls']},enabled:true,requires_approval:false}]}]}}};
+      window.termaWorkspaceRequest=async(pathname,options={})=>{
+        if(pathname==='/api/ai/mcp/servers')return {servers:window.termaRuntimeSettingsModel.snapshot.saved.ai.mcp_servers};
         if(pathname==='/api/ai/mcp/call'){
           aiSearchEvents.push('mcp');
           const body=JSON.parse(options.body||'{}');
@@ -5570,13 +5589,13 @@ app.whenReady().then(async () => {
         handlers.onDelta?.('**Terma** 是一个跨平台终端与远程管理工具。来源：https://example.test/terma');
         return {model:'fixture-model',usage:{input_tokens:20,output_tokens:12,total_tokens:32}};
       };
-      await submitTerminalAiRequest(aiKey,aiSearchPrompt,[{source:'terminal-block',title:'旧审计命令',text:'$ auditctl -l\\n旧 Linux 审计输出'}],{agentTask:true,streamRequest:aiSearchStream});
+      await window.termaAssistant.requestWorkflow.submit(aiKey,aiSearchPrompt,[{source:'terminal-block',title:'旧审计命令',text:'$ auditctl -l\\n旧 Linux 审计输出'}],{agentTask:true,streamRequest:aiSearchStream});
     } finally {
-      api=aiSearchApiBefore;
-      terminalAiMcpCatalogCache=aiSearchCatalogBefore;
+      window.termaWorkspaceRequest=aiSearchApiBefore;
+      window.termaAssistant.mcp.clear();
     }
     const aiSearchPayload=aiSearchPayloads[0];
-    const aiSearchGroups=terminalAiTaskGroups(aiState.turns);
+    const aiSearchGroups=window.termaAssistant.markup('terminalAiTaskGroups',aiState.turns);
     const aiSearchTaskSwitch=Boolean(aiSearchEvents.join('|')==='mcp|model'
       &&aiSearchPayloads.length===1
       &&aiSearchTools[0]==='tavily_search'
@@ -5589,23 +5608,25 @@ app.whenReady().then(async () => {
       &&aiSearchGroups.at(-1)?.root?.prompt===aiSearchPrompt
       &&aiState.turns.at(-1)?.answer.includes('跨平台终端'));
     const aiHistorySessionBefore=aiState.sessionId;
-    terminalAiPersistState(aiKey,aiState);
-    terminalAiNewSession(aiKey);
-    const aiHistorySupported=aiState.sessionId!==aiHistorySessionBefore&&terminalAiListSessions(aiKey).some(item=>item.id===aiHistorySessionBefore);
-    terminalAiPersistState(aiKey,aiState);
+    window.termaAssistant.service.persist(aiKey,aiState);
+    window.termaAssistant.service.newSession(aiKey);
+    const aiHistorySupported=aiState.sessionId!==aiHistorySessionBefore&&window.termaAssistant.service.list(aiKey).some(item=>item.id===aiHistorySessionBefore);
+    window.termaAssistant.service.persist(aiKey,aiState);
     terminalSettingsUi.connectionStageTabSwitch=connectionStageTabSwitch;
     terminalSettingsUi.ai={shortcutRendered:aiShortcutRendered,panelOpens:aiPanelOpens,rightPlacement:aiRightPlacement,panelLayoutFits:aiPanelLayoutFits,composerFits:aiComposerFits,composerKeyboard:aiComposerKeyboard,markdownRendered:aiMarkdownRendered,scopedHorizontalScroll:aiScopedHorizontalScroll,longCodeActionsReachable:aiLongCodeActionsReachable,toolCallRendered:aiToolCallRendered,mcpCallRendered:aiMcpCallRendered,xmlCommandRendered:aiXmlCommandRendered,stopsAfterFirstCommand:aiStopsAfterFirstCommand,fullPermissionOption:aiFullPermissionOption,inlineApprovalSlot:aiInlineApprovalSlot,modelReasoningControls:aiModelReasoningControls,multiCommandQueue:aiMultiCommandQueue,chatMode:chatModeRendered,agentPlanLoopGuard,escapedMarkdown:aiEscapedMarkdown,multilineScript:aiMultilineScript,incompleteCommandRecovery:aiIncompleteCommandRecovery,floatingPersisted:aiFloatingPersisted,floatingViewportClamped:aiFloatingViewportClamped,dragScrollPreserved:aiDragScrollPreserved,modalAboveFloating:aiModalAboveFloating,floatingResizeDirection:aiFloatingResizeDirection,floatingMinimized:aiFloatingMinimized,fixedMinimized:aiFixedMinimized,fixedBoundaryResize:aiFixedBoundaryResize,layoutRestored:aiLayoutRestored,activeState:aiActiveState,projectedActiveState:aiProjectedActiveState,binaryOutputCaptured:aiBinaryOutputCaptured,trailingPromptDetected:aiTrailingPromptDetected,emptyOutputCompletes:aiEmptyOutputCompletes,controlledAllowsLowSensitivity:aiControlledAllowsLowSensitivity,controlledFindAllowed:aiControlledFindAllowed,controlledConfirmsSensitive:aiControlledConfirmsSensitive,explicitFileReadAllowed:aiExplicitFileReadAllowed,unrequestedFileReadAllowed:aiUnrequestedFileReadAllowed,pathBoundaryAllowed:aiPathBoundaryAllowed,sensitivePathUsesSensitiveRisk:aiSensitivePathUsesSensitiveRisk,agentLoop:aiAgentLoop,fullAccessAgentLoop:aiFullAccessLoop,agentGroupedReply:aiAgentGroupedReply,agentActionRecovery:aiAgentActionRecovery,searchTaskSwitch:aiSearchTaskSwitch,internalCutIsNotUserStop:aiInternalCutIsNotUserStop,historySupported:aiHistorySupported};
     Object.assign(terminalSettingsUi.ai||{}, {earlyCompletionGuard:aiEarlyCompletionGuard,queueCompletionGuard:aiQueueCompletionGuard,raceCompletes:aiRaceCompletes});
-    try { localStorage.removeItem(terminalAiHistoryStorageKey(aiKey)); } catch {}
+    try { localStorage.removeItem('termaTerminalAiSessions:'+aiKey); } catch {}
     aiButton?.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
     projectedAiButton.remove();
     aiSurface.remove();
-    if(previousTerminalAiLayout===null)localStorage.removeItem(TERMINAL_AI_LAYOUT_STORAGE_KEY);else localStorage.setItem(TERMINAL_AI_LAYOUT_STORAGE_KEY,previousTerminalAiLayout);
-    runtimeSettings=previousRuntimeSettingsForAi;
+    window.termaAssistant.release(aiKey);
+    window.termaTerminalState.terminalSessions.delete(aiKey);
+    if(previousTerminalAiLayout===null)localStorage.removeItem('termaTerminalAiLayout');else localStorage.setItem('termaTerminalAiLayout',previousTerminalAiLayout);
+    window.termaRuntimeSettingsModel.snapshot=previousRuntimeSettingsForAi;
     const toolbarFixture=document.createElement('div');
     toolbarFixture.className='terminal-toolbar';
     toolbarFixture.style.width='100%';
-    toolbarFixture.innerHTML='<div class="terminal-title-row"><span class="terminal-connection-dot"></span><span class="terminal-status">tester@example.invalid:22 · 已连接</span><span class="terminal-latency good">延迟 5 ms</span></div><div class="actions terminal-actions"><button class="icon-button">'+icon('folder-open')+'<span>SFTP</span></button><button class="icon-button">'+icon('minus')+'</button><button class="icon-button">'+icon('plus')+'</button><button class="terminal-dropdown-button terminal-action-encoding">'+icon('earth')+'<span>UTF-8</span>'+icon('chevron-down')+'</button><button class="terminal-dropdown-button">'+icon('type')+'<span>字体</span>'+icon('chevron-down')+'</button><button class="icon-button terminal-startup-button">'+icon('command')+'<span>配置</span></button><button class="icon-button terminal-x11-button">'+icon('x11')+'</button><button class="icon-button terminal-global-settings-button">'+icon('settings')+'</button><button class="terminal-action-keys">'+icon('keyboard')+'<span>快捷键</span></button><button>'+icon('history')+'<span>最近命令</span></button><button>'+icon('link-2')+'<span>重连</span></button><button class="terminal-action-forward-list">'+icon('route')+'<span>转发列表</span></button><button>'+icon('play')+'<span>启用转发</span></button></div>';
+    toolbarFixture.innerHTML='<div class="terminal-title-row"><span class="terminal-connection-dot"></span><span class="terminal-status">tester@example.invalid:22 · 已连接</span><span class="terminal-session-badge normal">普通 Shell</span></div><div class="actions terminal-actions"><button class="icon-button">'+icon('folder-open')+'<span>SFTP</span></button><button class="icon-button">'+icon('minus')+'</button><button class="icon-button">'+icon('plus')+'</button><button class="terminal-dropdown-button terminal-action-encoding">'+icon('earth')+'<span>UTF-8</span>'+icon('chevron-down')+'</button><button class="terminal-dropdown-button">'+icon('type')+'<span>字体</span>'+icon('chevron-down')+'</button><button class="icon-button terminal-startup-button">'+icon('command')+'<span>配置</span></button><button class="icon-button terminal-x11-button">'+icon('x11')+'</button><button class="icon-button terminal-global-settings-button">'+icon('settings')+'</button><button class="terminal-action-keys">'+icon('keyboard')+'<span>快捷键</span></button><button>'+icon('history')+'<span>最近命令</span></button><button>'+icon('link-2')+'<span>重连</span></button><button class="terminal-action-forward-list">'+icon('route')+'<span>转发列表</span></button></div>';
     const toolbarViewFixture=document.createElement('div');
     toolbarViewFixture.style.width='540px';
     toolbarViewFixture.style.containerType='inline-size';
@@ -5659,16 +5680,16 @@ app.whenReady().then(async () => {
     document.body.appendChild(headerStartupFixture);
     const headerStartupButton=headerStartupFixture.querySelector('.terminal-startup-button');
     const headerStartupLabel=headerStartupButton.querySelector('span');
-    const headerHeightBefore=workspaceHeaderHeight;
-    const headerStartupFits=[WORKSPACE_HEADER_HEIGHT_MIN,WORKSPACE_HEADER_HEIGHT_DEFAULT,WORKSPACE_HEADER_HEIGHT_MAX].every(height=>{
-      applyWorkspaceHeaderHeight(height,{fit:false});
+    const headerHeightBefore=window.termaWorkspaceChrome.value('header');
+    const headerStartupFits=[34,42,64].every(height=>{
+      window.termaWorkspaceChrome.apply("header",height,{fit:false});
       const buttonRect=headerStartupButton.getBoundingClientRect();
       const labelStyle=getComputedStyle(headerStartupLabel);
       return labelStyle.display==='none'
         && Math.abs(buttonRect.width-parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--workspace-header-control-height')))<=0.5
         && headerStartupButton.scrollWidth<=headerStartupButton.clientWidth;
     });
-    applyWorkspaceHeaderHeight(headerHeightBefore,{fit:false});
+    window.termaWorkspaceChrome.apply("header",headerHeightBefore,{fit:false});
     headerStartupFixture.remove();
     const desktopActionsIconOnly=encodingLabelVisible&&compactLabelsHidden&&widerActionsIconOnly&&headerStartupFits;
     const narrowToolbarLeftAligned=compactActionsLeftAligned&&widerActionsLeftAligned;
@@ -5691,11 +5712,11 @@ app.whenReady().then(async () => {
       });
     responsiveToolbar.remove();
     responsiveView.style.cssText=previousResponsiveStyle;
-    bindWorkspaceToolbarHorizontalScroll(toolbarFixture);
+    window.termaTerminalToolbarScroll.bind(toolbarFixture);
     toolbar.style.width='220px';
     toolbar.style.flex='0 0 220px';
     toolbar.scrollLeft=0;
-    terminalToolbarScrollState(toolbar);
+    window.termaTerminalToolbarScroll.state(toolbar);
     const toolbarOverflows=toolbar.scrollWidth>toolbar.clientWidth+1;
     const toolbarScrollShell=toolbar.closest('.terminal-actions-scroll-shell');
     const toolbarScrollLeft=toolbarScrollShell?.querySelector('.terminal-actions-scroll-left');
@@ -5715,12 +5736,12 @@ app.whenReady().then(async () => {
     toolbarScrollRight?.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
     const toolbarScrollButtonsWork=toolbar.scrollLeft>0&&!toolbarScrollLeft?.disabled;
     toolbar.scrollLeft=0;
-    terminalToolbarScrollState(toolbar);
+    window.termaTerminalToolbarScroll.state(toolbar);
     toolbar.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:180}));
     const toolbarWheelScrolls=toolbar.scrollLeft>0;
     toolbar.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'End'}));
     const toolbarKeyboardScrolls=toolbar.scrollLeft+toolbar.clientWidth>=toolbar.scrollWidth-1;
-    terminalToolbarScrollState(toolbar);
+    window.termaTerminalToolbarScroll.state(toolbar);
     const toolbarScrollEndsAtRight=Boolean(!toolbarScrollLeft?.disabled&&toolbarScrollRight?.disabled
       &&toolbarScrollShell?.classList.contains('can-scroll-left')
       &&!toolbarScrollShell?.classList.contains('can-scroll-right'));
@@ -5743,12 +5764,12 @@ app.whenReady().then(async () => {
     let terminalCjkTextDoesNotClip=false;
     let terminalCjkMetrics={};
     try {
-      await ensureTerminalLibs();
+      await window.termaTerminalLibraries.ensure();
       const scrollbarFixture=document.createElement('div');
       scrollbarFixture.className='terminal-box';
       scrollbarFixture.style.cssText='position:fixed;left:-10000px;top:0;width:520px;height:240px;min-height:0;';
       document.body.appendChild(scrollbarFixture);
-      const scrollbarTerm=new TerminalClass({allowProposedApi:true,overviewRuler:{width:8},fontSize:13});
+      const scrollbarTerm=window.termaTerminalLibraries.terminal({allowProposedApi:true,overviewRuler:{width:8},fontSize:13});
       const scrollbarFit=createTerminalFitAddon(scrollbarTerm);
       scrollbarTerm.loadAddon(scrollbarFit);
       scrollbarTerm.open(scrollbarFixture);
@@ -5777,12 +5798,12 @@ app.whenReady().then(async () => {
       const wheelKey='terminal-wheel-smoke';
       const wheelSession={term:scrollbarTerm,fit:{fit:()=>{}},id:first.id};
       const wheelTarget=scrollbarFixture.querySelector('.xterm-screen');
-      const wheelFontSizeField=terminalFontSizeField();
+      const wheelFontSizeField=window.termaTerminalMetadata.terminalFontSizeField();
       const wheelPreviousSavedFontSize=first[wheelFontSizeField];
-      terminalSessions.set(wheelKey,wheelSession);
+      window.termaTerminalState.terminalSessions.set(wheelKey,wheelSession);
       try {
-        enableTerminalFontWheel(wheelSession,wheelKey);
-        scrollTerminalToLineImmediately(scrollbarTerm,Math.max(1,Math.floor(Number(scrollbarTerm.buffer.active.baseY||0)/2)));
+        window.termaTerminalPage.enableTerminalFontWheel(wheelSession,wheelKey);
+        window.termaTerminalViewport.scrollToLine(scrollbarTerm,Math.max(1,Math.floor(Number(scrollbarTerm.buffer.active.baseY||0)/2)));
         await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
         const ctrlViewportBefore=scrollbarTerm.buffer.active.viewportY;
         const ctrlFontBefore=Number(scrollbarTerm.options.fontSize);
@@ -5824,7 +5845,7 @@ app.whenReady().then(async () => {
         const middleViewportBefore=Number(scrollbarTerm.buffer.active.viewportY || 0);
         const middleBaseBefore=Number(scrollbarTerm.buffer.active.baseY || 0);
         const middleFontBefore=Number(scrollbarTerm.options.fontSize);
-        changeTerminalFont(wheelKey,-1);
+        window.termaTerminalPage.changeTerminalFont(wheelKey,-1);
         await new Promise(resolve=>setTimeout(resolve,80));
         await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
         const middleViewportAfterShrink=Number(scrollbarTerm.buffer.active.viewportY || 0);
@@ -5839,7 +5860,7 @@ app.whenReady().then(async () => {
         const shrinkWheelAfter=Number(scrollbarTerm.buffer.active.viewportY || 0);
         const shrinkWheelDistance=shrinkWheelAfter-shrinkWheelBefore;
         const shrinkWheelMoved=shrinkWheelDistance>0&&shrinkWheelDistance<=6;
-        changeTerminalFont(wheelKey,1);
+        window.termaTerminalPage.changeTerminalFont(wheelKey,1);
         await new Promise(resolve=>setTimeout(resolve,80));
         await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
         const middleViewportAfterGrow=Number(scrollbarTerm.buffer.active.viewportY || 0);
@@ -5852,10 +5873,9 @@ app.whenReady().then(async () => {
       } catch (error) {
         terminalWheelMetrics={error:String(error?.stack||error)};
       } finally {
-        clearTimeout(terminalPreferencesSaveTimers.get(first.id));
-        terminalPreferencesSaveTimers.delete(first.id);
+        window.termaTerminalPreferences.cancelPending(first.id);
         first[wheelFontSizeField]=wheelPreviousSavedFontSize;
-        terminalSessions.delete(wheelKey);
+        window.termaTerminalState.terminalSessions.delete(wheelKey);
       }
       const cjkLine='[X11] 转发未建立：远端 SSH 服务未开启或拒绝了 X11 转发。本次已自动降级为普通 SSH 终端，命令行仍可正常使用；图形程序不会显示。请在 X Server 管理中检查 X11Forwarding 和远端 xauth/XQuartz。';
       await new Promise(resolve=>scrollbarTerm.write('\\x1b[2J\\x1b[H'+cjkLine,resolve));
@@ -5907,12 +5927,12 @@ app.whenReady().then(async () => {
     replacementToolbar.className='terminal-toolbar';
     replacementToolbar.innerHTML='<div class="terminal-title-row"><span id="terminalStatus" class="terminal-status" data-connection-address="replacement:22" data-connection-state="已连接"></span></div><div class="actions terminal-actions"></div>';
     replacementMount.appendChild(replacementToolbar);
-    syncTerminalToolbarPlacement();
+    window.termaTerminalPage.syncTerminalToolbarPlacement();
     const activeToolbarReplacesPrevious=document.querySelector('#workspaceGlobalHeaderTools')?.children.length===1
       && document.querySelector('#workspaceGlobalHeaderTools')?.firstElementChild===replacementToolbar
       && replacementMount.children.length===0
       && !staleToolbar.isConnected
-      && terminalElementForKey(key,'#terminalStatus')===replacementToolbar.querySelector('#terminalStatus');
+      && window.termaTerminalSurface.element(key,'#terminalStatus')===replacementToolbar.querySelector('#terminalStatus');
     const zmodemPanelMetrics=[];
     for (const width of [560,360]) {
       const zmodemMount=document.createElement('div');
@@ -5920,7 +5940,7 @@ app.whenReady().then(async () => {
       zmodemMount.style.cssText='position:fixed;left:-10000px;top:0;width:'+width+'px;height:220px;min-height:0;';
       document.body.appendChild(zmodemMount);
       const zmodemSession={mount:zmodemMount};
-      terminalZmodemRender(zmodemSession,{
+      window.termaTerminalZmodem.render(zmodemSession,{
         icon:'download',
         title:'正在接收 long-zmodem-transfer-filename.log',
         detail:'25.0 MB / 50.0 MB',
@@ -5942,13 +5962,13 @@ app.whenReady().then(async () => {
         actionsVisible:Boolean(panelRect&&buttons.length===2&&buttons.every(rect=>rect.width>0&&rect.height>=30&&rect.left>=panelRect.left-0.5&&rect.right<=panelRect.right+0.5)),
         progressVisible:Boolean(zmodemMount.querySelector('[role="progressbar"][aria-valuenow="50"]'))
       });
-      closeTerminalZmodem(zmodemSession);
+      window.termaTerminalZmodem.close(zmodemSession);
       zmodemMount.remove();
     }
     const zmodemPanelUi=zmodemPanelMetrics.every(item=>item.visible&&item.withinMount&&item.actionsVisible&&item.progressVisible);
     hideActionMenu();
-    terminalSessions.delete(secondKey);
-    terminalSessions.delete(key);
+    window.termaTerminalState.terminalSessions.delete(secondKey);
+    window.termaTerminalState.terminalSessions.delete(key);
     secondMount.remove();
     terminalGlobalSettings = previousTerminalGlobalSettings;
     applyTheme(previousTheme);
@@ -5958,14 +5978,35 @@ app.whenReady().then(async () => {
       fixturePane.activeTabKey = previousFixtureActive;
     }
     activeTabKey = previousTerminalTabKey;
-    terminalLatencyVisible = previousLatencyVisible;
-    if (previousLatencyStored === null) localStorage.removeItem('terminalLatencyVisible');
-    else localStorage.setItem('terminalLatencyVisible', previousLatencyStored);
-      return {found:true,labels,metrics,desktopBackHidden,desktopKeysHidden,binaryType,binaryWrite,stableLogId,x11DefaultFallsBack,x11ScopeMenu,ctrlVImageIntercepted,ctrlVEmptyFallsThrough,ctrlVDiagnostics,enterReconnect,reconnectPreservesOutput,inactiveTerminalOutputContinues,fontActionRestoresFocus,recentCommandsRestoreFocus,recentCommandSequenceVisible,resourceWindowTitle,remoteDesktopTitleDedup,numberingContinuesWithOpenTabs,numberingRestartsAfterAllClosed,encodingMenuOpened,encodingSelectionUsesLatest,fontMenuOpened,statusHoverShowsFull,desktopStatusAvoidsDuplicate,desktopToolbarInHeader,connectionToggleUsesLinkAction,activeToolbarReplacesPrevious,narrowToolbarFits,narrowToolbarLeftAligned,responsiveToolbarFits,terminalToolbarScrollable,toolbarScrollControlsVisible,toolbarScrollStartsAtLeft,toolbarScrollLabels,toolbarScrollCueVisible,toolbarScrollButtonsWork,toolbarScrollEndsAtRight,startupCompactIconOnly,desktopActionsIconOnly,terminalToolbarIconSet,terminalFrameLowContrast,terminalFrameColors,terminalBackgroundColor,desktopCursorCopyHintVisible,desktopCursorCopyHintCleansUp,terminalCtrlWheelZooms,terminalCtrlWheelKeepsPosition,terminalPlainWheelScrolls,terminalFontChangePreservesMiddleScroll,terminalFontChangeKeepsWheelContinuity,terminalWheelMetrics,terminalCjkTextDoesNotClip,terminalCjkMetrics,latencyMeasured,latencyCanDisable,latencyCanEnable,zmodemPanelUi,zmodemPanelMetrics,terminalSettingsUi};
+      return {found:true,labels,metrics,desktopBackHidden,desktopKeysHidden,binaryType,binaryWrite,stableLogId,x11DefaultFallsBack,x11ScopeMenu,ctrlVImageIntercepted,ctrlVEmptyFallsThrough,ctrlVDiagnostics,enterReconnect,reconnectPreservesOutput,inactiveTerminalOutputContinues,fontActionRestoresFocus,recentCommandsRestoreFocus,recentCommandSequenceVisible,resourceWindowTitle,remoteDesktopTitleDedup,numberingContinuesWithOpenTabs,numberingRestartsAfterAllClosed,encodingMenuOpened,encodingSelectionUsesLatest,fontMenuOpened,statusHoverShowsFull,desktopStatusAvoidsDuplicate,desktopToolbarInHeader,connectionToggleUsesLinkAction,activeToolbarReplacesPrevious,narrowToolbarFits,narrowToolbarLeftAligned,responsiveToolbarFits,terminalToolbarScrollable,toolbarScrollControlsVisible,toolbarScrollStartsAtLeft,toolbarScrollLabels,toolbarScrollCueVisible,toolbarScrollButtonsWork,toolbarScrollEndsAtRight,startupCompactIconOnly,desktopActionsIconOnly,terminalToolbarIconSet,terminalFrameLowContrast,terminalFrameColors,terminalBackgroundColor,desktopCursorCopyHintVisible,desktopCursorCopyHintCleansUp,terminalCtrlWheelZooms,terminalCtrlWheelKeepsPosition,terminalPlainWheelScrolls,terminalFontChangePreservesMiddleScroll,terminalFontChangeKeepsWheelContinuity,terminalWheelMetrics,terminalCjkTextDoesNotClip,terminalCjkMetrics,legacyTerminalControlsAbsent,zmodemPanelUi,zmodemPanelMetrics,terminalSettingsUi};
    })()`).catch(error => ({executeError:String(error?.stack || error)}));
   const terminalStartupOriginalContentSize = window.getContentSize();
   window.setContentSize(1000, 600);
   await new Promise(resolve => setTimeout(resolve, 50));
+  if (process.env.TERMA_UI_SCENARIO === 'terminal-startup') {
+    await window.webContents.executeJavaScript(`(() => {
+      const connection = connections[0];
+      if (connection) {
+        const key = 'terminal-startup-visual';
+        if (!tabs.some(tab => tab.key === key)) tabs.push({key, title:'启动配置预览', viewName:'terminal', kind:'terminal', id:connection.id, closable:true});
+        if (!window.termaTerminalState.terminalSessions.has(key)) window.termaTerminalState.terminalSessions.set(key, {id:connection.id, term:{reset(){}, focus(){}}});
+        window.termaTerminalStartup.open('terminal-startup-visual', connection.id);
+      }
+      return Boolean(connection);
+    })()`);
+    await new Promise(resolve => setTimeout(resolve, 250));
+    const startupVisualState = await window.webContents.executeJavaScript(`(() => { const modal = document.querySelector('#modal'); const card = modal?.querySelector('.terminal-startup-modal'); return {hidden:Boolean(modal?.hidden), hasCard:Boolean(card), dialog:card?.getBoundingClientRect ? {left:card.getBoundingClientRect().left, top:card.getBoundingClientRect().top, width:card.getBoundingClientRect().width, height:card.getBoundingClientRect().height} : null, title:card?.querySelector('#terminalStartupTitle')?.textContent || ''}; })()`);
+    console.log('[ui-smoke] startup visual state', JSON.stringify(startupVisualState));
+    const startupDirectory = process.env.TERMA_TERMINAL_STARTUP_VISUAL_DIR || path.join(diagnosticsDirectory, 'terminal-startup-visual');
+    fs.mkdirSync(startupDirectory, { recursive: true });
+    await window.webContents.executeJavaScript(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
+    await window.webContents.invalidate();
+    fs.writeFileSync(path.join(startupDirectory, 'zh-CN-light-dialog.png'), (await window.webContents.capturePage()).toPNG());
+    await window.webContents.executeJavaScript(`(() => {
+      window.termaTerminalViews.startupOptions()?.actions.close();
+      return true;
+    })()`);
+  }
   const terminalStartupUi = await window.webContents.executeJavaScript(`(async () => {
     const connection=connections[0];
     if(!connection) return {found:false};
@@ -5975,9 +6016,9 @@ app.whenReady().then(async () => {
     const splitKey='terminal-startup-smoke-split';
     const originalApi=api;
     const originalNotify=notify;
-    const originalReconnect=reconnectTerminal;
-    const originalDuplicateWorkspaceTab=duplicateWorkspaceTab;
-    const originalStartup=terminalStartupConfigForConnection(connection);
+    const originalStartupConnect=window.termaTerminalConnection.connect;
+    const originalDuplicateWorkspaceTab=window.termaWorkspaceTabCopy.duplicate;
+    const originalStartup=window.termaTerminalStartup.normalize(connection);
     const reconnects=[];
     const notices=[];
     const duplicateCalls=[];
@@ -6001,17 +6042,17 @@ app.whenReady().then(async () => {
       return {};
     };
     notify=(...args)=>notices.push(args);
-    reconnectTerminal=(id,tabKey)=>reconnects.push({id,tabKey});
-    duplicateWorkspaceTab=(sourceKey,options={}) => {
+    window.termaTerminalConnection.connect=async(connection,tabKey,session)=>reconnects.push({id:connection.id,tabKey,current:window.termaTerminalState.terminalSessions.get(tabKey)===session});
+    window.termaWorkspaceTabCopy.duplicate=(sourceKey,options={}) => {
       const duplicateKey=duplicateCalls.length===0?newKey:splitKey;
       if(typeof options.beforeOpen==='function') options.beforeOpen(duplicateKey,'复制终端',tabs.find(tab=>tab.key===sourceKey));
       duplicateCalls.push({sourceKey,splitZone:options.splitZone||'',duplicateKey});
       return duplicateKey;
     };
     tabs.push({key,title:'启动配置测试',viewName:'terminal',kind:'terminal',id:connection.id,closable:true});
-    terminalSessions.set(key,{id:connection.id,term:{reset(){},focus(){}}});
-    terminalSessions.set(otherKey,{id:connection.id,term:{reset(){},focus(){}}});
-    showTerminalStartupSettings(key,connection.id);
+    window.termaTerminalState.terminalSessions.set(key,{id:connection.id,connection,term:{writeln(){},reset(){},focus(){}}});
+    window.termaTerminalState.terminalSessions.set(otherKey,{id:connection.id,connection,term:{writeln(){},reset(){},focus(){}}});
+    window.termaTerminalStartup.open(key,connection.id);
     await new Promise(resolve=>setTimeout(resolve,25));
     const modal=document.querySelector('#modal');
     const card=modal.querySelector('.terminal-startup-modal');
@@ -6020,7 +6061,7 @@ app.whenReady().then(async () => {
     const controlsPresent=['terminalStartupProfile','terminalStartupPath','terminalStartupArgs','terminalStartupCwd','terminalStartupSaveDefault','terminalStartupCurrent','terminalStartupNewTab','terminalStartupSplit'].every(id=>Boolean(document.querySelector('#'+id)));
     const saveDefaultUnchecked=document.querySelector('#terminalStartupSaveDefault')?.checked===false;
     profileSelect.value=pythonOption?.value||'custom';
-    chooseTerminalStartupProfile();
+    $('terminalStartupProfile')?.dispatchEvent(new Event('change',{bubbles:true}));
     await new Promise(resolve=>requestAnimationFrame(()=>resolve()));
     const cardRect=card?.getBoundingClientRect();
     const scrollRegion=card?.querySelector('.terminal-startup-scroll');
@@ -6052,14 +6093,14 @@ app.whenReady().then(async () => {
       && actionAfterScroll.bottom<=cardRect.bottom+0.5);
     modal.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
     const backdropIgnored=!modal.hidden&&Boolean(modal.querySelector('.terminal-startup-modal'));
-    await applyTerminalStartupSettings(key,connection.id,'current');
-    const temporary=terminalStartupOverrides.get(key);
+    await window.termaTerminalStartup.apply(key,connection.id,'current');
+    const temporary=window.termaTerminalStartupState.overrides.get(key);
     const currentTemporaryOnly=temporary?.terminal_program_path==='/usr/bin/python3'
-      && !terminalStartupOverrides.has(otherKey)
+      && !window.termaTerminalStartupState.overrides.has(otherKey)
       && savedPayload===null
       && reconnects.length===1
-      && reconnects[0].tabKey===key;
-    terminalStartupOverrides.set(otherKey,normalizeTerminalStartupConfig({
+      && reconnects[0].tabKey===key&&reconnects[0].current;
+    window.termaTerminalStartupState.overrides.set(otherKey,window.termaTerminalStartup.normalize({
       terminal_startup_mode:'program',
       terminal_profile_name:'Other tab',
       terminal_profile_kind:'shell',
@@ -6067,7 +6108,7 @@ app.whenReady().then(async () => {
       terminal_program_args:'-l',
       terminal_program_platform:'posix'
     }));
-    showTerminalStartupSettings(key,connection.id);
+    window.termaTerminalStartup.open(key,connection.id);
     await new Promise(resolve=>setTimeout(resolve,25));
     document.querySelector('#terminalStartupProfile').value='custom';
     document.querySelector('#terminalStartupProfileName').value='Permanent Bash';
@@ -6077,34 +6118,34 @@ app.whenReady().then(async () => {
     document.querySelector('#terminalStartupPlatform').value='posix';
     document.querySelector('#terminalStartupSaveDefault').checked=true;
     const checkDoesNotSave=savedPayload===null;
-    await applyTerminalStartupSettings(key,connection.id,'current');
+    await window.termaTerminalStartup.apply(key,connection.id,'current');
     const checkedCurrentSaves=savedPayload?.terminal_program_path==='/bin/bash'
       && connection.terminal_program_path==='/bin/bash'
-      && !terminalStartupOverrides.has(key)
-      && terminalStartupOverrides.get(otherKey)?.terminal_program_path==='/bin/zsh'
+      && !window.termaTerminalStartupState.overrides.has(key)
+      && window.termaTerminalStartupState.overrides.get(otherKey)?.terminal_program_path==='/bin/zsh'
       && reconnects.length===2
-      && reconnects.every(item=>item.tabKey===key);
-    showTerminalStartupSettings(key,connection.id);
+      && reconnects.every(item=>item.tabKey===key&&item.current);
+    window.termaTerminalStartup.open(key,connection.id);
     await new Promise(resolve=>setTimeout(resolve,25));
     const newProfileSelect=document.querySelector('#terminalStartupProfile');
     const newPythonOption=[...newProfileSelect.options].find(option=>option.textContent.includes('Python 3'));
     newProfileSelect.value=newPythonOption?.value||'custom';
-    chooseTerminalStartupProfile();
+    $('terminalStartupProfile')?.dispatchEvent(new Event('change',{bubbles:true}));
     const newTabDefaultsTemporary=document.querySelector('#terminalStartupSaveDefault')?.checked===false;
     const reconnectsBeforeNew=reconnects.length;
-    await applyTerminalStartupSettings(key,connection.id,'new');
+    await window.termaTerminalStartup.apply(key,connection.id,'new');
     const newTabTemporary=duplicateCalls.length===1
       && duplicateCalls[0].sourceKey===key
       && duplicateCalls[0].splitZone===''
-      && terminalStartupOverrides.get(newKey)?.terminal_program_path==='/usr/bin/python3'
-      && !terminalStartupOverrides.has(key)
+      && window.termaTerminalStartupState.overrides.get(newKey)?.terminal_program_path==='/usr/bin/python3'
+      && !window.termaTerminalStartupState.overrides.has(key)
       && reconnects.length===reconnectsBeforeNew;
-    showTerminalStartupSettings(key,connection.id);
+    window.termaTerminalStartup.open(key,connection.id);
     await new Promise(resolve=>setTimeout(resolve,25));
     const splitProfileSelect=document.querySelector('#terminalStartupProfile');
     const splitPythonOption=[...splitProfileSelect.options].find(option=>option.textContent.includes('Python 3'));
     splitProfileSelect.value=splitPythonOption?.value||'custom';
-    chooseTerminalStartupProfile();
+    $('terminalStartupProfile')?.dispatchEvent(new Event('change',{bubbles:true}));
     const splitPicker=document.querySelector('.terminal-startup-split-picker');
     const splitTrigger=document.querySelector('#terminalStartupSplit');
     const splitOptions=document.querySelector('.terminal-startup-split-options');
@@ -6141,14 +6182,14 @@ app.whenReady().then(async () => {
     const splitOpenUsesDirection=duplicateCalls.length===2
       && duplicateCalls[1].sourceKey===key
       && duplicateCalls[1].splitZone==='right'
-      && terminalStartupOverrides.get(splitKey)?.terminal_program_path==='/usr/bin/python3'
+      && window.termaTerminalStartupState.overrides.get(splitKey)?.terminal_program_path==='/usr/bin/python3'
       && reconnects.length===reconnectsBeforeSplit;
     const fourSplitDirections=splitCenterPresent
       && splitButtons.length===4
       && ['top','bottom','left','right'].every(zone=>splitZones.includes(zone))
       && splitHoverRulePresent
       && splitFocusRulePresent;
-    duplicateWorkspaceTab=originalDuplicateWorkspaceTab;
+    window.termaWorkspaceTabCopy.duplicate=originalDuplicateWorkspaceTab;
     let resolveSlowCapabilities;
     let capabilityRaceCall=0;
     api=async path => {
@@ -6166,10 +6207,10 @@ app.whenReady().then(async () => {
         warnings:[]
       }};
     };
-    showTerminalStartupSettings(key,connection.id);
+    window.termaTerminalStartup.open(key,connection.id);
     await new Promise(resolve=>setTimeout(resolve,0));
-    closeTerminalStartupSettings(key);
-    showTerminalStartupSettings(otherKey,connection.id);
+    window.termaTerminalViews.startupOptions()?.actions.close();
+    window.termaTerminalStartup.open(otherKey,connection.id);
     await new Promise(resolve=>setTimeout(resolve,25));
     resolveSlowCapabilities?.({capabilities:{
       platform:'linux',
@@ -6184,8 +6225,9 @@ app.whenReady().then(async () => {
     const requestRaceIsolated=document.querySelector('#terminalStartupCapabilitySummary')?.textContent.includes('Race B')
       && raceOptions.some(label=>label.includes('Zsh'))
       && !raceOptions.some(label=>label.includes('Python 3'));
-    closeTerminalStartupSettings(otherKey);
+    window.termaTerminalViews.startupOptions()?.actions.close();
     const closedKey='terminal-startup-smoke-closed';
+    window.termaTerminalConnection.connect=originalStartupConnect;
     const OriginalWebSocket=window.WebSocket;
     let hiddenSocketCount=0;
     let resolveStartupTicket;
@@ -6203,12 +6245,12 @@ app.whenReady().then(async () => {
       return {};
     };
     tabs.push({key:closedKey,title:'等待关闭',viewName:'terminal',kind:'terminal',id:connection.id});
-    terminalSessions.set(closedKey,{
+    window.termaTerminalState.terminalSessions.set(closedKey,{
       id:connection.id,
       term:{cols:80,rows:24,writeln(){},dispose(){}},
       connectionAttempt:0
     });
-    terminalStartupOverrides.set(closedKey,normalizeTerminalStartupConfig({
+    window.termaTerminalStartupState.overrides.set(closedKey,window.termaTerminalStartup.normalize({
       terminal_startup_mode:'program',
       terminal_profile_name:'Python 3',
       terminal_profile_kind:'repl',
@@ -6216,15 +6258,15 @@ app.whenReady().then(async () => {
       terminal_program_args:'-i',
       terminal_program_platform:'posix'
     }));
-    const pendingClosedConnect=connectTerminal(connection,closedKey);
+    const pendingClosedConnect=window.termaTerminalConnectionRuntime.connectTerminal(connection,closedKey);
     await new Promise(resolve=>setTimeout(resolve,0));
-    closeTerminalSession(closedKey);
+    window.termaWorkspaceTabRuntime.cleanup(new Map([[closedKey,{key:closedKey,kind:"terminal"}]]));
     tabs=tabs.filter(tab=>tab.key!==closedKey);
     resolveStartupTicket?.({token:'closed-tab-ticket'});
     await pendingClosedConnect;
     const closedTabDoesNotConnect=hiddenSocketCount===0
-      && !terminalSessions.has(closedKey)
-      && !terminalStartupOverrides.has(closedKey);
+      && !window.termaTerminalState.terminalSessions.has(closedKey)
+      && !window.termaTerminalStartupState.overrides.has(closedKey);
     window.WebSocket=OriginalWebSocket;
     const result={
       found:Boolean(card&&profileSelect),
@@ -6251,288 +6293,64 @@ app.whenReady().then(async () => {
       reconnectNotice:notices.some(args=>String(args[0]).includes('本终端'))
     };
     Object.assign(connection,originalStartup);
-    terminalStartupOverrides.delete(key);
-    terminalStartupOverrides.delete(otherKey);
-    terminalStartupOverrides.delete(newKey);
-    terminalStartupOverrides.delete(splitKey);
-    terminalSessions.delete(key);
-    terminalSessions.delete(otherKey);
+    window.termaTerminalStartupState.overrides.delete(key);
+    window.termaTerminalStartupState.overrides.delete(otherKey);
+    window.termaTerminalStartupState.overrides.delete(newKey);
+    window.termaTerminalStartupState.overrides.delete(splitKey);
+    window.termaTerminalState.terminalSessions.delete(key);
+    window.termaTerminalState.terminalSessions.delete(otherKey);
     tabs=tabs.filter(tab=>![key,newKey,splitKey].includes(tab.key));
     api=originalApi;
     notify=originalNotify;
-    reconnectTerminal=originalReconnect;
-    duplicateWorkspaceTab=originalDuplicateWorkspaceTab;
+    window.termaTerminalConnection.connect=originalStartupConnect;
+    window.termaWorkspaceTabCopy.duplicate=originalDuplicateWorkspaceTab;
     closeModal();
     return result;
   })()`);
+  if(process.env.TERMA_UI_SCENARIO === 'terminal-startup') {
+    console.log(JSON.stringify({terminalStartupUi}));
+    if(errors.length) throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);
+    app.exit(Object.values(terminalStartupUi).every(Boolean) ? 0 : 1);
+    return;
+  }
   window.setContentSize(...terminalStartupOriginalContentSize);
   await new Promise(resolve => setTimeout(resolve, 50));
   console.log("[ui-smoke] log settings");
-  const logSettingsUi = await window.webContents.executeJavaScript(`(async () => {
-    await showLogSettings();
-    const modal=document.querySelector('#modal');
-    const card=modal?.querySelector('.modal-card');
-    const buttons=card?[...card.querySelectorAll('button')]:[];
-    const result={
-      open:Boolean(modal&&!modal.hidden&&card),
-      accessible:card?.getAttribute('role')==='dialog'&&card?.getAttribute('aria-modal')==='true',
-      days:document.querySelector('#logSettingDays')?.value,
-      fileMb:document.querySelector('#logSettingFileMb')?.value,
-      totalMb:document.querySelector('#logSettingTotalMb')?.value,
-      rotations:document.querySelector('#logSettingRotations')?.value,
-      currentUsage:Boolean(document.querySelector('.log-maintenance-stats')),
-      cleanupPreview:Boolean(document.querySelector('#logCleanupPreview')),
-      cleanup:Boolean(buttons.find(button=>button.textContent.includes('清理历史日志'))),
-      immediateCleanup:Boolean(buttons.find(button=>button.textContent.includes('立即清理'))),
-      save:Boolean(buttons.find(button=>button.textContent.includes('保存')))
-    };
-    closeModal();
-    result.closed=Boolean(modal?.hidden);
-    const fixture=document.createElement('div');
-    fixture.style.cssText='position:fixed;left:-10000px;top:0;width:260px;';
-    fixture.innerHTML=renderLogButton({label:'日志测试机 · 终端-2026年7月30日 01:31:49',path:'terminals/fixture.log'},'server:1');
-    document.body.appendChild(fixture);
-    const time=fixture.querySelector('.log-item-time');
-    const timeRect=time?.getBoundingClientRect();
-    const buttonRect=fixture.querySelector('.log-item')?.getBoundingClientRect();
-    result.fullTerminalTime=Boolean(time?.textContent==='2026-07-30 01:31:49'&&getComputedStyle(time).whiteSpace==='nowrap'&&timeRect&&buttonRect&&timeRect.left>=buttonRect.left-0.5&&timeRect.right<=buttonRect.right+0.5);
-    fixture.remove();
-    const logFixture=document.createElement('div');
-    logFixture.style.cssText='position:fixed;left:-10000px;top:0;width:260px;height:96px;overflow:auto;';
-    logFixture.innerHTML='<pre class="log-view" style="min-height:320px">old\\nnew</pre>';
-    document.body.appendChild(logFixture);
-    positionLogViewerScroll(logFixture,'end');
-    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-    const logFixtureView=logFixture.querySelector('.log-view');
-    result.defaultsToLatest=Boolean(logFixtureView && logFixtureView.scrollTop+logFixtureView.clientHeight>=logFixtureView.scrollHeight-1);
-    const previousTheme=document.documentElement.dataset.theme||'light';
-    const panelProbe=document.createElement('div');
-    panelProbe.style.background='var(--panel)';
-    logFixture.appendChild(panelProbe);
-    applyTheme('light');
-    const lightThemeMatches=getComputedStyle(logFixture.querySelector('.log-view')).backgroundColor===getComputedStyle(panelProbe).backgroundColor;
-    applyTheme('dark');
-    const darkThemeMatches=getComputedStyle(logFixture.querySelector('.log-view')).backgroundColor===getComputedStyle(panelProbe).backgroundColor;
-    result.followsTheme=lightThemeMatches&&darkThemeMatches;
-    applyTheme(previousTheme);
-    logFixture.remove();
-    const previousLogSearch=logSearch;
-    const previousLogSearchResults=logSearchResults;
-    const previousLogPage=new Map(logPage);
-    const previousActiveView=activeView;
-    const previousPrimaryView=primaryView;
-    const previousActiveTabKey=activeTabKey;
-    const previousTabs=tabs.map(tab=>({...tab}));
-    const previousLogViewerStates=new Map(typeof logViewerStates !== 'undefined' ? logViewerStates : []);
-    const previousLogViewerState=typeof logViewerState !== 'undefined' ? logViewerState : null;
-    const previousLoadLogWindow=loadLogWindow;
-    const previousCaptureWorkspaceTab=captureWorkspaceTab;
-    const previousLogViewHtml=document.querySelector('#view-log')?.innerHTML||'';
-    const previousLogViewHidden=document.querySelector('#view-log')?.hidden;
-    const searchFixture=document.createElement('div');
-    const pagerFixture=document.createElement('div');
-    let hadNarrowOperationPane=false;
-    try {
-      logSearch='needle';
-      logSearchResults=new Map([['system-2026-08-20.log',{path:'system-2026-08-20.log',matches:[{line:42,text:'before needle after'}]}]]);
-      searchFixture.style.cssText='position:fixed;left:-10000px;top:0;width:320px;';
-      searchFixture.innerHTML=renderLogButton({label:'system-2026年8月20日',path:'system-2026-08-20.log'},'system');
-      document.body.appendChild(searchFixture);
-      const searchHit=searchFixture.querySelector('.log-item-hit');
-      const searchButton=searchFixture.querySelector('.log-item');
-      result.searchContextHidden=Boolean(!document.querySelector('.compact-log-context')&&searchHit?.textContent.includes('before needle after')&&searchHit.querySelector('mark')?.textContent==='needle');
-      result.searchOpensWithQuery=Boolean(searchButton?.dataset.logQuery==='needle'&&searchButton?.dataset.logLine==='42');
-
-      logPage.clear();
-      pagerFixture.className='tree log-tree';
-      pagerFixture.style.cssText='position:fixed;left:-10000px;top:0;width:320px;height:180px;overflow:auto;';
-      hadNarrowOperationPane=document.documentElement.classList.contains('operation-pane-narrow');
-      document.documentElement.classList.add('operation-pane-narrow');
-      const pagerGroup=document.createElement('div');
-      pagerGroup.className='group log-group';
-      pagerGroup.innerHTML=renderLogItems('system',Array.from({length:25},(_,index)=>({label:'system-2026年8月'+String(index+1).padStart(2,'0'),path:'system-'+index+'.log'})));
-      pagerFixture.appendChild(pagerGroup);
-      document.body.appendChild(pagerFixture);
-      pagerFixture.scrollTop=pagerFixture.scrollHeight;
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-      const pager=pagerFixture.querySelector('.log-pager');
-      const pagerBox=pager?.getBoundingClientRect();
-      const pagerHostBox=pagerFixture.getBoundingClientRect();
-      const pagerStyle=pager?getComputedStyle(pager):null;
-      result.pagerVisible=Boolean(pager&&pagerBox&&pagerBox.height>0&&pagerBox.top>=pagerHostBox.top-1&&pagerBox.bottom<=pagerHostBox.bottom+1);
-      result.pagerPinned=Boolean(pagerStyle?.position!=='sticky'&&pagerStyle?.boxShadow==='none');
-      result.pagerFitsNarrow=Boolean(pager&&pagerBox&&pagerHostBox&&pagerBox.left>=pagerHostBox.left-1&&pagerBox.right<=pagerHostBox.right+1&&[...pager.querySelectorAll('button,.pager-count')].every(item=>{const box=item.getBoundingClientRect();return box.left>=pagerBox.left-1&&box.right<=pagerBox.right+1;}));
-      result.pagerLabelsReadable=Boolean(pager&&[...pager.querySelectorAll('button')].every(item=>{const itemBox=item.getBoundingClientRect();const range=document.createRange();range.selectNodeContents(item);const textBox=range.getBoundingClientRect();return textBox.left>=itemBox.left-1&&textBox.right<=itemBox.right+1&&item.scrollWidth<=item.clientWidth+1;}));
-
-      tabs=[...previousTabs,{key:'log-smoke',kind:'log',title:'日志测试'}];
-      activeTabKey='log-smoke';
-      activeView='log';
-      primaryView='logs';
-      renderExplorerTools();
-      let logView=document.querySelector('#view-log');
-      if (!logView) {
-        logView=document.createElement('section');
-        logView.id='view-log';
-        logView.className='view';
-        document.body.appendChild(logView);
-        result.createdLogViewFixture=true;
-      }
-      logView.hidden=false;
-      const detailState={path:'system-2026-08-20.log',title:'日志测试',sourceTitle:'system-2026年8月20日',query:'needle',offset:0,endOffset:100,text:'needle line 41\\nneedle line 42\\nline 43',matches:[{line:42,text:'needle line 42'}],matches_truncated:false,has_older:false,has_newer:false,startLine:41,targetLine:42,matchIndex:0,detailSearchOpen:false,scrollTop:0};
-      if (typeof logViewerStates === 'undefined') throw new Error('logViewerStates is unavailable');
-      logViewerStates.set('log-smoke',detailState);
-      logViewerState=detailState;
-      renderLogViewer(detailState,'log-smoke','target');
-      const logInput=document.getElementById('logSearch');
-      const detailInput=logView.querySelector('[data-input-action="log-detail-search"]');
-      const detailSearchBar=logView.querySelector('.log-detail-search');
-      result.detailSearchHiddenInitially=Boolean(detailSearchBar?.hidden);
-      logInput?.blur();
-      detailInput?.blur();
-      document.dispatchEvent(new KeyboardEvent('keydown',{key:'f',code:'KeyF',ctrlKey:true,bubbles:true,cancelable:true}));
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-      result.detailSearchVisible=Boolean(detailInput&&detailInput.id==='logDetailSearch'&&detailSearchBar&&!detailSearchBar.hidden);
-      result.ctrlF=Boolean(document.activeElement===detailInput&&detailInput?.id==='logDetailSearch'&&document.activeElement!==logInput);
-      result.detailSearchNavigation=Boolean(logView.querySelector('[data-action="log-detail-search-prev"]')&&logView.querySelector('[data-action="log-detail-search-next"]')&&logView.querySelector('[data-log-line="42"]'));
-      result.detailSearchClose=Boolean(logView.querySelector('[data-action="log-detail-search-close"]'));
-      let detailReadCount=0;
-      captureWorkspaceTab=() => action => action();
-      loadLogWindow=async (_path,_before,query,targetLine=0)=>{
-        detailReadCount+=1;
-        const target=Number(targetLine||0);
-        const startLine=11;
-        const text='line 11\\nlive first\\nline 13\\nline 14\\nline 15\\nline 16\\nline 17\\nlive second\\nline 19';
-        return {offset:0,end_offset:256,text,matches:[{line:12,text:'live first'},{line:18,text:'live second'}],matches_truncated:false,has_older:false,has_newer:false,start_line:startLine,...(target?{target_line:target}:{})};
-      };
-      detailInput.value='live';
-      detailInput.setSelectionRange(4,4);
-      detailInput.dispatchEvent(new Event('input',{bubbles:true}));
-      await new Promise(resolve=>setTimeout(resolve,260));
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-      const liveState=logViewerStates.get('log-smoke');
-      const liveInput=logView.querySelector('[data-input-action="log-detail-search"]');
-      const normalMatch=logView.querySelector('mark:not(.log-search-current)');
-      const currentMatch=logView.querySelector('mark.log-search-current');
-      const themeBeforeMatchCheck=document.documentElement.dataset.theme||'light';
-      applyTheme('light');
-      const lightMatchDistinct=Boolean(normalMatch&&currentMatch&&getComputedStyle(normalMatch).backgroundColor!==getComputedStyle(currentMatch).backgroundColor);
-      applyTheme('dark');
-      const darkMatchDistinct=Boolean(normalMatch&&currentMatch&&getComputedStyle(normalMatch).backgroundColor!==getComputedStyle(currentMatch).backgroundColor);
-      applyTheme(themeBeforeMatchCheck);
-      result.detailSearchRealtime=Boolean(liveState?.query==='live'&&liveState?.matchIndex===0&&liveState?.targetLine===12&&detailReadCount>=2&&document.activeElement===liveInput&&liveInput?.selectionStart===4);
-      result.detailSearchCurrent=Boolean(currentMatch&&normalMatch&&logView.querySelector('[data-log-line="12"][data-log-current="true"]')&&lightMatchDistinct&&darkMatchDistinct);
-      await moveLogViewerSearch(1,'log-smoke');
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-      result.detailSearchNext=Boolean(liveState?.matchIndex===1&&liveState?.targetLine===18&&logView.querySelector('[data-log-line="18"] mark.log-search-current'));
-      liveState.matches=[{line:12,text:'12: live first'},{line:18,text:'18: live second'},{line:24,text:'24: live first'}];
-      liveState.matchIndex=2;
-      liveState.activeMatchLine=24;
-      liveState.activeMatchText='24: live first';
-      liveState.targetLine=999;
-      liveState.startLine=1;
-      liveState.text='live first\\nlive second\\nlive first';
-      renderLogViewer(liveState,'log-smoke','preserve');
-      result.detailSearchFallbackCurrent=Boolean(logView.querySelector('[data-log-line="3"][data-log-current="true"] mark.log-search-current'));
-      liveState.matches=[{line:12,text:'12: same content_type'},{line:14,text:'14: other content_type'},{line:16,text:'16: same content_type'}];
-      liveState.query='content_type';
-      liveState.matchIndex=2;
-      liveState.activeMatchLine=16;
-      liveState.activeMatchText='16: same content_type';
-      liveState.targetLine=16;
-      liveState.startLine=9;
-      liveState.text='line 9\\nline 10\\nline 11\\nsame content_type\\nline 13\\nother content_type\\nline 15\\nsame content_type';
-      renderLogViewer(liveState,'log-smoke','preserve');
-      const repeatedMarkup=renderLogTextLines(liveState.text,liveState.query,liveState);
-      result.detailSearchRepeatedTarget=Boolean(repeatedMarkup.includes('data-log-line="16" data-log-current="true"')&&!repeatedMarkup.includes('data-log-line="12" data-log-current="true"'));
-      const targetScrollText=Array.from({length:180},(_,index)=>index===117?'live target line 118':'scroll line '+(index+1)).join('\\n');
-      liveState.query='live';
-      liveState.matches=[{line:118,text:'live target line 118'}];
-      liveState.matches_truncated=false;
-      liveState.matchIndex=0;
-      liveState.targetLine=118;
-      liveState.startLine=1;
-      liveState.text=targetScrollText;
-      const workspaceScrollHost=logView.closest('.workspace');
-      const workspaceScrollTopBefore=Number(workspaceScrollHost?.scrollTop||0);
-      renderLogViewer(liveState,'log-smoke','target');
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-      const targetScrollContainer=logView.querySelector('.log-view');
-      const targetScrollMarker=logView.querySelector('[data-log-line="118"] mark.log-search-current');
-      const targetScrollContainerBox=targetScrollContainer?.getBoundingClientRect();
-      const targetScrollMarkerBox=targetScrollMarker?.getBoundingClientRect();
-      const targetScrollCenter=targetScrollContainerBox&&targetScrollMarkerBox
-        ? targetScrollMarkerBox.top+targetScrollMarkerBox.height/2
-        : 0;
-      const targetScrollViewportCenter=targetScrollContainerBox&&targetScrollContainer
-        ? targetScrollContainerBox.top+targetScrollContainer.clientHeight/2
-        : 0;
-      result.detailSearchTargetPosition=Boolean(targetScrollContainer&&targetScrollMarker&&targetScrollContainer.clientHeight>0&&targetScrollContainer.scrollHeight>targetScrollContainer.clientHeight&&targetScrollMarkerBox.top>=targetScrollContainerBox.top-1&&targetScrollMarkerBox.bottom<=targetScrollContainerBox.bottom+1&&Math.abs(targetScrollCenter-targetScrollViewportCenter)<=Math.max(48,targetScrollContainer.clientHeight*0.35)&&Number(workspaceScrollHost?.scrollTop||0)===workspaceScrollTopBefore);
-      liveState.query='';
-      liveState.matches=[];
-      liveState.matchIndex=-1;
-      liveState.targetLine=0;
-      liveState.text=Array.from({length:240},(_,index)=>'scroll line '+(index+1)).join('\\n');
-      renderLogViewer(liveState,'log-smoke','preserve');
-      const retainedLogText=logView.querySelector('.log-view');
-      retainedLogText.scrollTop=Math.min(180,Math.max(0,retainedLogText.scrollHeight-retainedLogText.clientHeight));
-      rememberLogViewerScroll('log-smoke');
-      const retainedScroll=liveState.scrollTop;
-      const readsBeforeRestore=detailReadCount;
-      await openLog(liveState.path,liveState.sourceTitle,false,'log-smoke');
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-      result.detailTabStateRetained=Boolean(detailReadCount===readsBeforeRestore&&logView.querySelector('.log-view')===retainedLogText&&Math.abs(retainedLogText.scrollTop-retainedScroll)<=1);
-      const detailSearch=logView.querySelector('.log-detail-search');
-      const detailSearchStyle=detailSearch?getComputedStyle(detailSearch):null;
-      const logViewStyle=getComputedStyle(logView);
-      const logText=logView.querySelector('.log-view');
-      const logTextStyle=logText?getComputedStyle(logText):null;
-      result.detailSearchFloats=Boolean(detailSearch&&detailSearchStyle?.position==='relative'&&detailSearchStyle?.zIndex!=='auto');
-      result.detailSearchReservesTop=Boolean(logViewStyle?.display==='flex'&&logViewStyle?.flexDirection==='column'&&logTextStyle?.overflowY==='auto'&&logTextStyle?.minHeight==='0px');
-    } catch (error) {
-      result.detailError=String(error?.stack || error);
-    } finally {
-      searchFixture.remove();
-      pagerFixture.remove();
-      if (!hadNarrowOperationPane) document.documentElement.classList.remove('operation-pane-narrow');
-      logSearch=previousLogSearch;
-      logSearchResults=previousLogSearchResults;
-      logPage.clear();
-      for (const [key,value] of previousLogPage) logPage.set(key,value);
-      activeView=previousActiveView;
-      primaryView=previousPrimaryView;
-      activeTabKey=previousActiveTabKey;
-      tabs=previousTabs;
-      if (typeof logViewerStates !== 'undefined') {
-        logViewerStates.clear();
-        for (const [key,value] of previousLogViewerStates) logViewerStates.set(key,value);
-      }
-      if (typeof logViewerState !== 'undefined') logViewerState=previousLogViewerState;
-      loadLogWindow=previousLoadLogWindow;
-      captureWorkspaceTab=previousCaptureWorkspaceTab;
-      const logView=document.querySelector('#view-log');
-      if (logView) {
-        if (result.createdLogViewFixture) logView.remove();
-        else { logView.innerHTML=previousLogViewHtml; logView.hidden=previousLogViewHidden; }
-      }
-      renderExplorerTools();
-    }
-    return result;
-  })()`).catch(error => ({executeError:String(error?.stack || error)}));
+  let logSettingsUi;
+  const logProbe=new BrowserWindow({show:false,width:1200,height:844,webPreferences:{contextIsolation:true,backgroundThrottling:false,offscreen:true,partition:'log-reader-smoke-'+Date.now(),preload:path.join(__dirname,'ui-smoke-preload.js')}});
+  logProbe.webContents.on('console-message',details=>{if(details.level==='error')errors.push(details.message);});
+  try{await logProbe.loadURL(url);await new Promise(resolve=>setTimeout(resolve,1200));logSettingsUi=await runM6LogReaderUiScenario(logProbe,{viewport:'desktop'});}
+  finally{logProbe.destroy();}
   console.log("[ui-smoke] SFTP views");
   const sftpUi = await window.webContents.executeJavaScript(`(async () => {
     document.documentElement.dataset.uiSmokeStage = 'sftp-views';
     try {
+    async function clickSftpFixtureChoice(index) {
+      const modal = document.getElementById('modal');
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const button = modal?.querySelector('button[data-choice="' + index + '"]');
+        if (modal?.checkVisibility() && button && !button.disabled) {
+          const result = { dialog: modal.textContent, label: button.textContent };
+          button.click();
+          return result;
+        }
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      throw new Error('The SFTP fixture choice did not open for ' + document.documentElement.dataset.uiSmokeStage);
+    }
+    const SFTP_EDITOR_LAYOUT_STORAGE_KEY='termaSftpEditorLayoutV1';
     const view = document.querySelector('#view-sftp');
     const previousHtml = view.innerHTML;
     const previousHidden = view.hidden;
-    const previousState = sftpState;
-    const previousOpen = openSftp;
-    const previousNavigateSftpPath = navigateSftpPath;
-    const previousPreview = previewSftpText;
-    const previousClipboardState = sftpClipboard;
-    const previousLoadSftpPage = loadSftpPage;
-    const previousRefreshSftpJobs = refreshSftpJobs;
-    const previousStartSftpJobsTimer = startSftpJobsTimer;
+    const previousOpen = window.termaSftpPage.open;
+    const previousNavigateSftpPath = window.termaSftpView.navigate;
+    const previousDirectoryNavigate = window.termaSftpDirectoryWorkspace.navigation.navigatePath;
+    const previousPreview = window.termaSftpPreviewRuntime.text;
+    const previousClipboardState = window.termaSftpFileActions.clipboard.value;
+    const previousLoadSftpPage = window.termaSftpDirectoryWorkspace.loader.load;
+    const previousRefreshSftpJobs = window.termaSftpTaskWorkspace.runtime.refresh;
+    const previousStartSftpJobsTimer = window.termaSftpTransferLifecycle.polling.start;
     const previousSelectedId = selectedId;
     const previousActiveView = activeView;
     const previousActiveTabKey = activeTabKey;
@@ -6540,17 +6358,10 @@ app.whenReady().then(async () => {
     const previousWorkspaceLayout = JSON.parse(JSON.stringify(workspaceLayout));
     const previousTabs = tabs.map(tab => ({...tab}));
     const previousSftpRuntimes = [...sftpTabRuntimes.entries()];
-    const previousSftpTabCounts = [...sftpTabCounts.entries()];
-    const previousSftpActiveRuntimeKey = sftpActiveRuntimeKey;
-    const previousSftpRequestController = sftpRequestController;
-    const previousSftpSearchTimer = sftpSearchTimer;
-    const previousSftpListResizeObserver = sftpListResizeObserver;
-    const previousSftpListResizeFrame = sftpListResizeFrame;
+    // The tab owner keeps allocation counters private. Fixtures restore their
+    // tabs and runtimes; unused serials can remain consumed in this renderer.
     const previousSftpDisconnectedTabs = [...sftpDisconnectedTabs];
-    const previousSftpConnectionRequests = [...sftpConnectionRequests.entries()];
-    const previousSftpConnectionVersions = [...sftpConnectionVersions.entries()];
-    const previousSftpDisconnectRequests = [...sftpDisconnectRequests.entries()];
-    const previousDirectorySizes = [...sftpDirectorySizeCache.entries()];
+
     const connection = connections[0];
     const fixtureTabKey = 'sftp-smoke-' + connection.id;
     let directoryActionsUi = {found:false};
@@ -6565,7 +6376,7 @@ app.whenReady().then(async () => {
     let rapidSftpOpen = false;
     let rapidSftpOpenUi = {requested:0, created:0, runtimes:0, settled:0, loaded:0, truthyResults:0, loadCalls:0, stubLoaded:0, sharedRequests:false, allSettled:false};
     try {
-      loadSftpPage = async options => {
+      window.termaSftpDirectoryWorkspace.loader.load = async options => {
         sftpPageLoads += 1;
         sftpPageLoadOptions.push({...options});
         if (rapidSftpOpen) {
@@ -6576,7 +6387,7 @@ app.whenReady().then(async () => {
           const requestSeq = Number(runtime?.state?.requestSeq || 0) + 1;
           if (runtime) {
             runtime.state = {...runtime.state, path, loading:true, requestSeq, entries:[]};
-            if (sftpActiveRuntimeKey === key) sftpState = runtime.state;
+
           }
           await new Promise(resolve => setTimeout(resolve, 18));
           if (runtime && sftpTabRuntimes.has(key)) {
@@ -6591,7 +6402,7 @@ app.whenReady().then(async () => {
               unfilteredTotal:1
             };
             rapidSftpOpenUi.stubLoaded += 1;
-            if (sftpActiveRuntimeKey === key) sftpState = runtime.state;
+
           }
           return true;
         }
@@ -6602,21 +6413,23 @@ app.whenReady().then(async () => {
           const path = String(options.path || ".");
           if (runtime) runtime.state = {...runtime.state, path, loading:false};
           if (tab) tab.path = path;
-          if (runtime && sftpActiveRuntimeKey === key) sftpState = runtime.state;
-          if (!options.historyNavigation) rememberSftpNavigation(key, path);
+
+          if (!options.historyNavigation) window.termaSftpDirectoryWorkspace.navigation.remember(key, path);
         }
         return true;
       };
-      refreshSftpJobs = async () => {};
-      startSftpJobsTimer = () => {};
-      sftpClipboard = null;
+      window.termaSftpTaskWorkspace.runtime.refresh = async () => {};
+      window.termaSftpTransferLifecycle.polling.start = () => {};
+      window.termaSftpFileActions.clipboard.value = null;
       activeTabKey = fixtureTabKey;
       activeView = 'sftp';
-      await openSftp(connection.id, '/Users/demo/Public', true, fixtureTabKey);
+      document.documentElement.dataset.uiSmokeStage = 'sftp-open-initial';
+      await window.termaSftpPage.open(connection.id, '/Users/demo/Public', true, fixtureTabKey);
       // Exercise the same race as repeatedly clicking the connection-list
       // action: every click creates a separate tab while its first directory
       // request is still in flight.  The detached runtimes must all settle,
       // including the tabs that are no longer visible.
+      document.documentElement.dataset.uiSmokeStage = 'sftp-open-concurrent';
       const rapidSftpKeys = Array.from({length:16}, (_, index) => 'sftp-burst-' + connection.id + '-' + (index + 1));
       // Use a directory that no earlier fixture has opened so every tab starts
       // from the same in-flight request instead of an already populated cache.
@@ -6624,7 +6437,7 @@ app.whenReady().then(async () => {
       rapidSftpOpen = true;
       let rapidResults;
       try {
-        rapidResults = await Promise.all(rapidSftpKeys.map(key => openSftp(connection.id, rapidSftpPath, true, key)));
+        rapidResults = await Promise.all(rapidSftpKeys.map(key => window.termaSftpPage.open(connection.id, rapidSftpPath, true, key)));
       } finally {
         rapidSftpOpen = false;
       }
@@ -6650,9 +6463,9 @@ app.whenReady().then(async () => {
         }
         const tabIndex = tabs.findIndex(tab => tab.key === key);
         if (tabIndex >= 0) tabs.splice(tabIndex, 1);
-        disposeSftpRuntime(key);
+        window.termaSftpTabs.runtime.dispose(key);
       });
-      syncSftpTabTitles(connection.id);
+      window.termaSftpTabs.runtime.titles(connection.id);
       activateTab(fixtureTabKey);
       const directoryApi = api;
       let sharedDirectoryCalls = 0;
@@ -6663,35 +6476,34 @@ app.whenReady().then(async () => {
           await new Promise(resolve => setTimeout(resolve, 18));
           return {path:'/Users/demo/Public',entries:[{name:'shared.txt',type:'file'}]};
         };
-        sftpDirectoryPageRequests.clear();
         const sharedParams = new URLSearchParams({path:'/Users/demo/Public',page:'1',page_size:'50',query:'',sort:'name',dir:'asc'});
-        const sharedResults = await Promise.all(Array.from({length:16}, () => requestSftpDirectoryPage(connection.id, sharedParams)));
+        const sharedResults = await Promise.all(Array.from({length:16}, () => window.termaSftpDirectoryWorkspace.request(connection.id, sharedParams)));
         rapidSftpOpenUi.sharedRequests = sharedDirectoryCalls === 1
           && sharedResults.length === 16
-          && sharedResults.every(result => result.entries?.[0]?.name === 'shared.txt')
-          && sftpDirectoryPageRequests.size === 0;
+          && sharedResults.every(result => result.entries?.[0]?.name === 'shared.txt');
+        await window.termaSftpDirectoryWorkspace.request(connection.id, sharedParams);
+        rapidSftpOpenUi.sharedRequests &&= sharedDirectoryCalls === 2;
         rapidSftpOpenUi.allSettled = rapidSftpOpenUi.allSettled && rapidSftpOpenUi.sharedRequests;
       } finally {
         api = directoryApi;
-        sftpDirectoryPageRequests.clear();
       }
       setWorkspace('切换测试', 'UI', 'welcome', 'sftp-switch-fixture', false, true);
       activeTabKey = fixtureTabKey;
       activeView = 'sftp';
       const pageLoadsBeforeReturn = sftpPageLoads;
-      await openSftp(connection.id, '/Users/demo/Public', false, fixtureTabKey);
+      await window.termaSftpPage.open(connection.id, '/Users/demo/Public', false, fixtureTabKey);
       const reusedWithoutDirectoryReload = sftpPageLoads === pageLoadsBeforeReturn;
       let stickyTop = view.querySelector('.sftp-top');
       const fixturePane = view.closest('.workspace-pane');
       let toolbar = document.querySelector('#workspaceGlobalHeaderTools .sftp-toolbar') || fixturePane?.querySelector('[data-workspace-role="header-tools"] .sftp-toolbar') || view.querySelector('.sftp-toolbar');
       toolbar?.remove();
-      await openSftp(connection.id, '/Users/demo/Public', false, fixtureTabKey);
+      await window.termaSftpPage.open(connection.id, '/Users/demo/Public', false, fixtureTabKey);
       const recoveredMissingToolbar = Boolean(
         document.querySelector('.sftp-toolbar[data-workspace-tab-key="' + CSS.escape(fixtureTabKey) + '"]')
       );
       toolbar = document.querySelector('#workspaceGlobalHeaderTools .sftp-toolbar') || fixturePane?.querySelector('[data-workspace-role="header-tools"] .sftp-toolbar') || view.querySelector('.sftp-toolbar');
       const duplicateSftpKey = 'sftp-' + connection.id + '-901';
-      await openSftp(connection.id, '/Users/demo/Public', true, duplicateSftpKey);
+      await window.termaSftpPage.open(connection.id, '/Users/demo/Public', true, duplicateSftpKey);
       const duplicateToolbarFirstVisible = Boolean(
         document.querySelector('.sftp-toolbar[data-workspace-tab-key="' + CSS.escape(duplicateSftpKey) + '"]:not([hidden])')
       );
@@ -6715,15 +6527,15 @@ app.whenReady().then(async () => {
       const numberingSecondKey = 'sftp-' + numberingConnectionId + '-11';
       connections.push(numberingConnection);
       tabs.push({key:numberingFirstKey,kind:'sftp',id:numberingConnectionId,title:'SFTP 编号测试 · SFTP #7',path:'/first'});
-      syncSftpTabTitles(numberingConnectionId);
+      window.termaSftpTabs.runtime.titles(numberingConnectionId);
       const reopenedSingleTabHasNoSuffix = tabs.find(tab => tab.key === numberingFirstKey)?.title === 'SFTP 编号测试 · SFTP';
       tabs.push({key:numberingSecondKey,kind:'sftp',id:numberingConnectionId,title:'SFTP 编号测试 · SFTP #11',path:'/second'});
-      syncSftpTabTitles(numberingConnectionId);
+      window.termaSftpTabs.runtime.titles(numberingConnectionId);
       const twoOpenTabsUseCurrentOrdinals = tabs.find(tab => tab.key === numberingFirstKey)?.title === 'SFTP 编号测试 · SFTP'
         && tabs.find(tab => tab.key === numberingSecondKey)?.title === 'SFTP 编号测试 · SFTP #2';
       const numberingFirstIndex = tabs.findIndex(tab => tab.key === numberingFirstKey);
       if (numberingFirstIndex >= 0) tabs.splice(numberingFirstIndex, 1);
-      syncSftpTabTitles(numberingConnectionId);
+      window.termaSftpTabs.runtime.titles(numberingConnectionId);
       const remainingTabRenumberedWithoutChangingKey = tabs.find(tab => tab.key === numberingSecondKey)?.title === 'SFTP 编号测试 · SFTP'
         && tabs.find(tab => tab.key === numberingSecondKey)?.path === '/second';
       const numberingSecondIndex = tabs.findIndex(tab => tab.key === numberingSecondKey);
@@ -6744,19 +6556,25 @@ app.whenReady().then(async () => {
       duplicateRuntime.state = {...duplicateRuntime.state, path:'/beta/child'};
       fixtureTab.path = '/alpha/child';
       duplicateTab.path = '/beta/child';
-      sftpState = fixtureRuntime.state;
-      sftpActiveRuntimeKey = fixtureTabKey;
-      sftpNavigationHistories.set(fixtureTabKey, {paths:['/alpha','/alpha/child'],index:1});
-      sftpNavigationHistories.set(duplicateSftpKey, {paths:['/beta','/beta/child'],index:1});
-      const duplicateHistoryBefore = JSON.stringify(sftpNavigationHistories.get(duplicateSftpKey));
-      const fixtureVisibleView = workspaceElementForTab(fixtureTabKey, '#view-sftp');
+
+
+      window.termaSftpDirectoryWorkspace.navigation.release(fixtureTabKey);
+      window.termaSftpDirectoryWorkspace.navigation.release(duplicateSftpKey);
+      const directoryNavigation=window.termaSftpDirectoryWorkspace.navigation;
+      directoryNavigation.remember(fixtureTabKey, '/alpha');
+      directoryNavigation.remember(fixtureTabKey, '/alpha/child');
+      directoryNavigation.remember(duplicateSftpKey, '/beta');
+      directoryNavigation.remember(duplicateSftpKey, '/beta/child');
+      const duplicateHistoryBefore = JSON.stringify(directoryNavigation.historyState(duplicateSftpKey));
+      const fixtureVisibleView = window.termaWorkspacePaneScope.workspaceElementForTab(fixtureTabKey, '#view-sftp');
       const fixtureVisibleShell = fixtureVisibleView?.querySelector(':scope > .sftp-shell');
       const fixtureVisibleToolbar = document.querySelector('.sftp-toolbar[data-workspace-tab-key="' + CSS.escape(fixtureTabKey) + '"]');
       const fixtureUpButton = [...fixtureVisibleView?.querySelectorAll('button') || []].find(button => button.title === '上一级');
-      const activeShellMatchesTab = fixtureVisibleView?.dataset.sftpTabKey === fixtureTabKey
+      const activeShellMatchesTab = Boolean(fixtureVisibleView?.dataset.sftpTabKey === fixtureTabKey
         && fixtureVisibleShell?.dataset.sftpTabKey === fixtureTabKey
         && fixtureVisibleToolbar?.dataset.workspaceTabKey === fixtureTabKey
-        && fixtureUpButton?.getAttribute('onclick')?.includes("'" + fixtureTabKey + "'");
+        && fixtureUpButton?.closest('.sftp-shell') === fixtureVisibleShell
+        && window.termaSftpViews?.isMounted(fixtureTabKey));
       const loadsBeforeParentNavigation = sftpPageLoadOptions.length;
       mutateStubbedSftpPaths = true;
       fixtureUpButton?.click();
@@ -6771,10 +6589,10 @@ app.whenReady().then(async () => {
         && fixturePaneAfterParent?.activeTabKey === fixtureTabKey;
       const duplicateDirectoryStateIsolated = sftpTabRuntimes.get(duplicateSftpKey)?.state.path === '/beta/child'
         && tabs.find(tab => tab.key === duplicateSftpKey)?.path === '/beta/child';
-      const duplicateHistoryIsolated = JSON.stringify(sftpNavigationHistories.get(duplicateSftpKey)) === duplicateHistoryBefore;
+      const duplicateHistoryIsolated = JSON.stringify(directoryNavigation.historyState(duplicateSftpKey)) === duplicateHistoryBefore;
       activateTab(duplicateSftpKey);
       await Promise.resolve();
-      const duplicateVisibleView = workspaceElementForTab(duplicateSftpKey, '#view-sftp');
+      const duplicateVisibleView = window.termaWorkspacePaneScope.workspaceElementForTab(duplicateSftpKey, '#view-sftp');
       const duplicateShellMatchesTab = duplicateVisibleView?.dataset.sftpTabKey === duplicateSftpKey
         && duplicateVisibleView?.querySelector(':scope > .sftp-shell')?.dataset.sftpTabKey === duplicateSftpKey
         && sftpTabRuntimes.get(duplicateSftpKey)?.state.path === '/beta/child';
@@ -6787,10 +6605,10 @@ app.whenReady().then(async () => {
       }
       const duplicateTabIndex = tabs.findIndex(tab => tab.key === duplicateSftpKey);
       if (duplicateTabIndex >= 0) tabs.splice(duplicateTabIndex, 1);
-      disposeSftpRuntime(duplicateSftpKey);
+      window.termaSftpTabs.runtime.dispose(duplicateSftpKey);
       activeTabKey = fixtureTabKey;
       activeView = 'sftp';
-      await openSftp(connection.id, '/Users/demo/Public', false, fixtureTabKey);
+      await window.termaSftpPage.open(connection.id, '/Users/demo/Public', false, fixtureTabKey);
       toolbar = document.querySelector('#workspaceGlobalHeaderTools .sftp-toolbar') || fixturePane?.querySelector('[data-workspace-role="header-tools"] .sftp-toolbar') || view.querySelector('.sftp-toolbar');
       let navigationRow = view.querySelector('.sftp-navigation-row');
       let breadcrumb = view.querySelector('.sftp-breadcrumb');
@@ -6800,7 +6618,7 @@ app.whenReady().then(async () => {
       let clipboardActions = toolbar?.querySelector('#sftpClipboardActions') || view.querySelector('#sftpClipboardActions') || document.querySelector('#sftpClipboardActions') || document.createElement('span');
       const actionTitles = [...toolbar?.querySelectorAll('button, label') || []].map(node => node.title || node.getAttribute('aria-label') || '').filter(Boolean);
       const emptyClipboardHidden = Boolean(clipboardActions && !clipboardActions.querySelector('button') && !clipboardActions.textContent.trim());
-      showSftpPathEditor();
+      view.querySelector('#sftpPathEditButton').click();
       const visiblePathControls = [...(view.querySelector('.sftp-path-block')?.children || [])]
         .filter(node => getComputedStyle(node).display !== 'none');
       const pathEditorReplacesBreadcrumb = Boolean(
@@ -6813,16 +6631,16 @@ app.whenReady().then(async () => {
         && visiblePathControls.length === 1
         && visiblePathControls[0] === pathEditor
       );
-      hideSftpPathEditor();
+      window.termaSftpViews.pathEditor(fixtureTabKey,false);
       const preservedListHtml = view.querySelector('#sftpList')?.innerHTML;
-      updateSftpConnectionUi(connection.id, 'disconnected', '测试断线');
-      const disconnectedButton = sftpElement('sftpConnectionToggle', fixtureTabKey);
+      window.termaSftpConnection.paint(connection.id, 'disconnected', '测试断线');
+      const disconnectedButton = window.termaSftpView.element('sftpConnectionToggle', fixtureTabKey);
       const disconnectedBanner = view.querySelector('#sftpConnectionBanner');
       const disconnectedAction = Boolean(disconnectedButton?.querySelector('.lucide-link-2') && !disconnectedButton?.querySelector('.lucide-link-2-off'));
       const bannerVisible = Boolean(disconnectedBanner && !disconnectedBanner.hidden && disconnectedBanner.querySelector('.sftp-connection-detail')?.textContent === '测试断线');
       const preservedWhileDisconnected = view.querySelector('#sftpList')?.innerHTML === preservedListHtml;
-      updateSftpConnectionUi(connection.id, 'connected');
-      const connectedButton = sftpElement('sftpConnectionToggle', fixtureTabKey);
+      window.termaSftpConnection.paint(connection.id, 'connected');
+      const connectedButton = window.termaSftpView.element('sftpConnectionToggle', fixtureTabKey);
       const connectedAction = Boolean(
         connectedButton?.dataset.status === 'connected'
         && connectedButton?.title === '断开 SFTP 连接'
@@ -6831,15 +6649,14 @@ app.whenReady().then(async () => {
       );
       sftpDisconnectedTabs.add(fixtureTabKey);
       const disconnectedPageLoads = sftpPageLoads;
-      await openSftp(connection.id, '/Users/demo/Public', false, fixtureTabKey);
+      await window.termaSftpPage.open(connection.id, '/Users/demo/Public', false, fixtureTabKey);
       const disconnectedTabSwitchDoesNotReconnect = sftpPageLoads === disconnectedPageLoads;
-      await openSftp(connection.id, '/Users/demo/Public', true, fixtureTabKey);
+      await window.termaSftpPage.open(connection.id, '/Users/demo/Public', true, fixtureTabKey);
       const disconnectedFolderOperationReconnects = sftpPageLoads === disconnectedPageLoads + 1;
       const savedConnectApi = api;
       let automaticConnectCalls = 0;
-      updateSftpConnectionUi(connection.id, 'disconnected');
+      window.termaSftpConnection.paint(connection.id, 'disconnected');
       sftpDisconnectedTabs.add(fixtureTabKey);
-      sftpConnectionRequests.clear();
       api = async (path, options={}) => {
         if (String(path).includes('/sftp/session') && options.method === 'POST') {
           automaticConnectCalls += 1;
@@ -6848,15 +6665,16 @@ app.whenReady().then(async () => {
         }
         return {};
       };
+      document.documentElement.dataset.uiSmokeStage = 'sftp-session-connection';
       const automaticConnectResults = await Promise.all([
-        ensureSftpConnection(connection.id),
-        ensureSftpConnection(connection.id)
+        window.termaSftpConnection.ensure(connection.id),
+        window.termaSftpConnection.ensure(connection.id)
       ]);
       const automaticConnectStatus = tabs.find(tab=>tab.key===fixtureTabKey)?.connectionStatus || '';
       const automaticConnectShared = automaticConnectCalls === 1
         && automaticConnectResults.every(Boolean)
         && automaticConnectStatus === 'connected'
-        && !sftpConnectionRequests.has(connection.id);
+        && !window.termaSftpConnection.pending(connection.id);
       const reconnectSequence = [];
       api = async (path, options={}) => {
         if (String(path).includes('/sftp/session') && options.method === 'DELETE') {
@@ -6871,25 +6689,23 @@ app.whenReady().then(async () => {
         }
         return {};
       };
-      const manualDisconnectRequest = disconnectSftpConnection(connection.id);
-      const operationReconnectRequest = ensureSftpConnection(connection.id);
+      const manualDisconnectRequest = window.termaSftpConnection.disconnect(connection.id);
+      const operationReconnectRequest = window.termaSftpConnection.ensure(connection.id);
       await Promise.all([manualDisconnectRequest, operationReconnectRequest]);
       const manualDisconnectAutoReconnect = reconnectSequence.join(',') === 'disconnect-start,disconnect-done,connect'
         && tabs.find(tab=>tab.key===fixtureTabKey)?.connectionStatus === 'connected'
-        && !sftpDisconnectRequests.has(connection.id)
-        && !sftpConnectionRequests.has(connection.id);
+        && !window.termaSftpConnection.pending(connection.id);
       api = savedConnectApi;
 
       const nativeDragApi = api;
       const nativeDragBridgeDescriptor = Object.getOwnPropertyDescriptor(window, 'termaDesktop');
       const nativeDragNotify = notify;
-      const nativeDragFallbackNoticeWasShown = sftpNativeDragFallbackNoticeShown;
       const nativeDragFallbackNotices = [];
       const nativeDragRenameNotices = [];
       const nativeDragRow = document.createElement('div');
       const nativeDragDropTarget = document.createElement('button');
       const nativeDragEntries = [{path:'/source/native-drag.txt',name:'native-drag.txt',type:'file'}];
-      const nativeDragKey = sftpNativeDragKey(connection.id, nativeDragEntries);
+      const nativeDragKey = window.termaDragPayload.nativeDragKey(connection.id, nativeDragEntries);
       const nativeDragBridgeCalls = [];
       const nativeDragTargetCalls = [];
       const nativeDragActivateCalls = [];
@@ -6911,8 +6727,8 @@ app.whenReady().then(async () => {
         nativeDragRow.className = 'sftp-row';
         nativeDragDropTarget.className = 'tab';
         document.body.append(nativeDragRow, nativeDragDropTarget);
-        sftpNativeDragCache.delete(nativeDragKey);
-        sftpNativeDragArmed.delete(nativeDragKey);
+        window.termaSftpDragWorkspace.drag.state.cache.delete(nativeDragKey);
+        window.termaSftpDragWorkspace.drag.state.armed.delete(nativeDragKey);
         Object.defineProperty(window, 'termaDesktop', {
           configurable:true,
           writable:true,
@@ -6924,13 +6740,13 @@ app.whenReady().then(async () => {
           return nativeDragApi(pathname, options);
         };
         const webDragEvent = nativeDragEvent();
-        beginSftpItemDrag(webDragEvent, connection.id, nativeDragEntries[0].path, nativeDragEntries[0].name, nativeDragEntries[0].type);
-        handleSftpDocumentDragLeave({relatedTarget:null,clientX:0,clientY:0});
+        window.termaSftpDragWorkspace.drag.begin(webDragEvent, connection.id, nativeDragEntries[0].path, nativeDragEntries[0].name, nativeDragEntries[0].type);
+        window.termaSftpDragWorkspace.drag.browser.leave({relatedTarget:null,clientX:0,clientY:0});
         await new Promise(resolve => setTimeout(resolve, 100));
         webExternalDragBlocked = webStageCalls === 0
-          && sftpNativeDragRequests.size === 0
+          && window.termaSftpDragWorkspace.drag.state.requests.size === 0
           && document.querySelector('#sftpDragHint')?.textContent.includes('Web 版不能拖到系统');
-        finishSftpItemDrag({...webDragEvent,currentTarget:nativeDragRow,clientX:0,clientY:0});
+        window.termaSftpDragWorkspace.drag.browser.finish({...webDragEvent,currentTarget:nativeDragRow,clientX:0,clientY:0});
         api = async (pathname, options={}) => {
           if (pathname.endsWith('/sftp/stage-drag') && options.method === 'POST') {
             nativeDragStageCalls += 1;
@@ -6938,7 +6754,6 @@ app.whenReady().then(async () => {
           }
           return nativeDragApi(pathname, options);
         };
-        sftpNativeDragFallbackNoticeShown = false;
         notify = (text, type='info') => {
           const message = String(text || '');
           if (message.includes('Linux 一次拖出当前不可用')) {
@@ -6985,42 +6800,42 @@ app.whenReady().then(async () => {
         nativeDragPhase = 'stage';
         nativeDragCallReturned = false;
         const firstDragEvent = nativeDragEvent();
-        beginSftpItemDrag(firstDragEvent, connection.id, nativeDragEntries[0].path, nativeDragEntries[0].name, nativeDragEntries[0].type);
+        window.termaSftpDragWorkspace.drag.begin(firstDragEvent, connection.id, nativeDragEntries[0].path, nativeDragEntries[0].name, nativeDragEntries[0].type);
         nativeDragCallReturned = true;
         const linuxFallbackHint = document.querySelector('#sftpDragHint')?.textContent || '';
-        if (sftpInternalDrag) sftpInternalDrag.leftWindow = true;
+        if (window.termaSftpDragWorkspace.drag.state.internal) window.termaSftpDragWorkspace.drag.state.internal.leftWindow = true;
         await new Promise(resolve => setTimeout(resolve, 20));
         const firstDragOnlyStages = nativeDragStageCalls === 1
           && nativeDragBridgeCalls.length === 0
-          && sftpNativeDragArmed.has(nativeDragKey)
-          && sftpNativeDragCache.get(nativeDragKey)?.files?.length === 1;
-        finishSftpItemDrag({...firstDragEvent,currentTarget:nativeDragRow,clientX:window.innerWidth,clientY:window.innerHeight});
-        const firstDragReset = sftpInternalDrag === null
+          && window.termaSftpDragWorkspace.drag.state.armed.has(nativeDragKey)
+          && window.termaSftpDragWorkspace.drag.state.cache.get(nativeDragKey)?.files?.length === 1;
+        window.termaSftpDragWorkspace.drag.browser.finish({...firstDragEvent,currentTarget:nativeDragRow,clientX:window.innerWidth,clientY:window.innerHeight});
+        const firstDragReset = window.termaSftpDragWorkspace.drag.state.internal === null
           && !nativeDragRow.classList.contains('is-dragging')
           && !document.body.classList.contains('sftp-item-drag-active');
 
         nativeDragPhase = 'cached-internal';
-        sftpNativeDragArmed.delete(nativeDragKey);
+        window.termaSftpDragWorkspace.drag.state.armed.delete(nativeDragKey);
         nativeDragCallReturned = false;
         const secondDragEvent = nativeDragEvent();
-        beginSftpItemDrag(secondDragEvent, connection.id, nativeDragEntries[0].path, nativeDragEntries[0].name, nativeDragEntries[0].type);
+        window.termaSftpDragWorkspace.drag.begin(secondDragEvent, connection.id, nativeDragEntries[0].path, nativeDragEntries[0].name, nativeDragEntries[0].type);
         nativeDragCallReturned = true;
         const cachedUnarmedStaysInternal = Boolean(
           !secondDragEvent.defaultPrevented
-          && sftpInternalDrag?.connectionId === Number(connection.id)
+          && window.termaSftpDragWorkspace.drag.state.internal?.connectionId === Number(connection.id)
           && nativeDragBridgeCalls.length === 0
-          && !sftpNativeDragArmed.has(nativeDragKey)
+          && !window.termaSftpDragWorkspace.drag.state.armed.has(nativeDragKey)
         );
-        handleSftpDocumentDragLeave({relatedTarget:null,clientX:0,clientY:0});
-        finishSftpItemDrag({...secondDragEvent,currentTarget:nativeDragRow,clientX:0,clientY:0});
+        window.termaSftpDragWorkspace.drag.browser.leave({relatedTarget:null,clientX:0,clientY:0});
+        window.termaSftpDragWorkspace.drag.browser.finish({...secondDragEvent,currentTarget:nativeDragRow,clientX:0,clientY:0});
         await new Promise(resolve => setTimeout(resolve, 100));
-        const sameWindowDropDoesNotArm = sftpInternalDrag === null && !sftpNativeDragArmed.has(nativeDragKey);
+        const sameWindowDropDoesNotArm = window.termaSftpDragWorkspace.drag.state.internal === null && !window.termaSftpDragWorkspace.drag.state.armed.has(nativeDragKey);
 
         nativeDragPhase = 'failure';
-        sftpNativeDragArmed.add(nativeDragKey);
+        window.termaSftpDragWorkspace.drag.state.armed.add(nativeDragKey);
         nativeDragCallReturned = false;
         const armedDragEvent = nativeDragEvent();
-        beginSftpItemDrag(armedDragEvent, connection.id, nativeDragEntries[0].path, nativeDragEntries[0].name, nativeDragEntries[0].type);
+        window.termaSftpDragWorkspace.drag.begin(armedDragEvent, connection.id, nativeDragEntries[0].path, nativeDragEntries[0].name, nativeDragEntries[0].type);
         nativeDragCallReturned = true;
         const failedCall = nativeDragBridgeCalls.at(-1);
         const armedDragStartsSynchronously = Boolean(
@@ -7033,12 +6848,12 @@ app.whenReady().then(async () => {
         nativeDragRow.classList.add('is-dragging', 'is-preparing-drag');
         nativeDragDropTarget.classList.add('sftp-drop-target');
         document.body.classList.add('sftp-item-drag-active');
-        handleSftpNativeDragResult({requestId:failedCall?.requestId,ok:false,message:'native drag rejected'});
+        window.termaSftpDragWorkspace.drag.native.result({requestId:failedCall?.requestId,ok:false,message:'native drag rejected'});
         const failureRearmed = Boolean(
           failedCall?.requestId
-          && !sftpNativeDragRequests.has(failedCall.requestId)
-          && sftpNativeDragArmed.has(nativeDragKey)
-          && sftpNativeDragCache.get(nativeDragKey)?.files?.length === 1
+          && !window.termaSftpDragWorkspace.drag.state.requests.has(failedCall.requestId)
+          && window.termaSftpDragWorkspace.drag.state.armed.has(nativeDragKey)
+          && window.termaSftpDragWorkspace.drag.state.cache.get(nativeDragKey)?.files?.length === 1
           && !nativeDragRow.classList.contains('is-dragging')
           && !nativeDragRow.classList.contains('is-preparing-drag')
           && !nativeDragDropTarget.classList.contains('sftp-drop-target')
@@ -7049,13 +6864,13 @@ app.whenReady().then(async () => {
         nativeDragPhase = 'retry';
         nativeDragCallReturned = false;
         const retryDragEvent = nativeDragEvent();
-        beginSftpItemDrag(retryDragEvent, connection.id, nativeDragEntries[0].path, nativeDragEntries[0].name, nativeDragEntries[0].type);
+        window.termaSftpDragWorkspace.drag.begin(retryDragEvent, connection.id, nativeDragEntries[0].path, nativeDragEntries[0].name, nativeDragEntries[0].type);
         nativeDragCallReturned = true;
         const successfulCall = nativeDragBridgeCalls.at(-1);
         nativeDragRow.classList.add('is-dragging', 'is-preparing-drag');
         nativeDragDropTarget.classList.add('sftp-drop-target');
         document.body.classList.add('sftp-item-drag-active');
-        handleSftpNativeDragResult({
+        window.termaSftpDragWorkspace.drag.native.result({
           requestId:successfulCall?.requestId,
           ok:true,
           renamedItems:[{promisedName:'native-drag.txt',savedName:'native-drag 2.txt'}]
@@ -7065,11 +6880,11 @@ app.whenReady().then(async () => {
           && successfulCall?.phase === 'retry'
           && successfulCall.synchronous
           && nativeDragStageCalls === 1
-          && !sftpNativeDragRequests.has(successfulCall.requestId)
-          && !sftpNativeDragArmed.has(nativeDragKey)
-          && !sftpNativeDragCache.has(nativeDragKey)
-          && sftpInternalDrag === null
-          && sftpExternalDragPreparing === null
+          && !window.termaSftpDragWorkspace.drag.state.requests.has(successfulCall.requestId)
+          && !window.termaSftpDragWorkspace.drag.state.armed.has(nativeDragKey)
+          && !window.termaSftpDragWorkspace.drag.state.cache.has(nativeDragKey)
+          && window.termaSftpDragWorkspace.drag.state.internal === null
+          && window.termaSftpDragWorkspace.drag.state.preparing === null
           && !nativeDragRow.classList.contains('is-dragging')
           && !nativeDragRow.classList.contains('is-preparing-drag')
           && !nativeDragDropTarget.classList.contains('sftp-drop-target')
@@ -7160,7 +6975,7 @@ app.whenReady().then(async () => {
         });
         nativeDragRow.setAttribute('draggable', 'true');
         const streamingCallsBefore = nativeDragBridgeCalls.length;
-        primeSftpNativeDrag(
+        window.termaSftpDragWorkspace.drag.prime(
           {
             button:0,
             pointerId:8080,
@@ -7179,28 +6994,28 @@ app.whenReady().then(async () => {
           && Boolean(streamingCall?.requestId)
           && streamingCall?.synchronous
           && nativeDragRow.getAttribute('draggable') === 'false';
-        handleSftpNativeDragPointerMove({
+        window.termaSftpDragWorkspace.drag.pointer.move({
           pointerId:8080,
           buttons:1,
           clientX:23,
           clientY:22
         });
         const streamingIgnoresTinyMovement = nativeDragActivateCalls.length === 0;
-        handleSftpNativeDragPointerMove({
+        window.termaSftpDragWorkspace.drag.pointer.move({
           pointerId:8080,
           buttons:1,
           clientX:28,
           clientY:20
         });
         const streamingCallsAfterThreshold = nativeDragBridgeCalls.filter(call => call.phase === 'streaming').length;
-        handleSftpNativeDragPointerMove({
+        window.termaSftpDragWorkspace.drag.pointer.move({
           pointerId:8080,
           buttons:1,
           clientX:48,
           clientY:20
         });
         const streamingDragEvent = nativeDragEvent();
-        beginSftpItemDrag(
+        window.termaSftpDragWorkspace.drag.begin(
           streamingDragEvent,
           connection.id,
           nativeDragEntries[0].path,
@@ -7219,16 +7034,16 @@ app.whenReady().then(async () => {
           && nativeDragActivateCalls[0] === streamingCall.requestId
         );
         const cancelCallsBeforeCapture = nativeDragCancelCalls.length;
-        handleSftpNativeDragEvent({type:'ready',requestId:streamingCall?.requestId});
-        handleSftpNativeDragPointerCancel({pointerId:8080});
-        const streamingCaptureCancelSurvives = sftpNativeDragPointer?.nativeRequestId === streamingCall?.requestId
+        window.termaSftpDragWorkspace.drag.native.event({type:'ready',requestId:streamingCall?.requestId});
+        window.termaSftpDragWorkspace.drag.pointer.cancel({pointerId:8080});
+        const streamingCaptureCancelSurvives = window.termaSftpDragWorkspace.drag.pointer.current()?.nativeRequestId === streamingCall?.requestId
           && nativeDragCancelCalls.length === cancelCallsBeforeCapture
           && nativeDragActivateCalls.length === 2
           && nativeDragActivateCalls.at(-1) === streamingCall?.requestId;
-        handleSftpNativeDragEvent({type:'started',requestId:streamingCall?.requestId});
+        window.termaSftpDragWorkspace.drag.native.event({type:'started',requestId:streamingCall?.requestId});
         const streamingRestoresDraggableOnNativeStart = nativeDragRow.getAttribute('draggable') === 'true';
         const parallelBrowserDragEvent = nativeDragEvent();
-        beginSftpItemDrag(
+        window.termaSftpDragWorkspace.drag.begin(
           parallelBrowserDragEvent,
           connection.id,
           nativeDragEntries[0].path,
@@ -7237,7 +7052,7 @@ app.whenReady().then(async () => {
         );
         const streamingNativeBlocksParallelBrowserDrag = Boolean(
           parallelBrowserDragEvent.defaultPrevented
-          && sftpInternalDrag === null
+          && window.termaSftpDragWorkspace.drag.state.internal === null
           && streamingRestoresDraggableOnNativeStart
           && nativeDragBridgeCalls.filter(call => call.phase === 'streaming').length === streamingCallsAfterThreshold
         );
@@ -7251,6 +7066,7 @@ app.whenReady().then(async () => {
         const nativeSourceShell = document.querySelector('#view-sftp .sftp-shell') || document.querySelector('.sftp-shell');
         let nativeIdleHintStable = false;
         let nativeOutsideHintStaysStable = false;
+        let nativeHintDiagnostics = {};
         try {
           document.elementFromPoint = () => nativeSourceShell;
           const nativeInsideMotion = {
@@ -7259,7 +7075,7 @@ app.whenReady().then(async () => {
             clientX:Math.round(window.innerWidth / 2),
             clientY:Math.round(window.innerHeight / 2)
           };
-          handleSftpNativeDragEvent(nativeInsideMotion);
+          window.termaSftpDragWorkspace.drag.native.event(nativeInsideMotion);
           const hintAfterNativeMotion = document.querySelector('#sftpDragHint');
           const hintCopyAfterNativeMotion = hintAfterNativeMotion?.querySelector('span');
           const hintContentAfterNativeMotion = hintAfterNativeMotion?.dataset.content || '';
@@ -7271,13 +7087,14 @@ app.whenReady().then(async () => {
             stopPropagation(){ this.propagationStopped = true; },
             dataTransfer:{types:['Files'],items:[],files:[],dropEffect:'copy'}
           };
-          handleSftpDragOver(windowsDragOverEvent);
+          window.termaSftpDragWorkspace.events.over(windowsDragOverEvent);
           const hintAfterChromiumDragOver = document.querySelector('#sftpDragHint');
           const hintCopyAfterChromiumDragOver = hintAfterChromiumDragOver?.querySelector('span');
           const hintContentAfterChromiumDragOver = hintAfterChromiumDragOver?.dataset.content || '';
           const hintTextAfterChromiumDragOver = hintAfterChromiumDragOver?.textContent || '';
-          handleSftpNativeDragEvent(nativeInsideMotion);
+          window.termaSftpDragWorkspace.drag.native.event(nativeInsideMotion);
           const hintAfterSecondNativeMotion = document.querySelector('#sftpDragHint');
+          nativeHintDiagnostics = {before:hintTextAfterNativeMotion,after:hintTextAfterChromiumDragOver,second:hintAfterSecondNativeMotion?.textContent||'',sameHost:hintAfterChromiumDragOver===hintAfterNativeMotion&&hintAfterSecondNativeMotion===hintAfterNativeMotion,sameCopy:hintCopyAfterChromiumDragOver===hintCopyAfterNativeMotion&&hintAfterSecondNativeMotion?.querySelector('span')===hintCopyAfterNativeMotion,prevented:windowsDragOverEvent.defaultPrevented,stopped:windowsDragOverEvent.propagationStopped,effect:windowsDragOverEvent.dataTransfer.dropEffect};
           nativeIdleHintStable = Boolean(
             windowsDragOverEvent.defaultPrevented
             && windowsDragOverEvent.propagationStopped
@@ -7289,7 +7106,7 @@ app.whenReady().then(async () => {
             && hintCopyAfterChromiumDragOver === hintCopyAfterNativeMotion
             && hintAfterSecondNativeMotion?.querySelector('span') === hintCopyAfterNativeMotion
             && hintContentAfterChromiumDragOver === hintContentAfterNativeMotion
-            && hintAfterSecondNativeMotion?.dataset.content === hintContentAfterNativeMotion
+            && (hintAfterSecondNativeMotion?.dataset.content || '') === hintContentAfterNativeMotion
             && hintTextAfterChromiumDragOver === hintTextAfterNativeMotion
             && hintAfterSecondNativeMotion?.textContent === hintTextAfterNativeMotion
             && hintTextAfterNativeMotion.includes('拖到其他 SFTP 标签可跨主机复制')
@@ -7297,17 +7114,18 @@ app.whenReady().then(async () => {
             && !hintTextAfterNativeMotion.includes('松开后保存到本机目录')
           );
           document.elementFromPoint = () => null;
-          handleSftpNativeDragEvent({
+          window.termaSftpDragWorkspace.drag.native.event({
             type:'motion',
             requestId:streamingCall?.requestId,
             clientX:window.innerWidth + 100,
             clientY:window.innerHeight + 100
           });
           const outsideHint = document.querySelector('#sftpDragHint');
+          nativeHintDiagnostics.outside = outsideHint?.textContent || '';
           nativeOutsideHintStaysStable = Boolean(
             outsideHint === hintAfterNativeMotion
             && outsideHint?.querySelector('span') === hintCopyAfterNativeMotion
-            && outsideHint?.dataset.content === hintContentAfterNativeMotion
+            && (outsideHint?.dataset.content || '') === hintContentAfterNativeMotion
             && outsideHint?.textContent === hintTextAfterNativeMotion
             && outsideHint?.textContent.includes('拖出窗口可直接保存到本机')
             && !outsideHint?.textContent.includes('松开后保存到本机目录')
@@ -7316,7 +7134,7 @@ app.whenReady().then(async () => {
           document.elementFromPoint = originalElementFromPoint;
         }
         const streamingTargetRect = streamingTargetNode.getBoundingClientRect();
-        handleSftpNativeDragEvent({
+        window.termaSftpDragWorkspace.drag.native.event({
           type:'motion',
           requestId:streamingCall?.requestId,
           clientX:streamingTargetRect.left + streamingTargetRect.width / 2,
@@ -7332,7 +7150,7 @@ app.whenReady().then(async () => {
         const nativeHintBeforeTransientMiss = document.querySelector('#sftpDragHint');
         try {
           document.elementFromPoint = () => null;
-          handleSftpNativeDragEvent({
+          window.termaSftpDragWorkspace.drag.native.event({
             type:'motion',
             requestId:streamingCall?.requestId,
             clientX:Math.round(window.innerWidth / 2),
@@ -7348,13 +7166,13 @@ app.whenReady().then(async () => {
           && document.querySelector('#sftpDragHint')?.textContent.includes('native-stream-target')
           && !document.querySelector('#sftpDragHint')?.textContent.includes('本机目录')
         );
-        const streamingRequest = sftpNativeDragRequests.get(streamingCall?.requestId);
+        const streamingRequest = window.termaSftpDragWorkspace.drag.state.requests.get(streamingCall?.requestId);
         const activeTabBeforeFinalMiss = activeTabKey;
         const nativeTargetCallsBeforeFinalMiss = nativeDragTargetCalls.length;
         try {
           activeTabKey = streamingTargetTab.key;
           document.elementFromPoint = () => null;
-          syncSftpNativeDragTargetAt(
+          window.termaSftpDragWorkspace.drag.target.hit(
             streamingCall?.requestId,
             streamingRequest,
             Math.round(window.innerWidth / 2),
@@ -7370,7 +7188,7 @@ app.whenReady().then(async () => {
           && nativeDragTargetCalls.at(-1)?.target?.id === streamingTargetConnection.id
           && nativeDragTargetCalls.at(-1)?.target?.tabKey === streamingTargetTab.key
         );
-        handleSftpNativeDragEvent({
+        window.termaSftpDragWorkspace.drag.native.event({
           type:'released',
           requestId:streamingCall?.requestId,
           clientX:window.innerWidth + 100,
@@ -7378,11 +7196,12 @@ app.whenReady().then(async () => {
         });
         const releasedTargetCall = nativeDragTargetCalls.findLast(call => call.requestId === streamingCall?.requestId);
         const nativeReleasedClearsStaleTarget = releasedTargetCall?.target === null;
-        clearSftpTabDragPreview();
-        await handleSftpNativeDragResult({
+        window.termaSftpDragWorkspace.drag.preview.clear();
+        await window.termaSftpDragWorkspace.drag.native.result({
           requestId:streamingCall?.requestId,
           ok:true,
           internalTarget:{
+            kind:'sftp',
             id:streamingTargetConnection.id,
             tabKey:streamingTargetTab.key,
             path:streamingTargetTab.path
@@ -7392,7 +7211,7 @@ app.whenReady().then(async () => {
           && nativeDragCrossRequests[0].body.target_connection_id === streamingTargetConnection.id
           && nativeDragCrossRequests[0].body.paths?.[0] === nativeDragEntries[0].path;
         const pendingCancelCallsBefore = nativeDragCancelCalls.length;
-        primeSftpNativeDrag(
+        window.termaSftpDragWorkspace.drag.prime(
           {
             button:0,
             pointerId:8081,
@@ -7406,23 +7225,23 @@ app.whenReady().then(async () => {
           nativeDragEntries[0].name,
           nativeDragEntries[0].type
         );
-        const pendingPointerRequest = sftpNativeDragPointer?.nativeRequestId;
-        handleSftpNativeDragPointerMove({
+        const pendingPointerRequest = window.termaSftpDragWorkspace.drag.pointer.current()?.nativeRequestId;
+        window.termaSftpDragWorkspace.drag.pointer.move({
           pointerId:8081,
           buttons:1,
           clientX:28,
           clientY:20
         });
-        handleSftpNativeDragEvent({type:'ready',requestId:pendingPointerRequest});
-        handleSftpNativeDragPointerUp({pointerId:8081});
+        window.termaSftpDragWorkspace.drag.native.event({type:'ready',requestId:pendingPointerRequest});
+        window.termaSftpDragWorkspace.drag.pointer.up({pointerId:8081});
         const pointerUpCancelsPending = Boolean(
           pendingPointerRequest
           && nativeDragCancelCalls.length === pendingCancelCallsBefore + 1
           && nativeDragCancelCalls.at(-1) === pendingPointerRequest
-          && sftpNativeDragPointer === null
+          && window.termaSftpDragWorkspace.drag.pointer.current() === null
         );
-        await handleSftpNativeDragResult({requestId:pendingPointerRequest,ok:false,message:'已取消拖出'});
-        resetSftpItemDrag(nativeDragRow);
+        await window.termaSftpDragWorkspace.drag.native.result({requestId:pendingPointerRequest,ok:false,message:'已取消拖出'});
+        window.termaSftpDragWorkspace.drag.browser.reset(nativeDragRow);
         streamingTargetNode.remove();
         tabs.splice(tabs.findIndex(item => item.key === streamingTargetTab.key), 1);
         connections.splice(connections.findIndex(item => Number(item.id) === Number(streamingTargetConnection.id)), 1);
@@ -7440,6 +7259,7 @@ app.whenReady().then(async () => {
           streamingNativeBlocksParallelBrowserDrag,
           nativeIdleHintStable,
           nativeOutsideHintStaysStable,
+          nativeHintDiagnostics,
           nativeMotionTargetsSftp,
           nativeTransientMissKeepsTarget,
           nativeFinalTransientMissKeepsTarget,
@@ -7460,12 +7280,11 @@ app.whenReady().then(async () => {
         };
       } finally {
         notify = nativeDragNotify;
-        sftpNativeDragFallbackNoticeShown = nativeDragFallbackNoticeWasShown;
-        resetSftpItemDrag(nativeDragRow);
-        sftpNativeDragCache.delete(nativeDragKey);
-        sftpNativeDragArmed.delete(nativeDragKey);
-        for (const [requestId, request] of sftpNativeDragRequests) {
-          if (request.key === nativeDragKey) sftpNativeDragRequests.delete(requestId);
+        window.termaSftpDragWorkspace.drag.browser.reset(nativeDragRow);
+        window.termaSftpDragWorkspace.drag.state.cache.delete(nativeDragKey);
+        window.termaSftpDragWorkspace.drag.state.armed.delete(nativeDragKey);
+        for (const [requestId, request] of window.termaSftpDragWorkspace.drag.state.requests) {
+          if (request.key === nativeDragKey) window.termaSftpDragWorkspace.drag.state.requests.delete(requestId);
         }
         nativeDragRow.remove();
         nativeDragDropTarget.remove();
@@ -7474,7 +7293,7 @@ app.whenReady().then(async () => {
         else delete window.termaDesktop;
       }
       const sourceSftpTabKey = activeTabKey;
-      const sourceSftpPath = sftpState.path;
+      const sourceSftpPath = fixtureRuntime.state.path;
       let targetContentLeaveKeepsPreview = false;
       let targetHeaderLeaveKeepsPreview = false;
       let targetChromeLeaveRestoresSource = false;
@@ -7491,9 +7310,9 @@ app.whenReady().then(async () => {
         writable:true,
         value:undefined
       });
-      const webCrossHostMode = sftpExternalDragMode() === false;
-      sftpInternalDrag = {connectionId:Number(connection.id),entries:[{path:'/source.txt',name:'source.txt',type:'file'}],sourceTabKey:sourceSftpTabKey,row:null};
-      const serializedCrossDrag = serializeSftpDragPayload(sftpInternalDrag.connectionId, sftpInternalDrag.entries, sourceSftpTabKey);
+      const webCrossHostMode = window.termaSftpDragWorkspace.drag.mode() === false;
+      window.termaSftpDragWorkspace.drag.state.internal = {connectionId:Number(connection.id),entries:[{path:'/source.txt',name:'source.txt',type:'file'}],sourceTabKey:sourceSftpTabKey,row:null};
+      const serializedCrossDrag = window.termaDragPayload.serializeDragPayload(window.termaSftpDragWorkspace.drag.state.internal.connectionId, window.termaSftpDragWorkspace.drag.state.internal.entries, sourceSftpTabKey);
       const crossDragDataTransfer = {
         types:['application/x-terma-sftp'],
         dropEffect:'',
@@ -7502,18 +7321,18 @@ app.whenReady().then(async () => {
         }
       };
       const dragFeedbackEvent = {preventDefault(){},dataTransfer:crossDragDataTransfer,currentTarget:dragTargetButton};
-      handleSftpTabDragOver(dragFeedbackEvent, dragTargetTab.key);
+      window.termaSftpDragWorkspace.drag.destinations.over(dragFeedbackEvent, dragTargetTab.key);
       await new Promise(resolve => setTimeout(resolve, 210));
       const dragFeedbackVisible = dragTargetButton.classList.contains('sftp-drop-target')
         && dragFeedbackEvent.dataTransfer.dropEffect === 'copy'
         && document.querySelector('#sftpDragHint')?.textContent.includes('测试目标');
       const dragTargetViewActivated = activeTabKey === dragTargetTab.key
         && view.dataset.sftpTabKey === dragTargetTab.key;
-      handleSftpTabDragLeave({currentTarget:dragTargetButton,relatedTarget:null,clientX:0,clientY:0,dataTransfer:crossDragDataTransfer}, dragTargetButton);
+      window.termaSftpDragWorkspace.drag.destinations.leave({currentTarget:dragTargetButton,relatedTarget:null,clientX:0,clientY:0,dataTransfer:crossDragDataTransfer}, dragTargetButton);
       await new Promise(resolve => setTimeout(resolve, 420));
       transientTabLeaveKeepsPreview = activeTabKey === dragTargetTab.key
-        && Boolean(sftpTabDragPreviewSession)
-        && sftpTabDragPreviewSession.previewTabKey === dragTargetTab.key;
+        && Boolean(window.termaSftpDragWorkspace.drag.preview.session())
+        && window.termaSftpDragWorkspace.drag.preview.session().previewTabKey === dragTargetTab.key;
       const dragTargetActiveKey = activeTabKey;
       const dragTargetViewKey = view.dataset.sftpTabKey;
       const targetListDropEvent = {
@@ -7523,7 +7342,7 @@ app.whenReady().then(async () => {
         stopPropagation(){ this.propagationStopped = true; },
         dataTransfer:crossDragDataTransfer
       };
-      handleSftpDragOver(targetListDropEvent);
+      window.termaSftpDragWorkspace.events.over(targetListDropEvent);
       const targetDropOverlay = document.querySelector('#sftpDropOverlay');
       const targetDropRect = targetDropOverlay?.getBoundingClientRect();
       const targetDropHint = document.querySelector('#sftpDragHint');
@@ -7543,8 +7362,8 @@ app.whenReady().then(async () => {
         && targetDropRect.bottom <= window.innerHeight
       );
       const targetHintBeforeTransientLeave = document.querySelector('#sftpDragHint');
-      handleSftpDragLeave({currentTarget:document.querySelector('.sftp-shell'),relatedTarget:null,dataTransfer:targetListDropEvent.dataTransfer});
-      handleSftpDragOver(targetListDropEvent);
+      window.termaSftpDragWorkspace.events.leave({currentTarget:document.querySelector('.sftp-shell'),relatedTarget:null,dataTransfer:targetListDropEvent.dataTransfer});
+      window.termaSftpDragWorkspace.events.over(targetListDropEvent);
       await new Promise(resolve => setTimeout(resolve, 120));
       const targetListDropPromptStable = Boolean(
         targetHintBeforeTransientLeave
@@ -7556,35 +7375,35 @@ app.whenReady().then(async () => {
       const targetContent = [...document.querySelectorAll('.sftp-shell[data-sftp-tab-key]')]
         .find(element => element.dataset.sftpTabKey === dragTargetTab.key)
         || document.querySelector('#view-sftp .sftp-shell');
-      handleSftpTabDragLeave({currentTarget:dragTargetButton,relatedTarget:targetContent,dataTransfer:crossDragDataTransfer}, dragTargetButton);
+      window.termaSftpDragWorkspace.drag.destinations.leave({currentTarget:dragTargetButton,relatedTarget:targetContent,dataTransfer:crossDragDataTransfer}, dragTargetButton);
       await new Promise(resolve => setTimeout(resolve, 40));
       targetContentLeaveKeepsPreview = activeTabKey === dragTargetTab.key
-        && Boolean(sftpTabDragPreviewSession)
-        && sftpTabDragPreviewSession.previewTabKey === dragTargetTab.key;
+        && Boolean(window.termaSftpDragWorkspace.drag.preview.session())
+        && window.termaSftpDragWorkspace.drag.preview.session().previewTabKey === dragTargetTab.key;
       const targetHeader = targetContent?.querySelector('.sftp-top');
-      handleSftpTabDragLeave({currentTarget:dragTargetButton,relatedTarget:targetHeader,dataTransfer:crossDragDataTransfer}, dragTargetButton);
+      window.termaSftpDragWorkspace.drag.destinations.leave({currentTarget:dragTargetButton,relatedTarget:targetHeader,dataTransfer:crossDragDataTransfer}, dragTargetButton);
       await new Promise(resolve => setTimeout(resolve, 40));
       targetHeaderLeaveKeepsPreview = activeTabKey === dragTargetTab.key
-        && Boolean(sftpTabDragPreviewSession)
-        && sftpTabDragPreviewSession.previewTabKey === dragTargetTab.key;
+        && Boolean(window.termaSftpDragWorkspace.drag.preview.session())
+        && window.termaSftpDragWorkspace.drag.preview.session().previewTabKey === dragTargetTab.key;
       const targetChrome = dragTargetButton?.closest('.workspace-pane')?.querySelector('.workspace-pane-chrome');
       const previousElementFromPoint = document.elementFromPoint;
       document.elementFromPoint = () => targetChrome;
-      handleSftpDocumentDragOver({target:targetChrome,clientX:48,clientY:48,dataTransfer:crossDragDataTransfer});
+      window.termaSftpDragWorkspace.drag.browser.over({target:targetChrome,clientX:48,clientY:48,dataTransfer:crossDragDataTransfer});
       await new Promise(resolve => setTimeout(resolve, 420));
       document.elementFromPoint = previousElementFromPoint;
-      targetChromeLeaveRestoresSource = activeTabKey === sourceSftpTabKey && !sftpTabDragPreviewSession;
+      targetChromeLeaveRestoresSource = activeTabKey === sourceSftpTabKey && !window.termaSftpDragWorkspace.drag.preview.session();
       activeTabKey = sourceSftpTabKey;
-      sftpInternalDrag = {connectionId:Number(connection.id),entries:[{path:'/source.txt',name:'source.txt',type:'file'}],sourceTabKey:sourceSftpTabKey,row:null,previewActivated:false,dropAccepted:false};
-      handleSftpTabDragOver(dragFeedbackEvent, dragTargetTab.key);
+      window.termaSftpDragWorkspace.drag.state.internal = {connectionId:Number(connection.id),entries:[{path:'/source.txt',name:'source.txt',type:'file'}],sourceTabKey:sourceSftpTabKey,row:null,previewActivated:false,dropAccepted:false};
+      window.termaSftpDragWorkspace.drag.destinations.over(dragFeedbackEvent, dragTargetTab.key);
       await new Promise(resolve => setTimeout(resolve, 210));
       crossDragDataTransfer.dropEffect = 'copy';
-      sftpDropDepth = 1;
-      finishSftpItemDrag({currentTarget:null,dataTransfer:crossDragDataTransfer});
+      window.termaSftpDragWorkspace.drag.state.depth = 1;
+      window.termaSftpDragWorkspace.drag.browser.finish({currentTarget:null,dataTransfer:crossDragDataTransfer});
       const crossHostPreviewHandoffSurvives = Boolean(
-        sftpInternalDrag === null
-        && currentSftpInternalDragHandoff()
-        && activeSftpDragPayload(crossDragDataTransfer)?.entries?.[0]?.path === '/source.txt'
+        window.termaSftpDragWorkspace.drag.state.internal === null
+        && window.termaSftpDragWorkspace.drag.source.handoff.read()
+        && window.termaSftpDragWorkspace.drag.source.active(crossDragDataTransfer)?.entries?.[0]?.path === '/source.txt'
       );
       const dragDropApi = api;
       const crossDropRequests = [];
@@ -7599,11 +7418,12 @@ app.whenReady().then(async () => {
         return dragDropApi(pathname, options);
       };
       notify = (text, type='info') => crossDropNotices.push({text:String(text || ''),type});
-      sftpInternalDrag = null;
-      clearSftpInternalDragHandoff();
-      const restoredCrossHostPayload = activeSftpDragPayload(targetListDropEvent.dataTransfer);
+      window.termaSftpDragWorkspace.drag.state.internal = null;
+      window.termaSftpDragWorkspace.drag.source.handoff.clear();
+      const restoredCrossHostPayload = window.termaSftpDragWorkspace.drag.source.active(targetListDropEvent.dataTransfer);
       try {
-        await handleSftpDrop(targetListDropEvent);
+        document.documentElement.dataset.uiSmokeStage = 'sftp-cross-host-drop';
+        await window.termaSftpDragWorkspace.events.drop(targetListDropEvent);
       } finally {
         notify = dragDropNotify;
       }
@@ -7611,11 +7431,11 @@ app.whenReady().then(async () => {
         && crossDropRequests[0].body.target_connection_id === dragTargetConnection.id
         && crossDropRequests[0].body.paths?.[0] === '/source.txt'
         && restoredCrossHostPayload?.entries?.[0]?.name === 'source.txt'
-        && sftpInternalDrag === null
+        && window.termaSftpDragWorkspace.drag.state.internal === null
         && !document.body.classList.contains('sftp-item-drag-active')
         && webCrossHostMode;
       const crossHostDropHasNoUploadToast = !crossDropNotices.some(item => item.text.includes('已上传到'));
-      sftpInternalDrag = {
+      window.termaSftpDragWorkspace.drag.state.internal = {
         connectionId:Number(dragTargetConnection.id),
         sourceTabKey:'sftp-same-host-source',
         entries:[{path:'/source/local.txt',name:'local.txt',type:'file'}],
@@ -7628,19 +7448,20 @@ app.whenReady().then(async () => {
         stopPropagation(){ this.propagationStopped = true; },
         dataTransfer:{types:['application/x-terma-sftp'],dropEffect:'copy'}
       };
-      await handleSftpDrop(sameHostDropEvent);
+      document.documentElement.dataset.uiSmokeStage = 'sftp-same-host-drop';
+      await window.termaSftpDragWorkspace.events.drop(sameHostDropEvent);
       const sameHostListDropCopies = sameHostDropEvent.defaultPrevented
         && sameHostDropEvent.dataTransfer.dropEffect === 'copy'
         && crossDropRequests.length === 2
         && crossDropRequests[1].body.target_connection_id === dragTargetConnection.id
         && crossDropRequests[1].body.target === '/target'
         && crossDropRequests[1].body.paths?.[0] === '/source/local.txt'
-        && sftpInternalDrag === null
+        && window.termaSftpDragWorkspace.drag.state.internal === null
         && !document.querySelector('#sftpDragHint');
       if (webCrossHostBridgeDescriptor) Object.defineProperty(window, 'termaDesktop', webCrossHostBridgeDescriptor);
       else delete window.termaDesktop;
       api = dragDropApi;
-      resetSftpItemDrag();
+      window.termaSftpDragWorkspace.drag.browser.reset();
       tabs.splice(tabs.findIndex(item => item.key === dragTargetTab.key), 1);
       connections.splice(connections.findIndex(item => Number(item.id) === Number(dragTargetConnection.id)), 1);
       activeTabKey = sourceSftpTabKey;
@@ -7650,7 +7471,7 @@ app.whenReady().then(async () => {
         sourcePane.activeTabKey = sourceSftpTabKey;
         focusedPaneId = sourcePane.id;
       }
-      await openSftp(connection.id, sourceSftpPath, false, sourceSftpTabKey);
+      await window.termaSftpPage.open(connection.id, sourceSftpPath, false, sourceSftpTabKey);
       stickyTop = view.querySelector('.sftp-top');
       toolbar = document.querySelector('#workspaceGlobalHeaderTools .sftp-toolbar') || fixturePane?.querySelector('[data-workspace-role="header-tools"] .sftp-toolbar') || view.querySelector('.sftp-toolbar');
       navigationRow = view.querySelector('.sftp-navigation-row');
@@ -7659,12 +7480,13 @@ app.whenReady().then(async () => {
       floatingSearch = view.querySelector('#sftpFloatingSearch');
       dropOverlay = view.querySelector('#sftpDropOverlay');
       clipboardActions = toolbar?.querySelector('#sftpClipboardActions') || view.querySelector('#sftpClipboardActions') || document.querySelector('#sftpClipboardActions') || document.createElement('span');
-      cancelSftpDropLeaveClear();
-      sftpDropDepth = 0;
-      setSftpExternalDropState(false);
-      const externalFileDropDetected = sftpDataTransferHasFiles({types:{0:'Files',length:1},items:[],files:[]});
+      window.termaSftpDragWorkspace.dropFeedback.cancelLeave();
+      window.termaSftpDragWorkspace.drag.state.depth = 0;
+      window.termaSftpDragWorkspace.dropFeedback.external(false);
+      const externalFileDropDetected = window.termaSftpDragWorkspace.browserDrop.hasFiles({types:{0:'Files',length:1},items:[],files:[]});
       const externalCollectedFile = new File(['drag-in'], 'drag-in.txt', {type:'text/plain'});
-      const externalCollectedFiles = await collectDroppedFiles({items:[],files:[externalCollectedFile]});
+      document.documentElement.dataset.uiSmokeStage = 'sftp-external-drop';
+      const externalCollectedFiles = await window.termaSftpDragWorkspace.collect({items:[],files:[externalCollectedFile]});
       const externalFileDropCollected = externalCollectedFiles.length === 1
         && externalCollectedFiles[0].file === externalCollectedFile
         && externalCollectedFiles[0].relativePath === 'drag-in.txt';
@@ -7674,8 +7496,8 @@ app.whenReady().then(async () => {
         preventDefault(){ this.defaultPrevented = true; },
         dataTransfer:externalDropDataTransfer
       };
-      handleSftpDragEnter(externalDropEvent);
-      handleSftpDragEnter(externalDropEvent);
+      window.termaSftpDragWorkspace.events.enter(externalDropEvent);
+      window.termaSftpDragWorkspace.events.enter(externalDropEvent);
       const externalDropOverlay = document.querySelector('#sftpDropOverlay');
       const externalDropOverlayRect = externalDropOverlay?.getBoundingClientRect();
       const workspaceHeaderRect = document.querySelector('.workspace-header')?.getBoundingClientRect();
@@ -7693,7 +7515,7 @@ app.whenReady().then(async () => {
         )
         : Number.POSITIVE_INFINITY;
       const centeredHintLeft = externalDropHint?.style.left || '';
-      showSftpDragHint(externalDropHint?.querySelector('span')?.textContent || '', true, 'upload', 'sftp-missing-toolbar-fixture');
+      window.termaSftpDragWorkspace.drag.hint(externalDropHint?.querySelector('span')?.textContent || '', true, 'upload', 'sftp-missing-toolbar-fixture');
       const missingTabKeepsHintPosition = externalDropHint?.style.left === centeredHintLeft;
       const externalDropPromptMetrics = {
         prevented:externalDropEvent.defaultPrevented,
@@ -7757,7 +7579,7 @@ app.whenReady().then(async () => {
             top:-240,
             bottom:window.innerHeight - 24
           });
-          setSftpExternalDropState(true, {path:'/scroll-top'});
+          window.termaSftpDragWorkspace.dropFeedback.external(true, {path:'/scroll-top'});
           const clippedAtTop = externalDropOverlay.getBoundingClientRect();
           const topClamped = clippedAtTop.top >= stickyBottom
             && clippedAtTop.bottom <= window.innerHeight
@@ -7770,7 +7592,7 @@ app.whenReady().then(async () => {
             top:bottomTop,
             bottom:window.innerHeight + 260
           });
-          setSftpExternalDropState(true, {path:'/scroll-bottom'});
+          window.termaSftpDragWorkspace.dropFeedback.external(true, {path:'/scroll-bottom'});
           const clippedAtBottom = externalDropOverlay.getBoundingClientRect();
           const bottomClamped = clippedAtBottom.top >= bottomTop
             && clippedAtBottom.bottom <= window.innerHeight
@@ -7785,7 +7607,7 @@ app.whenReady().then(async () => {
             top:currentRect.top,
             bottom:currentRect.bottom
           });
-          setSftpExternalDropState(true, {path:'/resized-sidebar'});
+          window.termaSftpDragWorkspace.dropFeedback.external(true, {path:'/resized-sidebar'});
           const resizedHint = document.querySelector('#sftpDragHint')?.getBoundingClientRect();
           const expectedVisibleRight = window.innerWidth;
           const expectedCenter = (horizontalLeft + expectedVisibleRight) / 2;
@@ -7797,32 +7619,20 @@ app.whenReady().then(async () => {
           );
         } finally {
           externalDropList.getBoundingClientRect = originalExternalDropListRect;
-          setSftpExternalDropState(true);
+          window.termaSftpDragWorkspace.dropFeedback.external(true);
         }
       }
-      handleSftpDragLeave(externalDropEvent);
-      handleSftpDragLeave(externalDropEvent);
+      window.termaSftpDragWorkspace.events.leave(externalDropEvent);
+      window.termaSftpDragWorkspace.events.leave(externalDropEvent);
       await new Promise(resolve => setTimeout(resolve, 220));
       const externalDropPromptClears = Boolean(
         externalDropOverlay?.hidden
         && !document.querySelector('#sftpDragHint')
-        && sftpDropDepth === 0
+        && window.termaSftpDragWorkspace.drag.state.depth === 0
       );
-      const cancelledArmedRequestId = 'ui-cancelled-armed-drag';
-      sftpNativeDragRequests.set(cancelledArmedRequestId, {key:'ui-cancelled-armed-drag',row:null,activated:false,nativeStarted:false});
-      sftpNativeDragPointer = {
-        pointerId:9191,
-        timer:null,
-        row:null,
-        originalDraggable:null,
-        nativeRequestId:cancelledArmedRequestId,
-        nativeStarted:false
-      };
-      clearSftpNativeDragPointer();
-      const armedPointerCancelClearsRequest = !sftpNativeDragRequests.has(cancelledArmedRequestId)
-        && sftpNativeDragPointer === null;
+      const armedPointerCancelClearsRequest = Boolean(nativeDragUi.pointerUpCancelsPending);
       const armedDragRequestId = 'ui-armed-drag-allows-upload';
-      sftpNativeDragRequests.set(armedDragRequestId, {key:'ui-armed-drag',row:null,activated:false,nativeStarted:false});
+      window.termaSftpDragWorkspace.drag.state.requests.set(armedDragRequestId, {key:'ui-armed-drag',row:null,activated:false,nativeStarted:false});
       const armedDragEvent = {
         defaultPrevented:false,
         propagationStopped:false,
@@ -7830,16 +7640,16 @@ app.whenReady().then(async () => {
         stopPropagation(){ this.propagationStopped = true; },
         dataTransfer:{types:{0:'Files',length:1},items:[],files:[],dropEffect:'copy'}
       };
-      handleSftpDragEnter(armedDragEvent);
+      window.termaSftpDragWorkspace.events.enter(armedDragEvent);
       const armedDragAllowsExternalUpload = armedDragEvent.defaultPrevented
         && !armedDragEvent.propagationStopped
         && !document.querySelector('#sftpDropOverlay')?.hidden
-        && sftpDropDepth === 1;
-      handleSftpDragLeave(armedDragEvent);
+        && window.termaSftpDragWorkspace.drag.state.depth === 1;
+      window.termaSftpDragWorkspace.events.leave(armedDragEvent);
       await new Promise(resolve => setTimeout(resolve, 220));
-      sftpNativeDragRequests.delete(armedDragRequestId);
-      sftpInternalDrag = {
-        connectionId:Number(sftpState.connectionId),
+      window.termaSftpDragWorkspace.drag.state.requests.delete(armedDragRequestId);
+      window.termaSftpDragWorkspace.drag.state.internal = {
+        connectionId:Number(fixtureRuntime.state.connectionId),
         entries:[{path:'/stale.txt',name:'stale.txt',type:'file'}],
         row:null
       };
@@ -7850,12 +7660,12 @@ app.whenReady().then(async () => {
         stopPropagation(){ this.propagationStopped = true; },
         dataTransfer:{types:['Files'],items:[{kind:'file',type:'text/plain'}],files:[],dropEffect:'copy'}
       };
-      handleSftpDragEnter(staleInternalDragEvent);
+      window.termaSftpDragWorkspace.events.enter(staleInternalDragEvent);
       const staleInternalDragAllowsExternalUpload = staleInternalDragEvent.defaultPrevented
         && !staleInternalDragEvent.propagationStopped
-        && sftpInternalDrag === null
+        && window.termaSftpDragWorkspace.drag.state.internal === null
         && !document.querySelector('#sftpDropOverlay')?.hidden;
-      handleSftpDragLeave(staleInternalDragEvent);
+      window.termaSftpDragWorkspace.events.leave(staleInternalDragEvent);
       await new Promise(resolve => setTimeout(resolve, 220));
       const uriListBridgeDescriptor = Object.getOwnPropertyDescriptor(window, 'termaDesktop');
       if (!uriListBridgeDescriptor || uriListBridgeDescriptor.configurable) {
@@ -7875,19 +7685,19 @@ app.whenReady().then(async () => {
         stopPropagation(){ this.propagationStopped = true; },
         dataTransfer:{types:{0:'text/uri-list',length:1},items:[],files:[],dropEffect:'copy'}
       };
-      handleSftpDragEnter(uriListDragEvent);
+      window.termaSftpDragWorkspace.events.enter(uriListDragEvent);
       const desktopUriListDragAccepted = uriListDragEvent.defaultPrevented
         && !uriListDragEvent.propagationStopped
         && !document.querySelector('#sftpDropOverlay')?.hidden
-        && sftpDropDepth === 1;
-      handleSftpDragLeave(uriListDragEvent);
+        && window.termaSftpDragWorkspace.drag.state.depth === 1;
+      window.termaSftpDragWorkspace.events.leave(uriListDragEvent);
       await new Promise(resolve => setTimeout(resolve, 220));
       if (!uriListBridgeDescriptor || uriListBridgeDescriptor.configurable) {
         if (uriListBridgeDescriptor) Object.defineProperty(window, 'termaDesktop', uriListBridgeDescriptor);
         else delete window.termaDesktop;
       }
       const ownDragRequestId = 'ui-own-drag-suppression';
-      sftpNativeDragRequests.set(ownDragRequestId, {key:'ui-own-drag',row:null,activated:true});
+      window.termaSftpDragWorkspace.drag.state.requests.set(ownDragRequestId, {key:'ui-own-drag',row:null,activated:true});
       const ownDragEvent = {
         defaultPrevented:false,
         propagationStopped:false,
@@ -7895,12 +7705,12 @@ app.whenReady().then(async () => {
         stopPropagation(){ this.propagationStopped = true; },
         dataTransfer:{types:{0:'Files',length:1},items:[],files:[],dropEffect:'copy'}
       };
-      handleSftpDragEnter(ownDragEvent);
+      window.termaSftpDragWorkspace.events.enter(ownDragEvent);
       const ownDragUploadSuppressed = ownDragEvent.defaultPrevented
         && ownDragEvent.propagationStopped
         && ownDragEvent.dataTransfer.dropEffect === 'none'
         && Boolean(document.querySelector('#sftpDropOverlay')?.hidden);
-      sftpNativeDragRequests.get(ownDragRequestId).released = true;
+      window.termaSftpDragWorkspace.drag.state.requests.get(ownDragRequestId).released = true;
       const releasedDragEvent = {
         defaultPrevented:false,
         propagationStopped:false,
@@ -7908,24 +7718,24 @@ app.whenReady().then(async () => {
         stopPropagation(){ this.propagationStopped = true; },
         dataTransfer:{types:{0:'Files',length:1},items:[],files:[],dropEffect:'copy'}
       };
-      handleSftpDragEnter(releasedDragEvent);
+      window.termaSftpDragWorkspace.events.enter(releasedDragEvent);
       const releasedDragAllowsExternalUpload = releasedDragEvent.defaultPrevented
         && !releasedDragEvent.propagationStopped
         && !document.querySelector('#sftpDropOverlay')?.hidden
-        && sftpDropDepth === 1;
-      handleSftpDragLeave(releasedDragEvent);
+        && window.termaSftpDragWorkspace.drag.state.depth === 1;
+      window.termaSftpDragWorkspace.events.leave(releasedDragEvent);
       await new Promise(resolve => setTimeout(resolve, 220));
-      sftpNativeDragRequests.delete(ownDragRequestId);
+      window.termaSftpDragWorkspace.drag.state.requests.delete(ownDragRequestId);
       const terminalDropTab = {key:'terminal-sftp-drop-target',kind:'terminal',id:Number(connection.id),title:'终端拖放目标'};
       tabs.push(terminalDropTab);
-      terminalSessions.set(terminalDropTab.key, {id:Number(connection.id),connected:true,currentDirectoryKnown:true,currentDirectory:'/terminal/current'});
+      window.termaTerminalState.terminalSessions.set(terminalDropTab.key, {id:Number(connection.id),connected:true,currentDirectoryKnown:true,currentDirectory:'/terminal/current'});
       const terminalTabButton = document.createElement('button');
       terminalTabButton.className = 'tab';
       terminalTabButton.dataset.tabKey = terminalDropTab.key;
       const terminalDragTransfer = {
         types:['application/x-terma-sftp'],
         dropEffect:'',
-        getData(type) { return type === 'application/x-terma-sftp' ? serializeSftpDragPayload(connection.id, [{path:'/source.txt',name:'source.txt',type:'file'}], sourceSftpTabKey) : ''; }
+        getData(type) { return type === 'application/x-terma-sftp' ? window.termaDragPayload.serializeDragPayload(connection.id, [{path:'/source.txt',name:'source.txt',type:'file'}], sourceSftpTabKey) : ''; }
       };
       const originalActivateTabForTerminalDrop = activateTab;
       activateTab = tabKey => { activeTabKey = tabKey; };
@@ -7942,38 +7752,38 @@ app.whenReady().then(async () => {
       const invalidSftpTargetButton = document.createElement('button');
       invalidSftpTargetButton.className = 'tab';
       invalidSftpTargetButton.dataset.tabKey = invalidSftpTargetTab.key;
-      const originalCopySftpDraggedItemsToDirectory = copySftpDraggedItemsToDirectory;
+      const terminalCopyOwner = window.termaSftpFileActions.copy;
+      const originalTerminalCopy = terminalCopyOwner.copy;
       let terminalDropCapture = null;
       try {
         activeTabKey = sourceSftpTabKey;
-        sftpInternalDrag = {connectionId:Number(connection.id),entries:[{path:'/source.txt',name:'source.txt',type:'file'}],sourceTabKey:sourceSftpTabKey,row:null,previewActivated:false,dropAccepted:false};
-        handleSftpTabDragOver({preventDefault(){},dataTransfer:terminalDragTransfer,currentTarget:terminalTabButton}, terminalDropTab.key, terminalTabButton);
+        window.termaSftpDragWorkspace.drag.state.internal = {connectionId:Number(connection.id),entries:[{path:'/source.txt',name:'source.txt',type:'file'}],sourceTabKey:sourceSftpTabKey,row:null,previewActivated:false,dropAccepted:false};
+        window.termaSftpDragWorkspace.drag.destinations.over({preventDefault(){},dataTransfer:terminalDragTransfer,currentTarget:terminalTabButton}, terminalDropTab.key, terminalTabButton);
         await new Promise(resolve => setTimeout(resolve, 210));
         terminalTabPreviewActivated = activeTabKey === terminalDropTab.key && document.querySelector('#sftpDragHint')?.textContent.includes('终端当前目录');
-        handleSftpTabDragLeave({relatedTarget:invalidDropZone,currentTarget:terminalTabButton}, terminalTabButton);
+        window.termaSftpDragWorkspace.drag.destinations.leave({relatedTarget:invalidDropZone,currentTarget:terminalTabButton}, terminalTabButton);
         await new Promise(resolve => setTimeout(resolve, 420));
-        invalidTerminalDropRestoresSource = activeTabKey === sourceSftpTabKey && !sftpTabDragPreviewSession;
+        invalidTerminalDropRestoresSource = activeTabKey === sourceSftpTabKey && !window.termaSftpDragWorkspace.drag.preview.session();
 
         activeTabKey = sourceSftpTabKey;
-        sftpInternalDrag = {connectionId:Number(connection.id),entries:[{path:'/source.txt',name:'source.txt',type:'file'}],sourceTabKey:sourceSftpTabKey,row:null,previewActivated:false,dropAccepted:false};
-        handleSftpTabDragOver({preventDefault(){},dataTransfer:terminalDragTransfer,currentTarget:invalidSftpTargetButton}, invalidSftpTargetTab.key, invalidSftpTargetButton);
+        window.termaSftpDragWorkspace.drag.state.internal = {connectionId:Number(connection.id),entries:[{path:'/source.txt',name:'source.txt',type:'file'}],sourceTabKey:sourceSftpTabKey,row:null,previewActivated:false,dropAccepted:false};
+        window.termaSftpDragWorkspace.drag.destinations.over({preventDefault(){},dataTransfer:terminalDragTransfer,currentTarget:invalidSftpTargetButton}, invalidSftpTargetTab.key, invalidSftpTargetButton);
         await new Promise(resolve => setTimeout(resolve, 210));
         const previousElementFromPoint = document.elementFromPoint;
         document.elementFromPoint = () => invalidDropZone;
-        handleSftpDocumentDragOver({target:invalidDropZone,clientX:24,clientY:24});
+        window.termaSftpDragWorkspace.drag.browser.over({target:invalidDropZone,clientX:24,clientY:24});
         await new Promise(resolve => setTimeout(resolve, 420));
         document.elementFromPoint = previousElementFromPoint;
-        invalidSftpDropRestoresSource = activeTabKey === sourceSftpTabKey && !sftpTabDragPreviewSession;
+        invalidSftpDropRestoresSource = activeTabKey === sourceSftpTabKey && !window.termaSftpDragWorkspace.drag.preview.session();
 
-        sftpInternalDrag = {connectionId:Number(connection.id),entries:[{path:'/source.txt',name:'source.txt',type:'file'}],sourceTabKey:sourceSftpTabKey,row:null,previewActivated:true,dropAccepted:false};
-        copySftpDraggedItemsToDirectory = async (drag, targetConnectionId, directory, options={}) => {
-          terminalDropCapture = {targetConnectionId,directory,tabKey:options.tabKey};
-          markSftpDragDropAccepted(drag, options.tabKey);
-          finishSftpDragPayload(drag);
+        window.termaSftpDragWorkspace.drag.state.internal = {connectionId:Number(connection.id),entries:[{path:'/source.txt',name:'source.txt',type:'file'}],sourceTabKey:sourceSftpTabKey,row:null,previewActivated:true,dropAccepted:false};
+        terminalCopyOwner.copy = async context => {
+          terminalDropCapture = {targetConnectionId:context.connectionId,directory:context.directory,tabKey:context.key};
+          window.termaSftpDragWorkspace.drag.browser.finishPayload(window.termaSftpDragWorkspace.drag.state.internal);
         };
-        await dropSftpItemsOnTab({preventDefault(){},stopPropagation(){},dataTransfer:terminalDragTransfer}, terminalDropTab.key, terminalTabButton);
+        await window.termaSftpDragWorkspace.drag.destinations.drop({preventDefault(){},stopPropagation(){},dataTransfer:terminalDragTransfer}, terminalDropTab.key, terminalTabButton);
       } finally {
-        copySftpDraggedItemsToDirectory = originalCopySftpDraggedItemsToDirectory;
+        terminalCopyOwner.copy = originalTerminalCopy;
         activateTab = originalActivateTabForTerminalDrop;
         invalidDropZone.remove();
         tabs.splice(tabs.findIndex(item => item.key === invalidSftpTargetTab.key), 1);
@@ -7983,7 +7793,7 @@ app.whenReady().then(async () => {
         && terminalDropCapture?.targetConnectionId === Number(connection.id)
         && terminalDropCapture?.directory === '/terminal/current'
         && terminalDropCapture?.tabKey === terminalDropTab.key;
-      terminalSessions.delete(terminalDropTab.key);
+      window.termaTerminalState.terminalSessions.delete(terminalDropTab.key);
       tabs.splice(tabs.indexOf(terminalDropTab), 1);
       activeTabKey = sourceSftpTabKey;
       connectionSessionUi = {
@@ -8036,38 +7846,36 @@ app.whenReady().then(async () => {
         externalDropPromptClears
       };
 
-      copySingleSftp('/Users/demo/Public/copy.txt', 'copy', fixtureTabKey);
+      window.termaSftpFileActions.copyEntry(fixtureTabKey, '/Users/demo/Public/copy.txt', 'copy');
       const copyPaste = [...clipboardActions.querySelectorAll('button')].find(button => button.textContent.includes('粘贴'));
       const copyCancel = clipboardActions.querySelector('[aria-label="取消复制或移动队列"]');
       const copyQueueVisible = clipboardActions.textContent.includes('复制队列 1 项') && Boolean(copyPaste && !copyPaste.disabled && copyCancel);
       copyCancel?.click();
-      const copyCancelled = sftpClipboard === null && !clipboardActions.querySelector('button');
+      const copyCancelled = window.termaSftpFileActions.clipboard.value === null && !clipboardActions.querySelector('button');
 
-      copySingleSftp('/Users/demo/Public/move.txt', 'move', fixtureTabKey);
+      window.termaSftpFileActions.copyEntry(fixtureTabKey, '/Users/demo/Public/move.txt', 'move');
       const movePaste = [...clipboardActions.querySelectorAll('button')].find(button => button.textContent.includes('粘贴'));
       const moveCancel = clipboardActions.querySelector('[aria-label="取消复制或移动队列"]');
       const moveQueueVisible = clipboardActions.textContent.includes('移动队列 1 项') && Boolean(movePaste && !movePaste.disabled && moveCancel);
       moveCancel?.click();
-      const moveCancelled = sftpClipboard === null && !clipboardActions.querySelector('button');
-      sftpClipboard = {mode:'copy', paths:['/source/cross.txt'], connectionId:999999, connectionName:'另一台主机'};
-      refreshSftpDirectoryActions(fixtureTabKey);
+      const moveCancelled = window.termaSftpFileActions.clipboard.value === null && !clipboardActions.querySelector('button');
+      window.termaSftpFileActions.clipboard.value = {mode:'copy', paths:['/source/cross.txt'], connectionId:999999, connectionName:'另一台主机'};
+      window.termaSftpView.refreshDirectoryActions(fixtureTabKey);
       const crossCopyButton = [...clipboardActions.querySelectorAll('button')].find(button => button.textContent.includes('跨主机复制'));
       const crossHostCopyEnabled = Boolean(crossCopyButton && !crossCopyButton.disabled);
-      sftpClipboard = {mode:'move', paths:['/source/cross.txt'], connectionId:999999, connectionName:'另一台主机'};
-      refreshSftpDirectoryActions(fixtureTabKey);
+      window.termaSftpFileActions.clipboard.value = {mode:'move', paths:['/source/cross.txt'], connectionId:999999, connectionName:'另一台主机'};
+      window.termaSftpView.refreshDirectoryActions(fixtureTabKey);
       const crossHostMoveDisabled = Boolean([...clipboardActions.querySelectorAll('button')].find(button => button.disabled));
       const crossPasteApi = api;
-      const crossPasteChoice = chooseModal;
       const crossPasteActiveTabKey = activeTabKey;
-      const crossPasteState = sftpState;
       const crossPasteTargetTab = {key:'sftp-cross-paste-target',kind:'sftp',id:Number(connection.id),title:'测试目标 · SFTP',path:'/target'};
       tabs.push(crossPasteTargetTab);
       let crossHostConflictPrompted = false;
       let crossHostConflictBody = null;
       try {
         activeTabKey = crossPasteTargetTab.key;
-        sftpState = {...sftpState, connectionId:connection.id, path:'/target'};
-        sftpClipboard = {mode:'copy', paths:['/source/cross.txt'], connectionId:999999, connectionName:'另一台主机'};
+        window.termaSftpTabs.runtime.ensure(crossPasteTargetTab.key, Number(connection.id), '/target');
+        window.termaSftpFileActions.clipboard.value = {mode:'copy', paths:['/source/cross.txt'], connectionId:999999, connectionName:'另一台主机'};
         api = async (pathname, options={}) => {
           if (pathname.endsWith('/sftp/upload-plan')) return {items:[{name:'cross.txt',exists:true}]};
           if (pathname.endsWith('/sftp/cross-copy')) {
@@ -8076,32 +7884,33 @@ app.whenReady().then(async () => {
           }
           return {};
         };
-        chooseModal = async (title, message, actions) => {
-          crossHostConflictPrompted = title.includes('同名') && message.includes('cross.txt') && actions.some(action=>action.value==='rename');
-          return 'rename';
-        };
-        await pasteSftpClipboard();
+        document.documentElement.dataset.uiSmokeStage = 'sftp-cross-host-paste';
+        const pasting = window.termaSftpFileActions.operations.paste(activeTabKey);
+        const choice = await clickSftpFixtureChoice(1);
+        crossHostConflictPrompted = choice.dialog.includes('同名') && choice.dialog.includes('cross.txt') && choice.label.includes('重命名');
+        await pasting;
       } finally {
         api = crossPasteApi;
-        chooseModal = crossPasteChoice;
         activeTabKey = crossPasteActiveTabKey;
-        sftpState = crossPasteState;
+
         tabs.splice(tabs.indexOf(crossPasteTargetTab), 1);
+        window.termaSftpTabs.runtime.dispose(crossPasteTargetTab.key);
       }
       const crossHostClipboardConflict = crossHostConflictPrompted
         && crossHostConflictBody?.conflict === 'rename'
         && crossHostConflictBody?.target_connection_id === Number(connection.id)
         && crossHostConflictBody?.target === '/target'
-        && sftpClipboard === null;
-      sftpClipboard = null;
-      refreshSftpDirectoryActions(fixtureTabKey);
+        && window.termaSftpFileActions.clipboard.value === null;
+      window.termaSftpFileActions.clipboard.value = null;
+      window.termaSftpView.refreshDirectoryActions(fixtureTabKey);
       const filenameEncodingButton = toolbar?.querySelector('#sftpFilenameEncodingButton') || document.querySelector('#sftpFilenameEncodingButton');
       filenameEncodingButton?.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:160,clientY:100}));
       const filenameEncodingLabels = [...document.querySelectorAll('#actionMenu button span')].map(item=>item.textContent.trim());
       const filenameEncodingMenu = ['UTF-8','GB18030','GBK','Big5','Shift_JIS','EUC-KR','ISO-8859-1'].every(label=>filenameEncodingLabels.includes(label));
       hideActionMenu();
-      floatingSearch.hidden = true;
+      window.termaSftpViews.search(fixtureTabKey,'close');
       document.dispatchEvent(new KeyboardEvent('keydown',{key:'f',ctrlKey:true,bubbles:true,cancelable:true}));
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       const searchInput = floatingSearch.querySelector('#sftpSearch');
       const shortcutOpened = !floatingSearch.hidden && document.activeElement === searchInput;
       const recursiveInput = floatingSearch.querySelector('.sftp-search-recursive input');
@@ -8110,12 +7919,13 @@ app.whenReady().then(async () => {
         recursiveInput.dispatchEvent(new Event('change',{bubbles:true}));
       }
       await new Promise(resolve=>setTimeout(resolve,10));
-      syncSftpSearchFeedback(fixtureTabKey, true);
+      window.termaSftpView.searchBusy(fixtureTabKey, true);
       const searchFeedback = getComputedStyle(floatingSearch.querySelector('.lucide-loader-circle')).display !== 'none'
         && getComputedStyle(floatingSearch.querySelector('.lucide-loader-circle')).animationName === 'state-spin'
         && floatingSearch.getAttribute('aria-busy') === 'true';
-      syncSftpSearchFeedback(fixtureTabKey, false);
-      document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+      window.termaSftpView.searchBusy(fixtureTabKey, false);
+      searchInput.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       searchKeyboardUi = {
         opened:shortcutOpened,
         closed:floatingSearch.hidden,
@@ -8124,12 +7934,14 @@ app.whenReady().then(async () => {
       };
       const favorites = view.querySelector('#sftpFavorites');
       const shell = view.querySelector('.sftp-shell');
-      const previousFavoritesHtml = favorites.innerHTML;
-      const previousFavoritesClass = favorites.className;
+      const previousFavoriteStorage = localStorage.getItem('sftpFavorites');
+      const previousFavoriteItems = window.termaSftpPreferences.snapshot();
+      const otherFavoriteItems = previousFavoriteItems.filter(item=>Number(item.connectionId)!==Number(connection.id));
+      const replaceFavorites = items=>{localStorage.setItem('sftpFavorites',JSON.stringify(items));window.termaSftpPreferences.reload();};
       const previousShellStyle = shell.style.cssText;
       const previousStickyTopStyle = stickyTop.style.cssText;
-      favorites.classList.add('is-empty');
-      favorites.innerHTML = '';
+      replaceFavorites(otherFavoriteItems);
+      window.termaSftpView.refreshDirectoryActions(fixtureTabKey);
       const emptyFavoritesRect = favorites.getBoundingClientRect();
       const emptyNavigationRect = navigationRow.getBoundingClientRect();
       const emptyStickyTopRect = stickyTop.getBoundingClientRect();
@@ -8141,8 +7953,8 @@ app.whenReady().then(async () => {
         && emptyNavigationRect.height < 60
         && listRect.top - emptyStickyTopRect.bottom >= 0
         && listRect.top - emptyStickyTopRect.bottom <= 12;
-      favorites.classList.remove('is-empty');
-      favorites.innerHTML = '<span class="sftp-favorites-label">常用目录</span><button type="button">根目录</button>';
+      replaceFavorites([...otherFavoriteItems,{connectionId:connection.id,path:'/',name:'根目录'}]);
+      window.termaSftpView.refreshDirectoryActions(fixtureTabKey);
       const naturalNavigationHeight = navigationRow.getBoundingClientRect().height;
       const naturalTopHeight = stickyTop.getBoundingClientRect().height;
       shell.style.height = '900px';
@@ -8160,8 +7972,9 @@ app.whenReady().then(async () => {
         && getComputedStyle(stickyTop).flexDirection === 'column';
       shell.style.cssText = previousShellStyle;
       stickyTop.style.cssText = previousStickyTopStyle;
-      favorites.className = previousFavoritesClass;
-      favorites.innerHTML = previousFavoritesHtml;
+      if(previousFavoriteStorage===null)localStorage.removeItem('sftpFavorites');else localStorage.setItem('sftpFavorites',previousFavoriteStorage);
+      window.termaSftpPreferences.reload();
+      window.termaSftpView.refreshDirectoryActions(fixtureTabKey);
       const narrowHint = document.createElement('span');
       narrowHint.className = 'muted';
       narrowHint.textContent = '收藏当前目录后可快速跳转';
@@ -8209,7 +8022,7 @@ app.whenReady().then(async () => {
         crossHostClipboardConflict,
         crossHostConflictPrompted,
         crossHostConflictBody,
-        crossHostClipboardCleared:sftpClipboard === null,
+        crossHostClipboardCleared:window.termaSftpFileActions.clipboard.value === null,
         filenameEncodingMenu,
         emptyFavoritesCompact,
         emptyFavoritesMetrics:{height:emptyFavoritesRect.height,minHeight:emptyFavoritesMinHeight,listGap:listRect.top-emptyStickyTopRect.bottom},
@@ -8221,8 +8034,7 @@ app.whenReady().then(async () => {
       };
 
       try {
-        applyTermaAppearanceSettings();
-        await showSftpGlobalSettings();
+        await window.termaSftpGlobalSettings.open();
         const globalSettingsModal = document.querySelector('#modal');
         const globalSettingsCard = globalSettingsModal?.querySelector('.sftp-global-settings-modal');
         const globalSettingsRect = globalSettingsCard?.getBoundingClientRect();
@@ -8233,7 +8045,6 @@ app.whenReady().then(async () => {
           return filter.includes('blur(') && !filter.includes('blur(0px)');
         });
         globalSettingsModal?.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
-        renderSettings();
         const taskCenterSetting = document.querySelector('#taskCenterFloatingProgressEnabled');
         const taskCenterSettingsSection = taskCenterSetting?.closest('section');
         globalSettingsUi = {
@@ -8259,24 +8070,24 @@ app.whenReady().then(async () => {
           classicSurface:globalSettingsSamplers.length === 0,
           themedField:Boolean(globalSettingsCard?.querySelector('input') && getComputedStyle(globalSettingsCard.querySelector('input')).backgroundColor !== 'rgba(0, 0, 0, 0)')
         };
-        closeSftpGlobalSettings();
       } finally {
-        applyTermaAppearanceSettings();
+        window.termaSftpGlobalSettings.close();
       }
 
       const cachePreviousApi = api;
-      const cachePreviousRender = renderSftpEntries;
-      const savedDirectoryCache = [...sftpDirectoryViewCache.entries()];
-      const savedDirectoryAliases = [...sftpDirectoryViewAliases.entries()];
+      const cachePreviousRender = window.termaSftpView.render;
+      const directoryCache = window.termaSftpDirectoryWorkspace.cache;
       try {
         const cachePath = '/cache-behavior';
         const tabKey = fixtureTabKey;
         activeTabKey = tabKey;
         activeView = 'sftp';
+        window.termaSftpViews?.release(tabKey);
         view.dataset.sftpTabKey = tabKey;
         view.innerHTML = '<div class="sftp-shell"><div id="sftpList" class="sftp-list"><div class="sftp-head"></div></div></div>';
-        sftpState = {
-          ...sftpState,
+        const cacheRuntime = window.termaSftpTabs.runtime.ensure(tabKey, connection.id, cachePath, view);
+        cacheRuntime.state = {
+          ...cacheRuntime.state,
           connectionId:connection.id,
           path:cachePath,
           entries:[{name:'stable.txt',type:'file',size:1,mtime:1,mode:'644',owner:'root',group:'root'}],
@@ -8291,10 +8102,8 @@ app.whenReady().then(async () => {
           selected:null,
           loading:false
         };
-        const cacheRuntime = ensureSftpRuntime(tabKey, connection.id, cachePath, view);
-        cacheRuntime.state = sftpState;
-        sftpActiveRuntimeKey = tabKey;
-        let responseEntries = sftpState.entries.map(entry=>({...entry}));
+
+        let responseEntries = cacheRuntime.state.entries.map(entry=>({...entry}));
         let silentRenders = 0;
         api = async () => ({
           path:cachePath,
@@ -8305,29 +8114,29 @@ app.whenReady().then(async () => {
           total_pages:1,
           unfiltered_total:responseEntries.length
         });
-        renderSftpEntries = () => { silentRenders += 1; };
-        loadSftpPage = previousLoadSftpPage;
+        window.termaSftpView.render = () => { silentRenders += 1; };
+        window.termaSftpDirectoryWorkspace.loader.load = previousLoadSftpPage;
         const checkedCacheLoad = options => Promise.race([
-          loadSftpPage(options),
+          window.termaSftpDirectoryWorkspace.loader.load(options),
           new Promise((_, reject) => setTimeout(() => reject(new Error('SFTP silent cache load timed out')), 5000))
         ]);
         await checkedCacheLoad({connectionId:connection.id,path:cachePath,page:1,tabKey,refresh:true,keepContents:true,preserveView:true,silent:true,renderIfChangedOnly:true});
         const sameResponseUntouched = silentRenders === 0 && !view.querySelector('#sftpList')?.classList.contains('is-refreshing');
         responseEntries = [...responseEntries,{name:'new.txt',type:'file',size:2,mtime:2,mode:'644',owner:'root',group:'root'}];
         await checkedCacheLoad({connectionId:connection.id,path:cachePath,page:1,tabKey,refresh:true,keepContents:true,preserveView:true,silent:true,renderIfChangedOnly:true});
-        const changedResponseRendered = silentRenders === 1 && sftpState.entries.some(entry=>entry.name === 'new.txt');
+        const changedResponseRendered = silentRenders === 1 && cacheRuntime.state.entries.some(entry=>entry.name === 'new.txt');
 
-        renderSftpEntries = cachePreviousRender;
+        window.termaSftpView.render = cachePreviousRender;
         const safePath = '/home/demo';
         const safeEntries = [{name:'keep.txt',type:'file',size:3,mtime:3,mode:'644',owner:'demo',group:'demo'}];
         view.innerHTML = '<div class="sftp-shell"><nav id="sftpBreadcrumb" class="sftp-breadcrumb">'+sftpBreadcrumbHtml(connection.id,safePath,tabKey)+'</nav><input id="sftpPathInput" value="'+safePath+'"><button id="sftpConnectionToggle" data-status="connected"></button><div id="sftpConnectionBanner" hidden><span class="sftp-connection-detail"></span></div><div id="sftpList" class="sftp-list"></div></div>';
         view.dataset.sftpTabKey = tabKey;
         cacheRuntime.root = view;
         cacheRuntime.state = {...cacheRuntime.state,path:safePath,entries:safeEntries,selected:null,page:1,total:1,totalPages:1,unfilteredTotal:1,loading:false};
-        sftpState = cacheRuntime.state;
+
         const cacheTab = tabs.find(item => item.key === tabKey);
         if (cacheTab) cacheTab.path = safePath;
-        renderSftpEntries(tabKey);
+        window.termaSftpView.render(tabKey);
         const safeList = view.querySelector('#sftpList');
         safeList.scrollTop = 4;
         const beforePermissionListText = safeList.textContent;
@@ -8349,42 +8158,38 @@ app.whenReady().then(async () => {
         };
         const permissionFailureRestored = Object.values(permissionRestoreChecks).every(Boolean);
 
-        sftpDirectoryViewCache.clear();
-        sftpDirectoryViewAliases.clear();
+        directoryCache.clearConnection(Number(connection.id));
         const hundredEntries = Array.from({length:100},(_,index)=>({name:'entry-'+index,type:'file',size:index,mtime:index}));
         for (let index=0; index<65; index += 1) {
-          sftpState = {...sftpState,path:'/cache-'+index,entries:hundredEntries};
-          cacheRuntime.state = sftpState;
-          cacheSftpDirectoryView(tabKey,sftpState.path,{scrollTop:0,selectedPaths:[],activePath:''});
+          cacheRuntime.state = {...cacheRuntime.state,path:'/cache-'+index,entries:hundredEntries};
+          window.termaSftpDirectoryWorkspace.cache.cache(tabKey,cacheRuntime.state.path,{scrollTop:0,selectedPaths:[],activePath:''});
         }
-        const totalCachedEntries = [...sftpDirectoryViewCache.values()].reduce((sum,item)=>sum+(item.state?.entries?.length||0),0);
-        const bounded = sftpDirectoryViewCache.size <= SFTP_DIRECTORY_VIEW_CACHE_MAX_DIRECTORIES
-          && totalCachedEntries <= SFTP_DIRECTORY_VIEW_CACHE_MAX_ENTRIES;
-        pruneSftpDirectoryViewCache(Date.now() + SFTP_DIRECTORY_VIEW_CACHE_TTL_MS + 1);
-        const expired = sftpDirectoryViewCache.size === 0;
+        const cachedPages = Array.from({length:80}, (_,index) => directoryCache.get(Number(connection.id), '/cache-'+index)).filter(Boolean);
+        const totalCachedEntries = cachedPages.reduce((sum,item)=>sum+item.state.entries.length,0);
+        const bounded = cachedPages.length > 0 && cachedPages.length <= 60 && totalCachedEntries <= 5000;
+        directoryCache.prune(Date.now() + 10 * 60 * 1000 + 1);
+        const expired = !directoryCache.get(Number(connection.id), '/cache-79');
         directoryCacheBehavior = {sameResponseUntouched,changedResponseRendered,boundedAndExpired:bounded&&expired,permissionFailureRestored,permissionRestoreChecks,permissionRestoreDiagnostics:{runtimePath:cacheRuntime.state.path,tabPath:cacheTab?.path,breadcrumb:view.querySelector('#sftpBreadcrumb')?.textContent||'',list:view.querySelector('#sftpList')?.textContent||'',beforePermissionListText,connectionStatus:view.querySelector('#sftpConnectionToggle')?.dataset.status||''}};
       } finally {
         api = cachePreviousApi;
-        renderSftpEntries = cachePreviousRender;
-        sftpDirectoryViewCache.clear();
-        sftpDirectoryViewAliases.clear();
-        savedDirectoryCache.forEach(([key,value])=>sftpDirectoryViewCache.set(key,value));
-        savedDirectoryAliases.forEach(([key,value])=>sftpDirectoryViewAliases.set(key,value));
+        window.termaSftpView.render = cachePreviousRender;
+        directoryCache.clearConnection(Number(connection.id));
       }
     } finally {
-      loadSftpPage = previousLoadSftpPage;
-      refreshSftpJobs = previousRefreshSftpJobs;
-      startSftpJobsTimer = previousStartSftpJobsTimer;
-      sftpClipboard = previousClipboardState;
-      sftpState = previousState;
+      window.termaSftpDirectoryWorkspace.loader.load = previousLoadSftpPage;
+      window.termaSftpTaskWorkspace.runtime.refresh = previousRefreshSftpJobs;
+      window.termaSftpTransferLifecycle.polling.start = previousStartSftpJobsTimer;
+      window.termaSftpFileActions.clipboard.value = previousClipboardState;
+
       selectedId = previousSelectedId;
       activeView = previousActiveView;
       activeTabKey = previousActiveTabKey;
     }
     const actions = [];
-    openSftp = (id, path) => actions.push({kind:'dir', id, path});
-    navigateSftpPath = (path, tabKey) => actions.push({kind:'dir', id:tabs.find(tab => tab.key === tabKey)?.id, path, tabKey});
-    previewSftpText = (id, path) => actions.push({kind:'file', id, path});
+    window.termaSftpPage.open = (id, path) => actions.push({kind:'dir', id, path});
+    window.termaSftpView.navigate = (path, tabKey) => actions.push({kind:'dir', id:tabs.find(tab => tab.key === tabKey)?.id, path, tabKey});
+    window.termaSftpDirectoryWorkspace.navigation.navigatePath = (tabKey, path) => window.termaSftpView.navigate(path, tabKey);
+    window.termaSftpPreviewRuntime.text = (id, path) => actions.push({kind:'file', id, path});
     const specialName = "weird" + String.fromCharCode(39, 34) + "<&>.bin";
     activeTabKey = fixtureTabKey;
     activeView = 'sftp';
@@ -8395,30 +8200,32 @@ app.whenReady().then(async () => {
     }
     view.hidden = false;
     view.dataset.sftpTabKey = fixtureTabKey;
-    view.innerHTML = '<div class="sftp-shell"><div class="sftp-top"><div class="sftp-path-block"><div class="sftp-title">iMac</div><nav class="sftp-breadcrumb" id="sftpBreadcrumb" aria-label="远程目录路径">'+sftpBreadcrumbHtml(1,'/Users/demo/Public')+'</nav></div><div class="sftp-top-actions"></div><div class="sftp-selection-bar" id="sftpSelectionBar" hidden><div class="sftp-selected" id="sftpSelectedInfo"></div><div class="sftp-selection-actions"><button id="sftpSelectionCompress">压缩</button><button id="sftpSelectionPermissions">权限</button><button id="sftpSelectionExtract" hidden>解压</button><button>复制</button><button>移动</button><button>删除</button><button onclick="clearSftpSelection()">取消</button></div></div></div><div id="sftpList" class="sftp-list"></div></div>';
+    view.innerHTML = '<div class="sftp-shell"><div class="sftp-top"><div class="sftp-path-block"><div class="sftp-title">iMac</div><nav class="sftp-breadcrumb" id="sftpBreadcrumb" aria-label="远程目录路径">'+sftpBreadcrumbHtml(1,'/Users/demo/Public')+'</nav></div><div class="sftp-top-actions"></div><div class="sftp-selection-bar" id="sftpSelectionBar" hidden><div class="sftp-selected" id="sftpSelectedInfo"></div><div class="sftp-selection-actions"><button id="sftpSelectionCompress">压缩</button><button id="sftpSelectionPermissions">权限</button><button id="sftpSelectionExtract" hidden>解压</button><button>复制</button><button>移动</button><button>删除</button><button onclick="window.termaSftpView.clearSelection()">取消</button></div></div></div><div id="sftpList" class="sftp-list"></div></div>';
     const pageEntries = [
       {name:'folder', type:'dir', size:0, mtime:0, mode:'755', owner:'root', group:'wheel'},
       {name:specialName, type:'file', size:12, mtime:'2026-07-20T12:34:56Z', mode:'600', owner:'demo', group:'staff'},
       {name:'vmlinuz', type:'file', size:8181696, mtime:'2026-07-20T12:40:00Z', mode:'644', owner:'root', group:'root', is_symlink:true, link_size:27, link_target_missing:false},
       ...Array.from({length:47},(_,index)=>({name:'file-'+String(index+1).padStart(2,'0')+'.txt',type:'file',size:index+1,mtime:index+1,mode:'644',owner:'demo',group:'staff'}))
     ];
-    sftpState = {...sftpState, connectionId:1, path:'/fixture', query:'', sort:'name', dir:'asc', selected:null, page:1, pageSize:50, total:75, totalPages:2, unfilteredTotal:75, entries:pageEntries};
-    const fixtureRuntime = ensureSftpRuntime(fixtureTabKey, 1, '/fixture', view);
-    fixtureRuntime.state = sftpState;
+    // This legacy row fixture uses connection 1 in its mocked requests and handlers.
+    // Keep the tab identity consistent with its runtime so dialog guards remain active.
+    tabs.find(tab => tab.key === fixtureTabKey).id = 1;
+    const fixtureRuntime = window.termaSftpTabs.runtime.ensure(fixtureTabKey, 1, '/fixture', view);
+    fixtureRuntime.state = {...fixtureRuntime.state, connectionId:1, path:'/fixture', query:'', sort:'name', dir:'asc', selected:null, page:1, pageSize:50, total:75, totalPages:2, unfilteredTotal:75, entries:pageEntries};
     fixtureRuntime.root = view;
     view.dataset.sftpTabKey = fixtureTabKey;
     activeTabKey = fixtureTabKey;
-    sftpActiveRuntimeKey = fixtureTabKey;
-    renderSftpEntries(fixtureTabKey);
+
+    window.termaSftpView.render(fixtureTabKey);
     const rows = [...view.querySelectorAll('.sftp-row')];
     const feedbackPath = '/fixture/' + specialName;
     const feedbackButton = rows[1]?.querySelector('.sftp-file-open-button');
     let finishFeedbackRequest;
     let duplicateFeedbackRequestRan = false;
-    const feedbackRequest = withSftpFileOpenFeedback(1, feedbackPath, () => new Promise(resolve => { finishFeedbackRequest = resolve; }));
+    const feedbackRequest = window.termaSftpTabs.view.opening(1, feedbackPath, () => new Promise(resolve => { finishFeedbackRequest = resolve; }));
     await Promise.resolve();
     const feedbackBusy = Boolean(feedbackButton?.disabled && feedbackButton?.getAttribute('aria-busy') === 'true' && feedbackButton?.textContent.includes('打开中'));
-    await withSftpFileOpenFeedback(1, feedbackPath, async () => { duplicateFeedbackRequestRan = true; });
+    await window.termaSftpTabs.view.opening(1, feedbackPath, async () => { duplicateFeedbackRequestRan = true; });
     finishFeedbackRequest?.({ok:true});
     await feedbackRequest;
     const pauseEvents = [];
@@ -8436,17 +8243,18 @@ app.whenReady().then(async () => {
     const openProgressResumed = Boolean(!openProgressToast?.classList.contains('paused') && pauseEvents.join(',') === 'true,false');
     openProgress.dismiss();
     const previousOpenFetch = window.fetch;
-    const previousEnsureSftpConnection = ensureSftpConnection;
+    const previousEnsureSftpConnection = window.termaSftpConnection.ensure;
     const previousCreateProgressToast = createProgressToast;
     let retryFetches = 0;
     const retryProgressUpdates = [];
     let retryOpened = null;
     try {
-      ensureSftpConnection = async () => true;
+      window.termaSftpConnection.ensure = async () => true;
       createProgressToast = () => ({
         update:value=>retryProgressUpdates.push(value),
         fail() {},
         finish() {},
+        complete() {},
         dismiss() {}
       });
       window.fetch = async (input, options) => {
@@ -8458,10 +8266,10 @@ app.whenReady().then(async () => {
           : new ReadableStream({start(controller) { controller.enqueue(new Uint8Array([1,2,3,4])); controller.close(); }});
         return new Response(body, {status:200,headers:{'X-Terma-File-Size':'4','X-Terma-File-Limit':'52428800'}});
       };
-      retryOpened = await readSftpOpenBytes(1, '/fixture/retry.txt');
+      retryOpened = await window.termaFileOpen.read(1, '/fixture/retry.txt');
     } finally {
       window.fetch = previousOpenFetch;
-      ensureSftpConnection = previousEnsureSftpConnection;
+      window.termaSftpConnection.ensure = previousEnsureSftpConnection;
       createProgressToast = previousCreateProgressToast;
     }
     const fileOpenFeedback = {
@@ -8474,9 +8282,10 @@ app.whenReady().then(async () => {
       retryFetches,
       retryBytes:retryOpened?.bytes?.join(',') || '',
       retryDetails:retryProgressUpdates.map(item=>String(item?.detail || '')),
-      buttonDiagnostics:{found:Boolean(feedbackButton),disabled:feedbackButton?.disabled,ariaBusy:feedbackButton?.getAttribute('aria-busy'),text:feedbackButton?.textContent||'',connectionId:feedbackButton?.dataset.sftpConnectionId||'',remotePath:feedbackButton?.dataset.sftpRemotePath||'',expectedPath:feedbackPath,runtimeRootConnected:Boolean(fixtureRuntime.root?.isConnected),runtimeRootTabKey:fixtureRuntime.root?.dataset.sftpTabKey||'',activeTabKey,sftpActiveRuntimeKey}
+      buttonDiagnostics:{found:Boolean(feedbackButton),disabled:feedbackButton?.disabled,ariaBusy:feedbackButton?.getAttribute('aria-busy'),text:feedbackButton?.textContent||'',connectionId:feedbackButton?.dataset.sftpConnectionId||'',remotePath:feedbackButton?.dataset.sftpRemotePath||'',expectedPath:feedbackPath,runtimeRootConnected:Boolean(fixtureRuntime.root?.isConnected),runtimeRootTabKey:fixtureRuntime.root?.dataset.sftpTabKey||'',activeTabKey}
     };
     const idleDirectorySizeButton = rows[0]?.querySelector('.sftp-directory-size-button');
+    const idleDirectorySizeText = idleDirectorySizeButton?.textContent || '';
     const previousDirectorySizeApi = api;
     let directorySizeRequests = 0;
     try {
@@ -8487,13 +8296,13 @@ app.whenReady().then(async () => {
         }
         return previousDirectorySizeApi(url, options);
       };
-      await readSftpDirectorySize(1, '/fixture/folder');
+      await window.termaSftpDirectoryWorkspace.cache.readSize(1, '/fixture/folder');
     } finally {
       api = previousDirectorySizeApi;
     }
     const readyDirectorySizeButton = rows[0]?.querySelector('.sftp-directory-size-button');
     const directorySizeUi = {
-      idleButton:Boolean(idleDirectorySizeButton && idleDirectorySizeButton.textContent.includes('读取')),
+      idleButton:Boolean(idleDirectorySizeButton && idleDirectorySizeText.includes('读取')),
       requestedOnce:directorySizeRequests === 1,
       exactBytes:Boolean(readyDirectorySizeButton?.title.includes('6146 字节')),
       formatted:Boolean(readyDirectorySizeButton?.textContent.includes('6.0 KB')),
@@ -8502,33 +8311,34 @@ app.whenReady().then(async () => {
     rows[0]?.dispatchEvent(new MouseEvent('dblclick', {bubbles:true, cancelable:true}));
     rows[1]?.dispatchEvent(new MouseEvent('dblclick', {bubbles:true, cancelable:true}));
     const top = view.querySelector('.sftp-top');
+    const stickyPosition = top ? getComputedStyle(top).position : '';
     view.dataset.sftpTabKey = fixtureTabKey;
     fixtureRuntime.root = view;
-    fixtureRuntime.state = sftpState;
-    sftpActiveRuntimeKey = fixtureTabKey;
+
     const checks = [...view.querySelectorAll('.sftp-check')];
     checks[0].checked = true;
     checks[1].checked = true;
-    updateSftpSelection(fixtureTabKey);
-    selectSftpEntry({shiftKey:false,ctrlKey:false,metaKey:false},1,checks[2].value,checks[2].dataset.name,checks[2].dataset.type,fixtureTabKey);
+    window.termaSftpViews.updateSelection(fixtureTabKey);
+    const selectCheck = input => window.termaSftpViews.select(fixtureTabKey,1,{}, {path:input.value,name:input.dataset.name,type:input.dataset.type});
+    selectCheck(checks[2]);
     const multiNameAddsSelection = checks.slice(0,3).every(input => input.checked);
-    selectSftpEntry({shiftKey:false,ctrlKey:false,metaKey:false},1,checks[2].value,checks[2].dataset.name,checks[2].dataset.type,fixtureTabKey);
+    selectCheck(checks[2]);
     const multiNameCancelsSelection = checks[0].checked && checks[1].checked && !checks[2].checked;
-    selectSftpEntry({shiftKey:false,ctrlKey:false,metaKey:false},1,checks[1].value,checks[1].dataset.name,checks[1].dataset.type,fixtureTabKey);
-    selectSftpEntry({shiftKey:false,ctrlKey:false,metaKey:false},1,checks[2].value,checks[2].dataset.name,checks[2].dataset.type,fixtureTabKey);
+    selectCheck(checks[1]);
+    selectCheck(checks[2]);
     const singleNameReplacesSelection = !checks[0].checked && !checks[1].checked && checks[2].checked;
     checks.forEach((input,index) => { input.checked = index < 2; });
-    updateSftpSelection(fixtureTabKey);
+    window.termaSftpViews.updateSelection(fixtureTabKey);
     const selectionBar = view.querySelector('#sftpSelectionBar');
     const selectionShown = !selectionBar.hidden && selectionBar.textContent.includes('已选择 2 项');
     const selectionActionsShown = getComputedStyle(document.querySelector('#sftpSelectionCompress')).display !== 'none' && getComputedStyle(document.querySelector('#sftpSelectionPermissions')).display !== 'none';
-    const specialSelectionExact = selectedSftpPaths(fixtureTabKey).includes('/fixture/' + specialName);
+    const specialSelectionExact = window.termaSftpView.selectedPaths(fixtureTabKey).includes('/fixture/' + specialName);
     const selectedRows = view.querySelectorAll('.sftp-row.is-selected').length;
-    selectSftpDragSource(checks[2].value, checks[2].dataset.name, checks[2].dataset.type, fixtureTabKey);
+    window.termaSftpDragWorkspace.drag.select(checks[2].value, checks[2].dataset.name, checks[2].dataset.type, fixtureTabKey);
     const dragSelectionSynchronized = checks.every((input,index) => input.checked === (index === 2))
       && rows.every((row,index) => row.classList.contains('is-selected') === (index === 2))
       && rows.every((row,index) => row.classList.contains('active') === (index === 2));
-    clearSftpSelection(fixtureTabKey);
+    window.termaSftpView.clearSelection(fixtureTabKey);
     const selectionCleared = selectionBar.hidden;
     const moreButton = rows[1]?.querySelector('.sftp-row-action-more');
     moreButton?.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, clientX:320, clientY:240}));
@@ -8541,26 +8351,27 @@ app.whenReady().then(async () => {
     const directoryDownloadMenu = directoryMenuText.includes('下载');
     hideActionMenu();
     const fileHasCompression = Boolean(rows[1]?.querySelector('.sftp-row-action[title="压缩"]'));
-    const fileHasPermissions = Boolean(rows[1]?.querySelector('.sftp-row-action[title="设置权限"]'));
+    const fileHasPermissions = Boolean(rows[1]?.querySelector('.sftp-row-action[data-menu-action="permissions"], .sftp-row-action[title="权限"]'));
+    const unknownAction = Boolean(rows[1]?.querySelector('.sftp-file-open-button[data-sftp-open-kind="text"]'));
     const permissionOwnerColumn = rows[1]?.querySelector(':scope > .sftp-access code')?.textContent === '600' && rows[1]?.querySelector(':scope > .sftp-access span')?.textContent === 'demo';
     const permissionOwnerTitle = rows[1]?.querySelector(':scope > .sftp-access')?.title.includes('用户组 staff');
-    const symlinkUsesTargetSize = rows[2]?.querySelector(':scope > .sftp-size')?.textContent === formatBytes(8181696);
-    const symlinkExplainsBothSizes = rows[2]?.querySelector('.sftp-name')?.title.includes(formatBytes(8181696))
-      && rows[2]?.querySelector('.sftp-name')?.title.includes(formatBytes(27));
+    const symlinkUsesTargetSize = rows[2]?.querySelector(':scope > .sftp-size')?.textContent === window.termaSftpTaskWorkspace.presentation.bytes(8181696);
+    const symlinkExplainsBothSizes = rows[2]?.querySelector('.sftp-name')?.title.includes(window.termaSftpTaskWorkspace.presentation.bytes(8181696))
+      && rows[2]?.querySelector('.sftp-name')?.title.includes(window.termaSftpTaskWorkspace.presentation.bytes(27));
     const symlinkMarked = rows[2]?.querySelector('.sftp-icon')?.classList.contains('symlink');
-    openSftpPermissionsForSelection(['/fixture/folder']);
+    window.termaSftpFileActions.operations.permissions(fixtureTabKey, ['/fixture/folder']);
     const permissionModal = document.querySelector('#sftpPermissionMode');
     permissionModal.value = '640';
     permissionModal.dispatchEvent(new Event('input', {bubbles:true}));
     const permissionModeSync = permissionModal.value === '640' && document.querySelector('[data-permission="ownerWrite"]')?.checked && !document.querySelector('[data-permission="ownerExecute"]')?.checked;
     const recursiveVisible = Boolean(document.querySelector('#sftpPermissionRecursive'));
     document.querySelector('#sftpPermissionCancel')?.click();
-    const breadcrumbText = document.querySelector('#view-sftp #sftpBreadcrumb')?.textContent.replace(/\s+/g,' ').trim() || '';
+    const breadcrumbText = document.querySelector('#view-sftp #sftpBreadcrumb')?.textContent.replace(/s+/g,' ').trim() || '';
     const breadcrumbLabels = [...document.querySelectorAll('#view-sftp #sftpBreadcrumb .crumb')].map(node => node.textContent.trim());
     const compactRowHeight = rows[0]?.getBoundingClientRect().height || 0;
     const sftpList = document.querySelector('#view-sftp #sftpList');
     sftpList.style.width = '1280px';
-    syncSftpListLayout(sftpList, 1280);
+    window.termaSftpColumns.syncSftpListLayout(sftpList, 1280);
     const head = sftpList.querySelector('.sftp-head');
     const alignmentSelectors = ['.sftp-size','.sftp-time','.sftp-access','.sftp-head-actions'];
     const rowAlignmentSelectors = ['.sftp-size','.sftp-time','.sftp-access','.sftp-row-actions'];
@@ -8573,7 +8384,7 @@ app.whenReady().then(async () => {
     const wideLastAction = wideActions?.lastElementChild;
     const wideActionsFit = Boolean(wideActions && wideLastAction && wideLastAction.getBoundingClientRect().right <= wideActions.getBoundingClientRect().right + 1);
     sftpList.style.width = '760px';
-    syncSftpListLayout(sftpList, 760);
+    window.termaSftpColumns.syncSftpListLayout(sftpList, 760);
     const compactSizeVisible = getComputedStyle(rows[1].querySelector(':scope > .sftp-size')).display !== 'none';
     const compactTimeVisible = getComputedStyle(rows[1].querySelector(':scope > .sftp-time')).display !== 'none';
     const compactAccessVisible = getComputedStyle(rows[1].querySelector(':scope > .sftp-access')).display !== 'none';
@@ -8584,7 +8395,7 @@ app.whenReady().then(async () => {
         && !['auto','scroll'].includes(getComputedStyle(sftpList).overflowX)
         && document.documentElement.scrollWidth <= innerWidth + 1;
     sftpList.style.width = '390px';
-    syncSftpListLayout(sftpList, 390);
+    window.termaSftpColumns.syncSftpListLayout(sftpList, 390);
     const narrowListWidth = sftpList.getBoundingClientRect().width;
     const narrowCoreDisplay = getComputedStyle(rows[0].querySelector('.sftp-row-action-core')).display;
     const narrowCoreHidden = narrowCoreDisplay === 'none';
@@ -8595,7 +8406,7 @@ app.whenReady().then(async () => {
     const narrowMetaVisible = Boolean(
       narrowMeta
       && narrowMetaDisplay !== 'none'
-      && narrowMetaText.replace(/\\s+/g,'').includes(formatBytes(12).replace(/\\s+/g,''))
+      && narrowMetaText.replace(/\\s+/g,'').includes(window.termaSftpTaskWorkspace.presentation.bytes(12).replace(/\\s+/g,''))
       && !narrowMetaText.includes('Invalid Date')
     );
     const narrowAccessHidden = getComputedStyle(rows[1].querySelector(':scope > .sftp-access')).display === 'none';
@@ -8604,11 +8415,11 @@ app.whenReady().then(async () => {
     const narrowHeaderSummaryVisible = getComputedStyle(sftpList.querySelector('.sftp-compact-column-labels')).display !== 'none'
       && sftpList.querySelector('.sftp-compact-column-labels')?.textContent.includes('大小');
     const narrowCompactActions = Math.round((rows[0]?.querySelector('.sftp-row-actions')?.getBoundingClientRect().width || 0)) <= 60;
-    const previousColumnLayout = localStorage.getItem(SFTP_COLUMN_LAYOUT_STORAGE_KEY);
-    writeSftpColumnLayout({order:['name','size','mtime','access'],weights:{name:2.45,size:.72,mtime:1.28,access:1.34},actionWeight:3.6});
+    const previousColumnLayout = localStorage.getItem(window.termaSftpColumns.storageKey);
+    window.termaSftpColumns.writeSftpColumnLayout({order:['name','size','mtime','access'],weights:{name:2.45,size:.72,mtime:1.28,access:1.34},actionWeight:3.6});
     sftpList.style.width = '760px';
-    syncSftpListLayout(sftpList, 760);
-    renderSftpEntries(fixtureTabKey);
+    window.termaSftpColumns.syncSftpListLayout(sftpList, 760);
+    window.termaSftpView.render(fixtureTabKey);
     const compactColumnList = document.querySelector('#view-sftp #sftpList');
     const compactAccessHeader = compactColumnList.querySelector('.sftp-head [data-sftp-column="access"]');
     const compactActionsHeader = compactColumnList.querySelector('.sftp-head-actions');
@@ -8648,16 +8459,16 @@ app.whenReady().then(async () => {
       && getComputedStyle(compactAccessHeader).borderRightWidth === '0px'
       && getComputedStyle(compactAccessHandle,'::before').backgroundColor === getComputedStyle(compactColumnList.querySelector('[data-sftp-column-resize="name"]'),'::before').backgroundColor);
 
+    const LOCAL_FILES_COLUMN_LAYOUT_STORAGE_KEY='termaLocalFilesColumnLayoutV1';
     const previousLocalColumnLayout = localStorage.getItem(LOCAL_FILES_COLUMN_LAYOUT_STORAGE_KEY);
-    writeLocalFilesColumnLayout({weights:{name:2.45,size:.98,mtime:1.28}});
+    localStorage.setItem(LOCAL_FILES_COLUMN_LAYOUT_STORAGE_KEY,JSON.stringify({weights:{name:2.45,size:.98,mtime:1.28}}));
     const localColumnFixture = document.createElement('div');
     localColumnFixture.style.cssText = 'position:fixed;left:8px;top:8px;width:420px;height:180px;container-type:inline-size;container-name:local-files-view;z-index:-1';
-    localColumnFixture.innerHTML = '<div class="local-files-list" style="width:420px;height:160px"><div class="local-files-head"><label><input type="checkbox"></label>'
-      + ['name','size','mtime'].map(key => localFilesHeaderColumnHtml(key,'ui-smoke-local')).join('')
-      + '</div><div class="local-files-row"><input type="checkbox"><button class="local-files-name">fixture.txt</button><span class="local-files-size">12 B</span><span class="local-files-time">2026-08-13</span></div></div>';
     document.body.appendChild(localColumnFixture);
+    const localColumnKey='ui-smoke-local',localColumnService=window.termaLocalFileRuntime.files,localColumnState=localColumnService.state(localColumnKey);
+    Object.assign(localColumnState,{path:'/fixture',loaded:true,entries:[{name:'fixture.txt',path:'/fixture/fixture.txt',type:'file',size:12}],total:1});
+    window.termaLocalFileViews.mount(localColumnFixture,{key:localColumnKey,service:localColumnService,state:localColumnState,mobile:false,fnos:false,text:tr,bytes:window.termaSftpTaskWorkspace.presentation.bytes,time:formatSftpTime,displayName:entry=>entry.name});
     const localColumnList = localColumnFixture.querySelector('.local-files-list');
-    bindLocalFilesColumnControls(localColumnList);
     const localNameHeader = localColumnList.querySelector('[data-local-files-column="name"]');
     const localNameHandle = localColumnList.querySelector('[data-local-files-column-resize="name"]');
     const localSizeHandle = localColumnList.querySelector('[data-local-files-column-resize="size"]');
@@ -8698,32 +8509,35 @@ app.whenReady().then(async () => {
     const scrollbarUnified = scrollbarStyles.length === 3
       && scrollbarStyles.every(value => value && value !== 'auto' && value === scrollbarStyles[0]);
     selectionToolbarFixture.remove();
-    localColumnFixture.remove();
+    window.termaLocalFileViews.release(localColumnKey);localColumnService.dispose(localColumnKey);localColumnFixture.remove();
     if (previousLocalColumnLayout === null) localStorage.removeItem(LOCAL_FILES_COLUMN_LAYOUT_STORAGE_KEY);
     else localStorage.setItem(LOCAL_FILES_COLUMN_LAYOUT_STORAGE_KEY, previousLocalColumnLayout);
 
     sftpList.style.width = '1280px';
-    syncSftpListLayout(sftpList, 1280);
-    writeSftpColumnLayout({order:['name','size','mtime','access'],weights:{name:2,size:1.2,mtime:1.28,access:1.34},actionWeight:3.6});
-    renderSftpEntries(fixtureTabKey);
-    persistSftpColumnOrder('mtime','name',false);
+    window.termaSftpColumns.syncSftpListLayout(sftpList, 1280);
+    window.termaSftpColumns.writeSftpColumnLayout({order:['name','size','mtime','access'],weights:{name:2,size:1.2,mtime:1.28,access:1.34},actionWeight:3.6});
+    window.termaSftpView.render(fixtureTabKey);
+    window.termaSftpColumns.persistSftpColumnOrder('mtime','name',false);
     const columnList = document.querySelector('#view-sftp #sftpList');
+    for (let render = 0; render < 5; render += 1) window.termaSftpColumns.bindSftpColumnControls(columnList);
     const headerOrder = [...columnList.querySelectorAll('.sftp-head [data-sftp-column]')].map(cell=>cell.dataset.sftpColumn);
     const rowOrder = [...columnList.querySelector('.sftp-row').children].filter(node=>node.className.includes('sftp-column-')).map(node=>[...node.classList].find(name=>name.startsWith('sftp-column-')).replace('sftp-column-',''));
-    const weightBeforeKeyboard = readSftpColumnLayout().weights.name;
-    const nextWeightBeforeKeyboard = readSftpColumnLayout().weights.size;
+    const weightBeforeKeyboard = window.termaSftpColumns.readSftpColumnLayout().weights.name;
+    const nextWeightBeforeKeyboard = window.termaSftpColumns.readSftpColumnLayout().weights.size;
     const pairWeightBeforeKeyboard = weightBeforeKeyboard + nextWeightBeforeKeyboard;
     columnList.querySelector('[data-sftp-column-resize="name"]')?.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true,cancelable:true}));
-    const storedColumnLayout = readSftpColumnLayout();
-    const accessHeader = columnList.querySelector('.sftp-head [data-sftp-column="access"]');
-    const actionsHeader = columnList.querySelector('.sftp-head-actions');
+    const storedColumnLayout = window.termaSftpColumns.readSftpColumnLayout();
+    let accessHeader = columnList.querySelector('.sftp-head [data-sftp-column="access"]');
+    let actionsHeader = columnList.querySelector('.sftp-head-actions');
     const accessWeightBeforeActionResize = storedColumnLayout.weights.access;
     const actionWeightBeforeResize = storedColumnLayout.actionWeight;
     const actionBoundaryBeforeResize = accessHeader?.getBoundingClientRect().right || 0;
     const actionWidthBeforeResize = actionsHeader?.getBoundingClientRect().width || 0;
     const stableWidthsBeforeActionResize = ['name','size','mtime'].map(key => columnList.querySelector('[data-sftp-column="' + key + '"]')?.getBoundingClientRect().width || 0);
     columnList.querySelector('[data-sftp-column-resize="access"]')?.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true,cancelable:true}));
-    const actionResizeLayout = readSftpColumnLayout();
+    const actionResizeLayout = window.termaSftpColumns.readSftpColumnLayout();
+    accessHeader = columnList.querySelector('.sftp-head [data-sftp-column="access"]');
+    actionsHeader = columnList.querySelector('.sftp-head-actions');
     const actionBoundaryAfterResize = accessHeader?.getBoundingClientRect().right || 0;
     const actionWidthAfterResize = actionsHeader?.getBoundingClientRect().width || 0;
     const stableWidthsAfterActionResize = ['name','size','mtime'].map(key => columnList.querySelector('[data-sftp-column="' + key + '"]')?.getBoundingClientRect().width || 0);
@@ -8733,6 +8547,7 @@ app.whenReady().then(async () => {
       && Math.abs(actionWidthAfterResize - (actionWidthBeforeResize + 16)) <= 2
       && stableWidthsBeforeActionResize.every((width,index) => Math.abs(stableWidthsAfterActionResize[index] - width) <= 1);
     const columnLayoutUi = {
+      resizeDiagnostics:{before:{name:weightBeforeKeyboard,size:nextWeightBeforeKeyboard,access:accessWeightBeforeActionResize,actions:actionWeightBeforeResize,boundary:actionBoundaryBeforeResize,width:actionWidthBeforeResize,stable:stableWidthsBeforeActionResize},after:{name:storedColumnLayout.weights.name,size:storedColumnLayout.weights.size,access:actionResizeLayout.weights.access,actions:actionResizeLayout.actionWeight,boundary:actionBoundaryAfterResize,width:actionWidthAfterResize,stable:stableWidthsAfterActionResize},actionResizable,connected:columnList.isConnected},
       order:JSON.stringify(headerOrder) === JSON.stringify(['mtime','name','size','access']) && JSON.stringify(rowOrder) === JSON.stringify(headerOrder),
       persisted:JSON.stringify(storedColumnLayout.order) === JSON.stringify(headerOrder),
       resized:Math.abs(storedColumnLayout.weights.name - weightBeforeKeyboard) > .001
@@ -8752,22 +8567,25 @@ app.whenReady().then(async () => {
         && !['auto','scroll'].includes(getComputedStyle(columnList).overflowX)
         && Boolean(accessHeader && actionsHeader && Math.abs(accessHeader.getBoundingClientRect().right - actionsHeader.getBoundingClientRect().left) <= 1)
     };
-    if (previousColumnLayout === null) localStorage.removeItem(SFTP_COLUMN_LAYOUT_STORAGE_KEY);
-    else localStorage.setItem(SFTP_COLUMN_LAYOUT_STORAGE_KEY, previousColumnLayout);
+    if (previousColumnLayout === null) localStorage.removeItem(window.termaSftpColumns.storageKey);
+    else localStorage.setItem(window.termaSftpColumns.storageKey, previousColumnLayout);
     sftpList.style.width = '';
-    syncSftpListLayout(sftpList);
-    renderSftpEntries(fixtureTabKey);
-    sftpKnownJobStatuses.set('ui-smoke-extract', 'running');
-    const completedMutationDetected = completedSftpMutationForCurrentView([{id:'ui-smoke-extract',status:'done',type:'extract',connection_id:1}]).has(1);
-    sftpKnownJobStatuses.delete('ui-smoke-extract');
+    window.termaSftpColumns.syncSftpListLayout(sftpList);
+    window.termaSftpView.render(fixtureTabKey);
+    window.termaSftpTransferLifecycle.completion.statuses.set('ui-smoke-extract', 'running');
+    const completedMutationDetected = window.termaSftpTransferLifecycle.completion.observe([{id:'ui-smoke-extract',status:'done',type:'extract',connection_id:1}]).has(1);
+    window.termaSftpTransferLifecycle.completion.statuses.delete('ui-smoke-extract');
     let jobUi = {found:false};
     let generatedTaskUi = {found:false};
     const previousApi = api;
-    const previousJobTimer = startSftpJobsTimer;
-    const previousLatestJobs = sftpLatestJobs;
-    const previousTaskCenterView = sftpTaskCenterView;
-    const previousJobRuntimeSettings = runtimeSettings;
-    const previousConfirmModal = confirmModal;
+    const previousJobTimer = window.termaSftpTransferLifecycle.polling.start;
+    const previousLatestJobs = window.termaSftpTaskWorkspace.state.jobs;
+    const previousTaskCenterView = window.termaSftpTaskWorkspace.state.view;
+    const previousJobRuntimeSettings = window.termaRuntimeSettingsModel.snapshot;
+    const acceptTaskPrompt = async () => (await clickSftpFixtureChoice(0)).dialog;
+    const SFTP_TASK_CENTER_SIZE_STORAGE_KEY = 'sftpTaskCenterSizeV1';
+    const SFTP_TASK_CENTER_VIEWPORT_GAP = 12;
+    document.documentElement.dataset.uiSmokeStage = 'sftp-task-center';
     const previousTaskCenterSize = localStorage.getItem(SFTP_TASK_CENTER_SIZE_STORAGE_KEY);
     try {
       const jobFixtures = [
@@ -8778,10 +8596,10 @@ app.whenReady().then(async () => {
         {id:'browser-download',status:'done',type:'download',label:'浏览器已保存下载',connection_name:'iMac',connection_id:1,remote_path:'/tmp/browser.txt',delivery_mode:'browser',delivery_status:'delivered',finished_at:Date.now()-1300},
         {id:'cancelled-job',status:'cancelled',type:'move',label:'取消历史任务',connection_id:Number(connection.id),connection_name:'iMac',finished_at:Date.now()-2000}
       ];
-      runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, saved:{...runtimeSettings?.saved, sftp_floating_progress_enabled:true}});
+      window.termaRuntimeSettingsModel.snapshot = window.termaRuntimeSettingsModel.normalize({...window.termaRuntimeSettingsModel.snapshot, saved:{...window.termaRuntimeSettingsModel.snapshot?.saved, sftp_floating_progress_enabled:true}});
       api = async pathname => pathname === '/api/sftp/jobs' ? jobFixtures : [];
-      startSftpJobsTimer = () => {};
-      await refreshSftpJobs();
+      window.termaSftpTransferLifecycle.polling.start = () => {};
+      await window.termaSftpTaskWorkspace.runtime.refresh();
       const button = document.querySelector('#sftpTaskCenterButton');
       const drawer = document.querySelector('#sftpTaskCenterDrawer');
       const list = document.querySelector('#sftpTaskCenterList');
@@ -8819,13 +8637,13 @@ app.whenReady().then(async () => {
         && floatingCard.querySelector('.sftp-task-float-close')
         && floatingCard.querySelector('.sftp-task-float-mute')
         && floatingCard.querySelector('.lucide-bell-off'));
-      updateSftpTaskCenter([{...jobFixtures[0],status:'paused',can_pause:false,can_resume:true}]);
+      window.termaSftpTaskWorkspace.state.paint([{...jobFixtures[0],status:'paused',can_pause:false,can_resume:true}]);
       const floatingResumeAction = Boolean(floatingCard?.querySelector('.sftp-task-float-pause:not([hidden])')?.dataset.action === 'resume'
         && floatingCard.querySelector('.sftp-task-float-pause .lucide-play'));
-      updateSftpTaskCenter(jobFixtures);
+      window.termaSftpTaskWorkspace.state.paint(jobFixtures);
       const floatingProgress = Math.abs(Number.parseFloat(floatingCard?.querySelector('.progress i')?.style.width || '0') - 40) <= 0.1;
-      resetSftpTaskCenterSize();
-      await toggleSftpTaskCenter();
+      window.termaFileLayouts.taskCenter.resetSftpTaskCenterSize();
+      await window.termaSftpTaskWorkspace.runtime.toggle();
       const drawerOpened = Boolean(drawer && !drawer.hidden && button?.getAttribute('aria-expanded') === 'true');
       notify('任务中心层级测试','info');
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
@@ -8834,11 +8652,14 @@ app.whenReady().then(async () => {
       const taskCenterLayerDrawerRect = drawer?.getBoundingClientRect();
       const overlapX = Math.max(taskCenterLayerToastRect?.left||0,taskCenterLayerDrawerRect?.left||0)+12;
       const overlapY = Math.max(taskCenterLayerToastRect?.top||0,taskCenterLayerDrawerRect?.top||0)+12;
+      const taskCenterToastOverlaps = Boolean(taskCenterLayerToastRect && taskCenterLayerDrawerRect
+        && overlapX < Math.min(taskCenterLayerToastRect.right,taskCenterLayerDrawerRect.right)
+        && overlapY < Math.min(taskCenterLayerToastRect.bottom,taskCenterLayerDrawerRect.bottom));
       const taskCenterAboveNotifications = Boolean(document.body.classList.contains('sftp-task-center-open')
         && taskCenterLayerToastRect && taskCenterLayerDrawerRect
-        && overlapX < Math.min(taskCenterLayerToastRect.right,taskCenterLayerDrawerRect.right)
-        && overlapY < Math.min(taskCenterLayerToastRect.bottom,taskCenterLayerDrawerRect.bottom)
-        && document.elementFromPoint(overlapX,overlapY)?.closest?.('#sftpTaskCenterDrawer'));
+        && (taskCenterToastOverlaps
+          ? document.elementFromPoint(overlapX,overlapY)?.closest?.('#sftpTaskCenterDrawer')
+          : document.elementFromPoint(taskCenterLayerDrawerRect.left+20,taskCenterLayerDrawerRect.top+20)?.closest?.('#sftpTaskCenterDrawer')));
       dismissToast(taskCenterLayerToast);
       const defaultDrawerRect = drawer?.getBoundingClientRect();
       const drawerDefaultCompact = Boolean(defaultDrawerRect
@@ -8846,7 +8667,7 @@ app.whenReady().then(async () => {
         && defaultDrawerRect.width <= 502
         && defaultDrawerRect.height >= 238
         && defaultDrawerRect.height <= 402);
-      const currentText = list?.textContent.replace(/\s+/g,' ').trim() || '';
+      const currentText = list?.textContent.replace(/s+/g,' ').trim() || '';
       const currentRows = [...(list?.querySelectorAll('.sftp-job') || [])];
       const runningRow = currentRows.find(row => row.textContent.includes('正在上传任务'));
       const failedInCurrent = currentRows.find(row => row.textContent.includes('失败任务'));
@@ -8875,8 +8696,8 @@ app.whenReady().then(async () => {
         {id:'queue-cross-scanning',status:'running',type:'cross-copy',phase:'scanning',label:'扫描跨主机',connection_id:Number(connection.id),connection_name:'Mac mini',resume_supported:true,can_pause:false,can_cancel:true}
       ];
       const queueBatchCalls = [];
-      sftpLatestJobs = queueFixtures;
-      updateSftpTaskCenter(queueFixtures);
+      window.termaSftpTaskWorkspace.state.jobs = queueFixtures;
+      window.termaSftpTaskWorkspace.state.paint(queueFixtures);
       api = async (pathname, options={}) => {
         if (pathname === '/api/sftp/jobs') return queueFixtures;
         if (['/api/sftp/sync/jobs','/api/linux-desktop/tasks','/api/remote-component/tasks'].includes(pathname)) return [];
@@ -8886,10 +8707,12 @@ app.whenReady().then(async () => {
         if (pathname.endsWith('/cancel')) return {ok:true,status:'cancelled'};
         return {ok:true};
       };
-      confirmModal = async () => true;
-      const pauseBatchResult = await pauseAllSftpTransferJobs(pauseAllButton);
-      const resumeBatchResult = await resumeAllSftpTransferJobs(resumeAllButton);
-      const clearBatchResult = await clearCurrentSftpTransferQueue(clearQueueButton);
+      const pauseBatchResult = await window.termaTaskActions.current.batch('pause',pauseAllButton);
+      const resumeBatchResult = await window.termaTaskActions.current.batch('resume',resumeAllButton);
+      document.documentElement.dataset.uiSmokeStage = 'sftp-task-cancel-queue';
+      const clearingQueue = window.termaTaskActions.current.batch('cancel',clearQueueButton);
+      await acceptTaskPrompt();
+      const clearBatchResult = await clearingQueue;
       const queueBatchControls = Boolean(pauseBatchResult?.completed === 2
         && pauseBatchResult?.skipped === 3
         && resumeBatchResult?.completed === 1
@@ -8909,12 +8732,11 @@ app.whenReady().then(async () => {
         cancelCalls:queueBatchCalls.filter(call=>call.pathname.endsWith('/cancel')).length,
         drawerHidden:drawer.hidden
       };
-      sftpLatestJobs = jobFixtures;
+      window.termaSftpTaskWorkspace.state.jobs = jobFixtures;
       api = async pathname => pathname === '/api/sftp/jobs' ? jobFixtures : [];
-      confirmModal = previousConfirmModal;
-      updateSftpTaskCenter(jobFixtures);
-      setSftpTaskCenterView('failed');
-      const failedText = list?.textContent.replace(/\s+/g,' ').trim() || '';
+      window.termaSftpTaskWorkspace.state.paint(jobFixtures);
+      window.termaSftpTaskWorkspace.runtime.view('failed');
+      const failedText = list?.textContent.replace(/s+/g,' ').trim() || '';
       const failedRows = [...(list?.querySelectorAll('.sftp-job') || [])];
       const failedRow = failedRows.find(row => row.textContent.includes('失败任务'));
       const failedOnly = failedText.includes('失败任务') && !failedText.includes('正在上传任务') && !failedText.includes('完成历史任务') && !failedText.includes('取消历史任务');
@@ -8929,17 +8751,20 @@ app.whenReady().then(async () => {
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       const taskLogBeforeRefresh=taskLogDetails?.querySelector('pre');
       const taskLogInitialOpen=Boolean(taskLogDetails?.open);
-      const taskLogInitialBottom=Boolean(taskLogBeforeRefresh&&sftpTaskLogAtBottom(taskLogBeforeRefresh));
+      const taskLogInitialBottom=Boolean(taskLogBeforeRefresh&&window.termaSftpTaskWorkspace.logs.atBottom(taskLogBeforeRefresh));
       const refreshedJobFixtures=jobFixtures.map(job=>job.id==='component:failed-job'
         ? {...job,logs:[...job.logs,{at:Date.now()+100,text:'task-log-line-latest'}]}
         : job);
-      updateSftpTaskCenter(refreshedJobFixtures);
+      // Keep the task/API source current when a queued repaint reads it again.
+      jobFixtures.splice(0,jobFixtures.length,...refreshedJobFixtures);
+      window.termaSftpTaskWorkspace.state.jobs=jobFixtures;
+      window.termaSftpTaskWorkspace.state.paint(refreshedJobFixtures);
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       const refreshedTaskLogDetails=list?.querySelector('.global-task-log[data-task-id="component:failed-job"]');
       const refreshedTaskLog=refreshedTaskLogDetails?.querySelector('pre');
       const taskLogRefreshKeepsOpen=Boolean(refreshedTaskLogDetails?.open);
       const taskLogRefreshShowsLatest=Boolean(refreshedTaskLog?.textContent.includes('task-log-line-latest'));
-      const taskLogRefreshFollowsBottom=Boolean(refreshedTaskLog&&sftpTaskLogAtBottom(refreshedTaskLog));
+      const taskLogRefreshFollowsBottom=Boolean(refreshedTaskLog&&window.termaSftpTaskWorkspace.logs.atBottom(refreshedTaskLog));
       const drawerResizeStyle = getComputedStyle(drawer);
       const drawerResizeHandle = document.querySelector('#sftpTaskCenterResize');
       const drawerResizeHandleStyle = drawerResizeHandle ? getComputedStyle(drawerResizeHandle) : null;
@@ -8969,10 +8794,10 @@ app.whenReady().then(async () => {
         && resizedListRect.top >= resizedDrawerRect.top - 1
          && resizedListRect.bottom <= resizedDrawerRect.bottom + 1
          && list.scrollWidth <= list.clientWidth + 1);
-      const persistedDrawerSize=savedSftpTaskCenterSize();
+      const persistedDrawerSize=window.termaFileLayouts.taskCenter.savedSftpTaskCenterSize();
       drawer.style.removeProperty('width');
       drawer.style.removeProperty('height');
-      const drawerSizeRestored=restoreSftpTaskCenterSize(drawer);
+      const drawerSizeRestored=window.termaFileLayouts.taskCenter.restoreSftpTaskCenterSize(drawer);
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       const restoredDrawerRect=drawer.getBoundingClientRect();
       const drawerResizePersists=Boolean(persistedDrawerSize
@@ -8988,17 +8813,17 @@ app.whenReady().then(async () => {
         && Math.abs(resetDrawerRect.height - drawerBeforeResizeRect.height) <= 2
         && localStorage.getItem(SFTP_TASK_CENTER_SIZE_STORAGE_KEY)===null);
       localStorage.setItem(SFTP_TASK_CENTER_SIZE_STORAGE_KEY,JSON.stringify({width:window.innerWidth*4,height:window.innerHeight*4}));
-      clearSftpTaskCenterSizeConstraints(drawer);
+      window.termaFileLayouts.taskCenter.clearSftpTaskCenterSizeConstraints(drawer);
       drawer.style.removeProperty('width');
       drawer.style.removeProperty('height');
-      const oversizedDrawerRestored=restoreSftpTaskCenterSize(drawer);
+      const oversizedDrawerRestored=window.termaFileLayouts.taskCenter.restoreSftpTaskCenterSize(drawer);
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       const recoveredDrawerRect=drawer.getBoundingClientRect();
       const recoveredContentRect=document.querySelector('.content')?.getBoundingClientRect();
       const recoveredHandleRect=drawerResizeHandle?.getBoundingClientRect();
       const recoveredHandleX=(recoveredHandleRect?.left||0)+(recoveredHandleRect?.width||0)/2;
       const recoveredHandleY=(recoveredHandleRect?.top||0)+(recoveredHandleRect?.height||0)/2;
-      const correctedOversizedDrawerSize=savedSftpTaskCenterSize();
+      const correctedOversizedDrawerSize=window.termaFileLayouts.taskCenter.savedSftpTaskCenterSize();
       const drawerOversizeRecovers=Boolean(oversizedDrawerRestored
         && recoveredContentRect
         && recoveredHandleRect
@@ -9045,11 +8870,10 @@ app.whenReady().then(async () => {
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
 
       const deleteFixture = {id:'delete-record-job',status:'failed',type:'upload',label:'待删除失败任务',connection_id:Number(connection.id),connection_name:'iMac'};
-      updateSftpTaskCenter([...refreshedJobFixtures, deleteFixture]);
+      window.termaSftpTaskWorkspace.state.paint([...refreshedJobFixtures, deleteFixture]);
       const deleteButton = [...list.querySelectorAll('.sftp-job')].find(row=>row.textContent.includes('待删除失败任务'))?.querySelector('.danger');
       let deleteRequestCount = 0;
       let releaseDeleteRequest;
-      confirmModal = async () => true;
       api = (pathname, options={}) => {
         if (pathname === '/api/sftp/jobs/delete-record-job' && options.method === 'DELETE') {
           deleteRequestCount += 1;
@@ -9057,24 +8881,24 @@ app.whenReady().then(async () => {
         }
         return Promise.resolve(pathname === '/api/sftp/jobs' ? refreshedJobFixtures : []);
       };
-      const firstDelete = deleteSftpJob('delete-record-job', deleteButton);
-      const secondDelete = deleteSftpJob('delete-record-job', deleteButton);
+      const firstDelete = window.termaTaskActions.current.remove('delete-record-job', deleteButton);
+      const secondDelete = window.termaTaskActions.current.remove('delete-record-job', deleteButton);
+      await acceptTaskPrompt();
       await new Promise(resolve=>setTimeout(resolve,0));
       const deleteDuplicateBlocked = Boolean(deleteButton?.disabled && deleteRequestCount === 1);
       releaseDeleteRequest?.({ok:true});
       await Promise.all([firstDelete, secondDelete]);
       const deleteKeepsDrawerOpen = Boolean(!drawer.hidden && button?.getAttribute('aria-expanded') === 'true');
       api = async pathname => pathname === '/api/sftp/jobs' ? jobFixtures : [];
-      confirmModal = previousConfirmModal;
-      updateSftpTaskCenter(jobFixtures);
+      window.termaSftpTaskWorkspace.state.paint(jobFixtures);
       const drawerRect = drawer?.getBoundingClientRect();
       const drawerFitsViewport = Boolean(drawerRect
         && drawerRect.left >= -1
         && drawerRect.right <= window.innerWidth + 1
         && drawerRect.top >= 0
         && drawerRect.bottom <= window.innerHeight + 1);
-      setSftpTaskCenterView('history');
-      const historyText = list?.textContent.replace(/\s+/g,' ').trim() || '';
+      window.termaSftpTaskWorkspace.runtime.view('history');
+      const historyText = list?.textContent.replace(/s+/g,' ').trim() || '';
       const historyOnly = historyText.includes('完成历史任务')
         && historyText.includes('取消历史任务')
         && !historyText.includes('正在上传任务')
@@ -9110,9 +8934,8 @@ app.whenReady().then(async () => {
         progress:100,
         finished_at:Date.now()
       };
-      const generatedTaskHost = document.createElement('div');
-      generatedTaskHost.innerHTML = renderSftpJob(generatedTaskFixture);
-      const generatedTaskRow = generatedTaskHost.querySelector('.sftp-job');
+      window.termaSftpTaskWorkspace.state.paint([...jobFixtures, generatedTaskFixture]);
+      const generatedTaskRow = list.querySelector('.sftp-job[data-task-id="local:generated-svg"]');
       const generatedTaskButtons = [...(generatedTaskRow?.querySelectorAll('.actions.tight > button') || [])];
       generatedTaskUi = {
         found:Boolean(generatedTaskRow),
@@ -9123,60 +8946,65 @@ app.whenReady().then(async () => {
         buttonCount:generatedTaskButtons.length,
         noDuplicateTaskDelete:!generatedTaskRow?.querySelector('button[aria-label="删除任务"]')
       };
+      window.termaSftpTaskWorkspace.state.paint(jobFixtures);
       const historyActionDiagnostics={footerHidden:historyFooter?.hidden,desktopLabels:[...(desktopSavedRow?.querySelectorAll('button')||[])].map(button=>({title:button.title,ariaLabel:button.getAttribute('aria-label'),text:button.textContent.trim()})),historyText};
       document.body.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
       const outsideClickCloses = Boolean(drawer.hidden && button?.getAttribute('aria-expanded') === 'false');
-      await toggleSftpTaskCenter();
+      await window.termaSftpTaskWorkspace.runtime.toggle();
       document.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'Escape'}));
       const escapeCloses = Boolean(drawer.hidden && button?.getAttribute('aria-expanded') === 'false');
-      await openSftpTaskList({preventDefault(){},stopPropagation(){},target:floatingCard});
+      await window.termaSftpTaskWorkspace.runtime.open({preventDefault(){},stopPropagation(){},target:floatingCard});
       const floatingOpensTaskCenter = Boolean(!drawer.hidden && button?.getAttribute('aria-expanded') === 'true'
         && document.querySelector('#sftpTaskCenterCurrentTab')?.getAttribute('aria-selected') === 'true');
-      closeSftpTaskCenter();
-      dismissSftpTaskFloat();
-      updateSftpTaskCenter(jobFixtures);
+      window.termaSftpTaskWorkspace.runtime.close();
+      window.termaSftpTaskWorkspace.runtime.dismiss();
+      window.termaSftpTaskWorkspace.state.paint(jobFixtures);
       const floatingCloseHidesCurrent = Boolean(floatingCard?.hidden);
       const nextFloatingJob = {...jobFixtures[0],id:'next-running-job',label:'新后台任务'};
-      updateSftpTaskCenter([...jobFixtures,nextFloatingJob]);
+      window.termaSftpTaskWorkspace.state.paint([...jobFixtures,nextFloatingJob]);
       const floatingNewTaskReopens = Boolean(floatingCard && !floatingCard.hidden && floatingCard.textContent.includes('2 个后台任务'));
-      let muteConfirmation = null;
       let mutePayload = null;
-      confirmModal = async (...args) => { muteConfirmation = args; return true; };
       api = async (pathname, options={}) => {
         if (pathname === '/api/runtime-settings') {
           mutePayload = JSON.parse(options.body || '{}');
-          const saved = {...runtimeSettings.saved, sftp_floating_progress_enabled:false};
-          return {...runtimeSettings, saved, sftp_floating_progress_enabled:false};
+          const saved = {...window.termaRuntimeSettingsModel.snapshot.saved, sftp_floating_progress_enabled:false};
+          return {...window.termaRuntimeSettingsModel.snapshot, saved, sftp_floating_progress_enabled:false};
         }
         return pathname === '/api/sftp/jobs' ? jobFixtures : [];
       };
-      await muteSftpTaskFloat();
+      const mutingTaskCards = window.termaSftpTaskWorkspace.runtime.mute();
+      document.documentElement.dataset.uiSmokeStage = 'sftp-task-mute-cards';
+      const muteConfirmationText = await acceptTaskPrompt();
+      await mutingTaskCards;
       const floatingMutePersists = Boolean(mutePayload?.sftp_floating_progress_enabled === false
-        && runtimeSettings?.saved?.sftp_floating_progress_enabled === false
+        && window.termaRuntimeSettingsModel.snapshot?.saved?.sftp_floating_progress_enabled === false
         && floatingCard?.hidden
-        && muteConfirmation?.[0]?.includes('永久关闭此类悬浮进度卡')
-        && muteConfirmation?.[0]?.includes('通知设置'));
-      runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, saved:{...runtimeSettings.saved, sftp_floating_progress_enabled:true}});
-      updateSftpTaskCenter([nextFloatingJob]);
+        && muteConfirmationText?.includes('永久关闭此类悬浮进度卡')
+        && muteConfirmationText?.includes('通知设置'));
+      window.termaRuntimeSettingsModel.snapshot = window.termaRuntimeSettingsModel.normalize({...window.termaRuntimeSettingsModel.snapshot, saved:{...window.termaRuntimeSettingsModel.snapshot.saved, sftp_floating_progress_enabled:true}});
+      window.termaSftpTaskWorkspace.state.paint([nextFloatingJob]);
       const floatingSettingRestores = Boolean(floatingCard && !floatingCard.hidden);
-      updateSftpTaskCenter([jobFixtures[0]]);
+      window.termaSftpTaskWorkspace.state.paint([jobFixtures[0]]);
       const runningStatusVisible = Boolean(button?.classList.contains('is-running')
         && !button.classList.contains('is-failed')
         && button.querySelector('.lucide-loader-circle')
         && badge?.textContent === '1');
-      updateSftpTaskCenter([{id:'unknown-progress-job',status:'running',type:'compress',label:'Unknown progress'}]);
+      window.termaSftpTaskWorkspace.state.paint([{id:'unknown-progress-job',status:'running',type:'compress',label:'Unknown progress'}]);
       const totalProgressIndeterminate = Boolean(totalProgress
         && !totalProgress.hidden
         && totalProgress.classList.contains('is-indeterminate')
         && !totalProgress.hasAttribute('aria-valuenow'));
-      updateSftpTaskCenter([]);
+      window.termaSftpTaskWorkspace.state.paint([]);
       const totalProgressHidesWhenIdle = Boolean(totalProgress?.hidden);
-      updateSftpTaskCenter([jobFixtures[0]]);
+      window.termaSftpTaskWorkspace.state.paint([jobFixtures[0]]);
       const nativeDragJob = {id:'native-drag-job',status:'running',type:'native-drag',phase:'cancelling',can_cancel:false,label:'拖出 large.bin 到本机',connection_id:Number(connection.id),connection_name:'iMac',size:1000,transferred:500,progress:50};
-      const nativeDragTaskStopHidden = !renderSftpJob(nativeDragJob).includes('>取消</button>')
-        && renderSftpJob(nativeDragJob).includes('正在停止');
+      window.termaSftpTaskWorkspace.state.paint([nativeDragJob]);
+      const nativeDragTaskRow = list.querySelector('.sftp-job[data-task-id="native-drag-job"]');
+      const nativeDragTaskStopHidden = Boolean(nativeDragTaskRow?.textContent.includes('正在停止')
+        && ![...nativeDragTaskRow.querySelectorAll('button')].some(button => button.textContent.trim() === '取消'));
       const deleteJob = {id:'delete-job',status:'running',type:'delete',label:'删除 3 项',connection_id:Number(connection.id),connection_name:'iMac',progress_unit:'items',size:3,transferred:1,progress:33};
-      const itemProgress = renderSftpJob(deleteJob).includes('已处理 1 / 3 项');
+      window.termaSftpTaskWorkspace.state.paint([deleteJob]);
+      const itemProgress = Boolean(list.querySelector('.sftp-job[data-task-id="delete-job"] .sftp-job-summary')?.textContent.includes('已处理 1 / 3 项'));
       let resolveStaleJobs;
       let jobRequestCount = 0;
       api = pathname => {
@@ -9186,37 +9014,40 @@ app.whenReady().then(async () => {
         return Promise.resolve([deleteJob]);
       };
       document.documentElement.dataset.uiSmokeStage = 'sftp-task-refresh-coalescing';
-      const staleRefresh = refreshSftpJobs();
-      const trailingRefresh = refreshSftpJobs();
+      const staleRefresh = window.termaSftpTaskWorkspace.runtime.refresh();
+      const trailingRefresh = window.termaSftpTaskWorkspace.runtime.refresh();
       const concurrentRefreshCoalesced = staleRefresh === trailingRefresh;
       resolveStaleJobs?.(jobFixtures);
       await Promise.all([staleRefresh, trailingRefresh]);
       const staleJobResponseIgnored = concurrentRefreshCoalesced
         && jobRequestCount === 2
-        && sftpLatestJobs.length === 1
-        && sftpLatestJobs[0]?.id === deleteJob.id;
+        && window.termaSftpTaskWorkspace.state.jobs.length === 1
+        && window.termaSftpTaskWorkspace.state.jobs[0]?.id === deleteJob.id;
       const nativeProgressApi = api;
       const nativeProgressRequest = 'native-directory-progress-fixture';
       let nativeProgressJob = {id:nativeProgressRequest,type:'native-drag',status:'running',phase:'system-saving',connection_id:Number(connection.id),label:'拖出 folder 到本机',size:0,transferred:0,size_known:false,progress_known:false,can_cancel:true};
       try {
         api = async pathname => pathname === '/api/sftp/jobs' ? [nativeProgressJob] : [];
-        sftpNativeDragRequests.set(nativeProgressRequest, {lastActivityAt:Date.now()});
-        handleSftpNativeDragEvent({requestId:nativeProgressRequest,type:'transferStarted'});
-        await refreshSftpJobs();
+        window.termaSftpDragWorkspace.drag.state.requests.set(nativeProgressRequest, {lastActivityAt:Date.now()});
+        window.termaSftpDragWorkspace.drag.native.event({requestId:nativeProgressRequest,type:'transferStarted'});
+        await window.termaSftpTaskWorkspace.runtime.refresh();
         if (floatingCard.hidden || !floatingCard.querySelector('.progress.indeterminate')) throw new Error('native directory preparation did not show immediate indeterminate progress');
         nativeProgressJob = {...nativeProgressJob,size:1000,size_known:true,progress_known:true,transferred:500,progress:50,speed_bps:250};
-        await refreshSftpJobs();
+        await window.termaSftpTaskWorkspace.runtime.refresh();
         if (floatingCard.hidden || !floatingCard.textContent.includes('50%') || !floatingCard.querySelector('.sftp-task-float-cancel:not([hidden])')) throw new Error('native directory download did not update progress and stop control');
       } finally {
-        sftpNativeDragRequests.delete(nativeProgressRequest);
+        window.termaSftpDragWorkspace.drag.state.requests.delete(nativeProgressRequest);
         api = nativeProgressApi;
-        updateSftpTaskCenter([deleteJob]);
+        window.termaSftpTaskWorkspace.state.paint([deleteJob]);
       }
       document.documentElement.dataset.uiSmokeStage = 'sftp-task-notifications';
       const previousFloatingTransition = floatingCard?.style.transition || '';
       if (floatingCard) floatingCard.style.transition = 'none';
       dismissToast();
-      for (let attempt=0;attempt<20&&document.querySelector('#toast .toast');attempt+=1) await new Promise(resolve => setTimeout(resolve, 25));
+      for (let attempt=0;attempt<20&&document.querySelector('#toast .toast');attempt+=1) {
+        document.documentElement.dataset.uiSmokeStage = 'sftp-toast-clear-existing';
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
       const toastIconResults = [];
       const toastTitles = ['SFTP success 图标测试','SFTP info 图标测试','SFTP error 图标测试'];
       const expectedToastTitles = toastTitles.map(title=>localizedTermaUiPhrase(title));
@@ -9230,6 +9061,7 @@ app.whenReady().then(async () => {
           && Math.abs((holder.top + holder.height / 2) - (glyph.top + glyph.height / 2)) <= 1));
       }
       const toastIconsAligned = toastIconResults.every(Boolean);
+      document.documentElement.dataset.uiSmokeStage = 'sftp-toast-stack-settle';
       await new Promise(resolve => setTimeout(resolve, 320));
       const toastStack = document.querySelector('#toast');
       const stackedToasts = [...(toastStack?.querySelectorAll('.toast') || [])];
@@ -9241,7 +9073,8 @@ app.whenReady().then(async () => {
         const current = card.getBoundingClientRect();
         return current.top >= previous.bottom + 5;
       });
-      syncToastStackLayout();
+      window.termaNotificationToasts.repaint();
+      document.documentElement.dataset.uiSmokeStage = 'sftp-toast-stack-layout';
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       const toastStackRect = toastStack?.getBoundingClientRect();
       const floatingWithToastsRect = floatingCard?.getBoundingClientRect();
@@ -9251,10 +9084,12 @@ app.whenReady().then(async () => {
       const firstToast = stackedToasts[0];
       const secondToastTopBefore = stackedToasts[1]?.getBoundingClientRect().top;
       dismissToast(firstToast);
-      const toastExitAnimated = prefersReducedToastMotion() || Boolean(firstToast?.getAnimations?.().length);
+      const toastExitAnimated = matchMedia('(prefers-reduced-motion: reduce)').matches || Boolean(firstToast?.getAnimations?.().length);
+      document.documentElement.dataset.uiSmokeStage = 'sftp-toast-exit-settle';
       await new Promise(resolve => setTimeout(resolve, 220));
       const firstRemainingToast = toastStack?.querySelector('.toast');
-      const toastReflowAnimated = prefersReducedToastMotion() || Boolean(firstRemainingToast?.getAnimations?.().some(animation => animation.playState === 'running'));
+      const toastReflowAnimated = matchMedia('(prefers-reduced-motion: reduce)').matches || Boolean(firstRemainingToast?.getAnimations?.().some(animation => animation.playState === 'running'));
+      document.documentElement.dataset.uiSmokeStage = 'sftp-toast-reflow-settle';
       await new Promise(resolve => setTimeout(resolve, 320));
       const toastMovedUp = Boolean(firstRemainingToast
         && Number.isFinite(secondToastTopBefore)
@@ -9326,22 +9161,19 @@ app.whenReady().then(async () => {
       };
     } finally {
       api = previousApi;
-      startSftpJobsTimer = previousJobTimer;
-      sftpLatestJobs = previousLatestJobs;
-      sftpTaskCenterView = previousTaskCenterView;
-      runtimeSettings = previousJobRuntimeSettings;
-      confirmModal = previousConfirmModal;
-      closeSftpTaskCenter();
-      updateSftpTaskCenter(previousLatestJobs);
+      window.termaSftpTransferLifecycle.polling.start = previousJobTimer;
+      window.termaSftpTaskWorkspace.state.jobs = previousLatestJobs;
+      window.termaSftpTaskWorkspace.state.view = previousTaskCenterView;
+      window.termaRuntimeSettingsModel.snapshot = previousJobRuntimeSettings;
+      window.termaSftpTaskWorkspace.runtime.close();
+      window.termaSftpTaskWorkspace.state.paint(previousLatestJobs);
       if (previousTaskCenterSize === null) localStorage.removeItem(SFTP_TASK_CENTER_SIZE_STORAGE_KEY);
       else localStorage.setItem(SFTP_TASK_CENTER_SIZE_STORAGE_KEY, previousTaskCenterSize);
     }
 
     const previousDownloadApi=api;
-    const previousDownloadConfirm=confirmModal;
-    const previousDownloadChoice=chooseModal;
-    const previousDownloadRefresh=refreshSftpJobs;
-    const previousDownloadTimer=startSftpJobsTimer;
+    const previousDownloadRefresh=window.termaSftpTaskWorkspace.runtime.refresh;
+    const previousDownloadTimer=window.termaSftpTransferLifecycle.polling.start;
     const previousDownloadTabKey=activeTabKey;
     const desktopNotice=localStorage.getItem('sftpDesktopDownloadNoticeV1');
     const browserNotice=localStorage.getItem('sftpBrowserDownloadNoticeV1');
@@ -9355,8 +9187,12 @@ app.whenReady().then(async () => {
       tabs.push(downloadFixtureTab);
       activeTabKey=downloadFixtureTab.key;
       view.dataset.sftpTabKey=downloadFixtureTab.key;
-      const downloadRuntime=ensureSftpRuntime(downloadFixtureTab.key,1,'/fixture',view);
-      downloadRuntime.state=fixtureRuntime.state;
+      const downloadRuntime=window.termaSftpTabs.runtime.ensure(downloadFixtureTab.key,1,'/fixture',view);
+      downloadRuntime.state={...fixtureRuntime.state,connectionId:1,path:'/fixture',entries:[...fixtureRuntime.state.entries]};
+
+
+      window.termaSftpView.mount(view,downloadFixtureTab.key);
+      window.termaSftpView.render(downloadFixtureTab.key);
       localStorage.removeItem('sftpDesktopDownloadNoticeV1');
       localStorage.removeItem('sftpBrowserDownloadNoticeV1');
       api=async (pathname,options={})=>{
@@ -9369,34 +9205,41 @@ app.whenReady().then(async () => {
         }
         return [];
       };
-      confirmModal=async message=>{noticeCalls+=1;noticeMessages.push(message);return true;};
-      chooseModal=async (title,message,actions)=>{batchChoiceCalls+=1;return actions.some(action=>action.value==='separate')?'separate':'';};
-      refreshSftpJobs=async()=>[];
-      startSftpJobsTimer=()=>{};
-      await downloadSftp(1,'/tmp/first.txt');
-      await downloadSftp(1,'/tmp/second.txt');
+      window.termaSftpTaskWorkspace.runtime.refresh=async()=>[];
+      window.termaSftpTransferLifecycle.polling.start=()=>{};
+      document.documentElement.dataset.uiSmokeStage = 'sftp-download-desktop-first';
+      const firstDownload = window.termaSftpTransfers.controller.download(1,'/tmp/first.txt');
+      noticeMessages.push((await clickSftpFixtureChoice(0)).dialog); noticeCalls += 1;
+      await firstDownload;
+      document.documentElement.dataset.uiSmokeStage = 'sftp-download-desktop-second';
+      await window.termaSftpTransfers.controller.download(1,'/tmp/second.txt');
       deliveryMode='browser';
       const downloadChecks=[...view.querySelectorAll('.sftp-check')];
       downloadChecks[0].checked=true;
       downloadChecks[1].checked=true;
-      updateSftpSelection();
-      await downloadSftpSelection();
-      await downloadSftp(1,'/tmp/mobile.txt');
+      window.termaSftpViews.updateSelection(activeTabKey);
+      document.documentElement.dataset.uiSmokeStage = 'sftp-download-browser-batch';
+      const batchDownload = window.termaSftpTransfers.controller.selection(activeTabKey);
+      noticeMessages.push((await clickSftpFixtureChoice(0)).dialog); noticeCalls += 1;
+      await clickSftpFixtureChoice(0); batchChoiceCalls += 1;
+      await batchDownload;
+      document.documentElement.dataset.uiSmokeStage = 'sftp-download-browser-mobile';
+      await window.termaSftpTransfers.controller.download(1,'/tmp/mobile.txt');
     } finally {
       api=previousDownloadApi;
-      confirmModal=previousDownloadConfirm;
-      chooseModal=previousDownloadChoice;
-      refreshSftpJobs=previousDownloadRefresh;
-      startSftpJobsTimer=previousDownloadTimer;
+      window.termaSftpTaskWorkspace.runtime.refresh=previousDownloadRefresh;
+      window.termaSftpTransferLifecycle.polling.start=previousDownloadTimer;
       activeTabKey=previousDownloadTabKey;
       const downloadFixtureIndex=tabs.findIndex(tab=>tab.key===downloadFixtureTab.key);
       if(downloadFixtureIndex>=0)tabs.splice(downloadFixtureIndex,1);
-      disposeSftpRuntime(downloadFixtureTab.key);
+      window.termaSftpTabs.runtime.dispose(downloadFixtureTab.key);
       view.dataset.sftpTabKey=fixtureTabKey;
       fixtureRuntime.root=view;
-      sftpActiveRuntimeKey=fixtureTabKey;
-      sftpState=fixtureRuntime.state;
-      sftpPendingBrowserDownloads.clear();
+
+
+      window.termaSftpView.mount(view,fixtureTabKey);
+      window.termaSftpView.render(fixtureTabKey);
+      window.termaSftpTaskWorkspace.state.pendingDownloads.clear();
       if(desktopNotice===null)localStorage.removeItem('sftpDesktopDownloadNoticeV1');else localStorage.setItem('sftpDesktopDownloadNoticeV1',desktopNotice);
       if(browserNotice===null)localStorage.removeItem('sftpBrowserDownloadNoticeV1');else localStorage.setItem('sftpBrowserDownloadNoticeV1',browserNotice);
     }
@@ -9410,7 +9253,8 @@ app.whenReady().then(async () => {
         && downloadRequests.some(request=>request.pathname.endsWith('/sftp/download')&&request.body.path==='/fixture/'+specialName),
       noDuplicateBatchNotice:noticeCalls===2
     };
-    const editorPromise = sftpTextModal('/tmp/gbk.txt', 'A', 1, 2, 'gbk', 'auto');
+    document.documentElement.dataset.uiSmokeStage = 'sftp-text-editor-gbk';
+    const editorPromise = window.termaSftpPreviewRuntime.editor.sftpTextModal('/tmp/gbk.txt', 'A', 1, 2, 'gbk', 'auto');
     await new Promise(resolve=>setTimeout(resolve,20));
     const editorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
     const editorHost=editorWindow?.querySelector('#sftpTextEditor');
@@ -9429,12 +9273,12 @@ app.whenReady().then(async () => {
       nonJsonFormattingHidden:false,
       jsonFormatting:false,
       jsonHiddenAfterLanguageChange:false,
-      json5FormattingHidden:!isSftpJsonFileName('/tmp/example.json5'),
+      json5FormattingHidden:!window.termaSftpPreviewRuntime.editor.isSftpJsonFileName('/tmp/example.json5'),
       wordWrap:Boolean(editorWindow?.querySelector('#sftpEditorWordWrap')?.checked),
       persistDefault:Boolean(editorWindow?.querySelector('#sftpPersistEncoding')),
       backup:Boolean(editorWindow?.querySelector('#sftpBackupBeforeSave')?.checked),
       lineEndings:[...(editorWindow?.querySelectorAll('#sftpLineEnding option')||[])].map(option=>option.value),
-      lineEndingLabelsLocalized:[...(editorWindow?.querySelectorAll('#sftpLineEnding option')||[])].every(option=>option.textContent===sftpTextLineEndingOptions().find(([value])=>value===option.value)?.[1]),
+      lineEndingLabelsLocalized:[...(editorWindow?.querySelectorAll('#sftpLineEnding option')||[])].every(option=>option.textContent===window.termaSftpPreviewRuntime.editor.sftpTextLineEndingOptions().find(([value])=>value===option.value)?.[1]),
       shellFormat:false
     };
     const gbkEditor=window.ace&&editorHost?ace.edit(editorHost):null;
@@ -9442,8 +9286,8 @@ app.whenReady().then(async () => {
     await new Promise(resolve=>setTimeout(resolve,160));
     textEncodingUi.nonUtf8SaveAllowed=Boolean(!editorWindow?.querySelector('#sftpTextSave')?.disabled
       && editorWindow?.querySelector('#sftpEditorStats')?.textContent.includes('保存时检查大小'));
-    const utf8Measurement=sftpEditorByteMeasurement('中','utf8');
-    const utf8BomMeasurement=sftpEditorByteMeasurement('A','utf8bom');
+    const utf8Measurement=window.termaSftpPreviewRuntime.editor.sftpEditorByteMeasurement('中','utf8');
+    const utf8BomMeasurement=window.termaSftpPreviewRuntime.editor.sftpEditorByteMeasurement('A','utf8bom');
     textEncodingUi.utf8LimitEnforced=utf8Measurement.exact&&utf8Measurement.bytes===3&&utf8Measurement.bytes>2;
     textEncodingUi.utf8BomIncludesPrefix=utf8BomMeasurement.exact&&utf8BomMeasurement.bytes===4;
     if (languageSelect) {
@@ -9461,8 +9305,9 @@ app.whenReady().then(async () => {
     editorWindow?.querySelector('#sftpTextSave')?.click();
     const gbkSave=await editorPromise;
     textEncodingUi.nonUtf8SaveSubmitted=Boolean(gbkSave?.action==='save'&&gbkSave?.encoding==='gbk'&&gbkSave?.content==='中');
+    document.documentElement.dataset.uiSmokeStage = 'sftp-text-editor-remote-save';
     let remoteSaveCalls=0;
-    const remoteEditorPromise=sftpTextModal('/tmp/keep-open.txt','A',1,512*1024,'utf8','auto',{
+    const remoteEditorPromise=window.termaSftpPreviewRuntime.editor.sftpTextModal('/tmp/keep-open.txt','A',1,512*1024,'utf8','auto',{
       onSave:async payload=>{
         remoteSaveCalls+=1;
         return {encoding:payload.encoding,line_ending:payload.line_ending};
@@ -9478,13 +9323,13 @@ app.whenReady().then(async () => {
     textEncodingUi.remoteSaveKeepsOpen=Boolean(remoteSaveCalls===1&&remoteEditorWindow?.isConnected&&!remoteEditorWindow?.hidden);
     remoteEditorWindow?.querySelector('#sftpTextClose')?.click();
     textEncodingUi.remoteEditorClosesExplicitly=(await remoteEditorPromise)===null;
-    const shellEditorPromise=sftpTextModal('/tmp/restart_Pms.sh','\uFEFF#!/bin/bash\\r\\necho restart',31,512*1024,'utf8bom','auto',{lineEnding:'crlf',bom:true,finalNewline:false});
+    const shellEditorPromise=window.termaSftpPreviewRuntime.editor.sftpTextModal('/tmp/restart_Pms.sh','﻿#!/bin/bash\\r\\necho restart',31,512*1024,'utf8bom','auto',{lineEnding:'crlf',bom:true,finalNewline:false});
     await new Promise(resolve=>setTimeout(resolve,20));
     const shellEditorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
     const shellLineEnding=shellEditorWindow?.querySelector('#sftpLineEnding');
     const shellEncoding=shellEditorWindow?.querySelector('#sftpTextEncoding');
     const shellControlsReady=Boolean(shellLineEnding?.value==='crlf'&&!shellLineEnding.disabled&&shellEncoding?.value==='utf8');
-    textEncodingUi.shellNonLfWarningPrepared=Boolean(prepareSftpEditorSave('/tmp/risky.sh','#!/bin/sh\\necho risky','utf8','crlf').unsafeScriptLineEnding);
+    textEncodingUi.shellNonLfWarningPrepared=Boolean(window.termaSftpPreviewRuntime.editor.prepareSftpEditorSave('/tmp/risky.sh','#!/bin/sh\\necho risky','utf8','crlf').unsafeScriptLineEnding);
     if (shellLineEnding) shellLineEnding.value='lf';
     shellEditorWindow?.querySelector('#sftpTextSave')?.click();
     const shellSave=await shellEditorPromise;
@@ -9494,7 +9339,8 @@ app.whenReady().then(async () => {
       &&shellSave?.encoding==='utf8'
       &&shellSave?.line_ending==='lf'
       &&shellSave?.content==='#!/bin/bash\\necho restart\\n');
-    const normalizationOnlyPromise=sftpTextModal('/tmp/normalize-only.sh','ab',2,2,'utf8','auto',{lineEnding:'lf',bom:false,finalNewline:false});
+    document.documentElement.dataset.uiSmokeStage = 'sftp-text-editor-normalization';
+    const normalizationOnlyPromise=window.termaSftpPreviewRuntime.editor.sftpTextModal('/tmp/normalize-only.sh','ab',2,2,'utf8','auto',{lineEnding:'lf',bom:false,finalNewline:false});
     await new Promise(resolve=>setTimeout(resolve,20));
     const normalizationEditorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
     normalizationEditorWindow?.querySelector('#sftpTextSave')?.click();
@@ -9503,8 +9349,9 @@ app.whenReady().then(async () => {
       &&normalizationEditorWindow?.querySelector('#sftpEditorStats')?.classList.contains('limit-exceeded'));
     normalizationEditorWindow?.querySelector('#sftpTextClose')?.click();
     await normalizationOnlyPromise;
+    document.documentElement.dataset.uiSmokeStage = 'sftp-text-editor-large';
     const lightFixture='x'.repeat(1024*1024+37);
-    const lightEditorPromise=sftpTextModal('/tmp/large.log',lightFixture,lightFixture.length,2*1024*1024,'utf8','auto',{editorKind:'light',lineCount:1});
+    const lightEditorPromise=window.termaSftpPreviewRuntime.editor.sftpTextModal('/tmp/large.log',lightFixture,lightFixture.length,2*1024*1024,'utf8','auto',{editorKind:'light',lineCount:1});
     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
     const lightEditorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
     const lightTextarea=lightEditorWindow?.querySelector('.sftp-light-editor-shell textarea');
@@ -9520,7 +9367,8 @@ app.whenReady().then(async () => {
     textEncodingUi.lightNextPage=Boolean(lightTextarea?.value.length<=256*1024 && lightPageInput?.value==='2');
     lightEditorWindow?.querySelector('#sftpTextClose')?.click();
     await lightEditorPromise;
-    const jsonEditorPromise=sftpTextModal('/tmp/config.json','{"name":"Terma","items":[1,2]}',36,512*1024,'utf8','auto');
+    document.documentElement.dataset.uiSmokeStage = 'sftp-text-editor-json';
+    const jsonEditorPromise=window.termaSftpPreviewRuntime.editor.sftpTextModal('/tmp/config.json','{"name":"Terma","items":[1,2]}',36,512*1024,'utf8','auto');
     await new Promise(resolve=>setTimeout(resolve,20));
     const jsonEditorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
     const jsonEditorHost=jsonEditorWindow?.querySelector('#sftpTextEditor');
@@ -9542,19 +9390,20 @@ app.whenReady().then(async () => {
     }
     jsonEditorWindow?.querySelector('#sftpTextSave')?.click();
     await jsonEditorPromise;
-      const previousImageOpenFeedback=withSftpFileOpenFeedback;
-      const previousImageReader=readSftpImageWithProgress;
-      const previousImagePreviewText=previewSftpText;
+      const previousImageReader=window.termaFileOpen.image;
+      const previousImagePreviewText=window.termaSftpPreviewRuntime.text;
       const imagePreviewUi={};
       try {
       // The SFTP row assertions above replace previewSftpText with an action spy.
       // Restore the real implementation while exercising SVG preview/editor mode
       // transitions so this scenario covers the actual round-trip behavior.
-      previewSftpText=previousPreview;
-      withSftpFileOpenFeedback=async (_connectionId,_remotePath,operation)=>operation();
-      readSftpImageWithProgress=async ()=>new Blob(['<svg xmlns="http://www.w3.org/2000/svg" xmlns:cge="http://iec.ch/TC57/2005/SVG-schema#" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="500" viewBox="0 0 1200 500" onload="window.__unsafeSvg=true"><defs><style>.fixture-line{fill:none;stroke:rgb(34,197,94)} symbol{overflow:visible}</style><symbol id="fixture-switch" viewBox="0 0 10 10"><line x1="-5" y1="5" x2="15" y2="5" stroke="#f97316"/></symbol><symbol id="fixture-contrast" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#808080"/><path id="contrast-detail" d="M4 10h12" stroke="#fff"/></symbol></defs><script>window.__unsafeSvg=true</script><g id="BackGround_Layer"><rect id="canvas-background" width="1200" height="500" fill="#000"/></g><rect id="canvas-outline" width="1200" height="500" fill="none" stroke="#fff"/><polyline id="styled-line" class="fixture-line" points="80,180 180,180"/><path id="yellow-line" d="M80 200H180" stroke="#ffff00"/><use id="styled-use" xlink:href="#fixture-switch" x="200" y="175" width="10" height="10"/><use xlink:href="#fixture-switch" x="260" y="175" width="10" height="10"/><use id="contrast-use" xlink:href="#fixture-contrast" x="230" y="170" width="20" height="20"/><g id="line-to-PD_11100000_14419"><path d="M100 250H590" stroke="#ef4444"/><metadata><cge:GLink_Ref ObjectID="PD_11100000_14419"/></metadata></g><g id="neighbor-left"><rect x="280" y="220" width="40" height="60" fill="#64748b"/></g><g id="PD_11100000_14419" data-kind="needle"><rect x="590" y="230" width="20" height="40" fill="#2563eb"/><metadata><desc devId="PD_11100000_14419"/><cge:PSR_Ref ObjectID="PD_11100000_14419" ObjectName="needle"/><cge:GLink_Ref ObjectID="line-to-PD_11100000_14419"/></metadata></g><g id="TXT-PD_11100000_14419"><text x="600" y="300" fill="#fff">needle</text><text id="unicode-label" x="600" y="340" fill="#fff">服务器磁盘</text><metadata><cge:PSR_Ref ObjectID="TXT-PD_11100000_14419"/></metadata></g><g id="neighbor-right"><rect x="880" y="220" width="40" height="60" fill="#64748b"/></g><rect id="mono-fill" x="950" y="220" width="40" height="60" fill="#808080"/></svg>'],{type:'image/svg+xml'});
-      await previewSftpImage(1,'/tmp/fixture.svg');
+      window.termaSftpPreviewRuntime.text=previousPreview;
+      window.termaFileOpen.image=async ()=>new Blob(['<svg xmlns="http://www.w3.org/2000/svg" xmlns:cge="http://iec.ch/TC57/2005/SVG-schema#" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="500" viewBox="0 0 1200 500" onload="window.__unsafeSvg=true"><defs><style>.fixture-line{fill:none;stroke:rgb(34,197,94)} symbol{overflow:visible}</style><symbol id="fixture-switch" viewBox="0 0 10 10"><line x1="-5" y1="5" x2="15" y2="5" stroke="#f97316"/></symbol><symbol id="fixture-contrast" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#808080"/><path id="contrast-detail" d="M4 10h12" stroke="#fff"/></symbol></defs><script>window.__unsafeSvg=true</script><g id="BackGround_Layer"><rect id="canvas-background" width="1200" height="500" fill="#000"/></g><rect id="canvas-outline" width="1200" height="500" fill="none" stroke="#fff"/><polyline id="styled-line" class="fixture-line" points="80,180 180,180"/><path id="yellow-line" d="M80 200H180" stroke="#ffff00"/><use id="styled-use" xlink:href="#fixture-switch" x="200" y="175" width="10" height="10"/><use xlink:href="#fixture-switch" x="260" y="175" width="10" height="10"/><use id="contrast-use" xlink:href="#fixture-contrast" x="230" y="170" width="20" height="20"/><g id="line-to-PD_11100000_14419"><path d="M100 250H590" stroke="#ef4444"/><metadata><cge:GLink_Ref ObjectID="PD_11100000_14419"/></metadata></g><g id="neighbor-left"><rect x="280" y="220" width="40" height="60" fill="#64748b"/></g><g id="PD_11100000_14419" data-kind="needle"><rect x="590" y="230" width="20" height="40" fill="#2563eb"/><metadata><desc devId="PD_11100000_14419"/><cge:PSR_Ref ObjectID="PD_11100000_14419" ObjectName="needle"/><cge:GLink_Ref ObjectID="line-to-PD_11100000_14419"/></metadata></g><g id="TXT-PD_11100000_14419"><text x="600" y="300" fill="#fff">needle</text><text id="unicode-label" x="600" y="340" fill="#fff">服务器磁盘</text><metadata><cge:PSR_Ref ObjectID="TXT-PD_11100000_14419"/></metadata></g><g id="neighbor-right"><rect x="880" y="220" width="40" height="60" fill="#64748b"/></g><rect id="mono-fill" x="950" y="220" width="40" height="60" fill="#808080"/></svg>'],{type:'image/svg+xml'});
+      document.documentElement.dataset.uiSmokeStage = 'sftp-svg-preview';
+      await window.termaSftpPreviewRuntime.image(1,'/tmp/fixture.svg');
+      document.documentElement.dataset.uiSmokeStage = 'sftp-svg-preview-frame';
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      document.documentElement.dataset.uiSmokeStage = 'sftp-svg-preview-controls';
       const svgStage=document.querySelector('#sftpImageStage');
       const currentSvgRoot=()=>svgStage?.shadowRoot?.querySelector('svg');
       const svgRoot=currentSvgRoot();
@@ -9687,31 +9536,32 @@ app.whenReady().then(async () => {
         && svgSearchTargetRect.left<svgSearchViewportRect.right
         && svgSearchTargetRect.bottom>svgSearchViewportRect.top
         && svgSearchTargetRect.top<svgSearchViewportRect.bottom);
-      const previousGeneratedDownload=triggerSftpGeneratedDownload;
+      const previousGeneratedDownload=window.termaSftpPreviewRuntime.download;
+      document.documentElement.dataset.uiSmokeStage = 'sftp-svg-preview-pdf';
       let generatedPdfBlob=null;
-      triggerSftpGeneratedDownload=(blob)=>{ generatedPdfBlob=blob; };
+      window.termaSftpPreviewRuntime.download=(blob)=>{ generatedPdfBlob=blob; };
       let generatedPdfError='';
       try {
         const pdfFixture = new Blob(['<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500" viewBox="0 0 1200 500"><text x="600" y="340">服务器磁盘</text></svg>'],{type:'image/svg+xml'});
-        generatedPdfBlob = await createSftpSvgPdfBlob(pdfFixture);
+        generatedPdfBlob = await window.termaSftpPreviewRuntime.svgExport.createSftpSvgPdfBlob(pdfFixture);
         const colorFixture = new Blob(['<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80"><rect width="120" height="80" fill="rgb(255,0,0)"/><path d="M0 0h20" stroke="#ffffff"/></svg>'],{type:'image/svg+xml'});
-        const invertedPdfBlob = await createSftpSvgPdfBlob(colorFixture, {colorMode:'invert-color'});
-        const blackWhitePdfBlob = await createSftpSvgPdfBlob(colorFixture, {colorMode:'invert-bw'});
-        const invertedSvgText = await (await createSftpSvgDownloadBlob(colorFixture, {colorMode:'invert-color'})).text();
-        const blackWhiteSvgText = await (await createSftpSvgDownloadBlob(colorFixture, {colorMode:'invert-bw'})).text();
+        const invertedPdfBlob = await window.termaSftpPreviewRuntime.svgExport.createSftpSvgPdfBlob(colorFixture, {colorMode:'invert-color'});
+        const blackWhitePdfBlob = await window.termaSftpPreviewRuntime.svgExport.createSftpSvgPdfBlob(colorFixture, {colorMode:'invert-bw'});
+        const invertedSvgText = await (await window.termaSftpPreviewRuntime.svgExport.createSftpSvgDownloadBlob(colorFixture, {colorMode:'invert-color'})).text();
+        const blackWhiteSvgText = await (await window.termaSftpPreviewRuntime.svgExport.createSftpSvgDownloadBlob(colorFixture, {colorMode:'invert-bw'})).text();
         const styledSvgFixture = new Blob(['<svg xmlns="http://www.w3.org/2000/svg"><style>.bus{stroke:#ff0000;fill:#00ff00}</style><path class="bus" d="M0 0h20"/></svg>'],{type:'image/svg+xml'});
-        const styledBlackWhiteSvgText = await (await createSftpSvgDownloadBlob(styledSvgFixture, {colorMode:'invert-bw'})).text();
+        const styledBlackWhiteSvgText = await (await window.termaSftpPreviewRuntime.svgExport.createSftpSvgDownloadBlob(styledSvgFixture, {colorMode:'invert-bw'})).text();
         imagePreviewUi.svgPdfInvert=Boolean(invertedPdfBlob instanceof Blob
           && blackWhitePdfBlob instanceof Blob
           && invertedPdfBlob.size>0
           && blackWhitePdfBlob.size>0
-          && sftpSvgPdfInvertColor('rgb(255, 0, 0)')==='rgb(0, 255, 255)'
-          && sftpSvgPdfInvertColor('rgb(255, 0, 0)','invert-mono')==='rgb(255, 0, 0)'
-          && sftpSvgPdfInvertColor('#808080','invert-mono')==='rgb(0, 0, 0)'
-          && sftpSvgPdfInvertColor('rgb(255, 0, 0)','invert-bw')==='rgb(0, 0, 0)'
-          && sftpSvgPdfInvertColor('yellow','invert-bw')==='rgb(0, 0, 0)'
-          && sftpSvgPdfInvertColor('#ffffff')==='rgb(0, 0, 0)'
-          && sftpSvgPdfInvertColor('white')==='rgb(0, 0, 0)'
+          && window.termaSftpPreviewRuntime.svgExport.sftpSvgPdfInvertColor('rgb(255, 0, 0)')==='rgb(0, 255, 255)'
+          && window.termaSftpPreviewRuntime.svgExport.sftpSvgPdfInvertColor('rgb(255, 0, 0)','invert-mono')==='rgb(255, 0, 0)'
+          && window.termaSftpPreviewRuntime.svgExport.sftpSvgPdfInvertColor('#808080','invert-mono')==='rgb(0, 0, 0)'
+          && window.termaSftpPreviewRuntime.svgExport.sftpSvgPdfInvertColor('rgb(255, 0, 0)','invert-bw')==='rgb(0, 0, 0)'
+          && window.termaSftpPreviewRuntime.svgExport.sftpSvgPdfInvertColor('yellow','invert-bw')==='rgb(0, 0, 0)'
+          && window.termaSftpPreviewRuntime.svgExport.sftpSvgPdfInvertColor('#ffffff')==='rgb(0, 0, 0)'
+          && window.termaSftpPreviewRuntime.svgExport.sftpSvgPdfInvertColor('white')==='rgb(0, 0, 0)'
           && invertedSvgText.includes('rgb(0, 255, 255)')
           && blackWhiteSvgText.includes('rgb(0, 0, 0)')
           && styledBlackWhiteSvgText.includes('stroke:rgb(0, 0, 0)')
@@ -9741,13 +9591,14 @@ app.whenReady().then(async () => {
       parUse.setAttribute('y','200');
       parUse.setAttribute('width','20');
       parUse.setAttribute('height','10');
-      const parViewport=sftpSvgPdfViewportTransform(parUse,parSymbol,[0,0,10,10]);
+      const parViewport=window.termaSftpPreviewRuntime.svgExport.sftpSvgPdfViewportTransform(parUse,parSymbol,[0,0,10,10]);
       imagePreviewUi.svgPreserveAspectRatio=Boolean(parViewport.scaleX===1
         && parViewport.scaleY===1
         && parViewport.offsetX===5
         && parViewport.offsetY===0);
       imagePreviewUi.svgPdfError=generatedPdfError;
-      triggerSftpGeneratedDownload=previousGeneratedDownload;
+      window.termaSftpPreviewRuntime.download=previousGeneratedDownload;
+      document.documentElement.dataset.uiSmokeStage = 'sftp-svg-preview-clear-search';
       if (svgSearch) {
         svgSearch.value='';
         svgSearch.dispatchEvent(new Event('input',{bubbles:true}));
@@ -9782,12 +9633,13 @@ app.whenReady().then(async () => {
       dismissToast(fullscreenToast);
       const svgModeSelect=document.querySelector('#sftpImageViewMode');
       if (svgModeSelect) {
+        document.documentElement.dataset.uiSmokeStage = 'sftp-svg-preview-edit-mode';
         const svgModeApi=api;
-        const svgModeTextReader=readSftpTextWithProgress;
+        const svgModeTextReader=window.termaFileOpen.text;
         const svgModeSource=currentSvgRoot()?.outerHTML||'';
         let svgModeTextReadCalls=0;
         let svgModeSaveCalls=0;
-        readSftpTextWithProgress=async ()=>{
+        window.termaFileOpen.text=async ()=>{
           svgModeTextReadCalls+=1;
           return {
             content:svgModeSource,
@@ -9816,6 +9668,7 @@ app.whenReady().then(async () => {
           await new Promise(resolve=>setTimeout(resolve,50));
         }
         const svgEditorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
+        document.documentElement.dataset.uiSmokeStage = 'sftp-svg-preview-edit-mounted';
         const svgEditorMode=svgEditorWindow?.querySelector('#sftpSvgEditorMode');
         const svgEditorPreview=svgEditorWindow?.querySelector('#sftpSvgEditorPreview');
         imagePreviewUi.svgRemoteUsesEncodingAwareRead=svgModeTextReadCalls===1;
@@ -10015,7 +9868,7 @@ app.whenReady().then(async () => {
           && getComputedStyle(svgPreviewMarker).width!=='0px');
         const controlCard=svgEditorWindow?.querySelector('.sftp-editor-modal');
         const controlWidthBefore=controlCard?.style.width||'';
-        if (controlCard) controlCard.style.width='820px';
+        if (controlCard) controlCard.style.width='760px';
         await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
         const controlRects=[...(svgEditorWindow?.querySelector('.sftp-editor-controls')?.children||[])].map(node=>node.getBoundingClientRect()).filter(rect=>rect.width>0&&rect.height>0);
         const firstControlTop=Math.min(...controlRects.map(rect=>rect.top));
@@ -10086,13 +9939,13 @@ app.whenReady().then(async () => {
         roundTripEditorWindow?.querySelector('#sftpTextClose')?.click();
         await new Promise(resolve=>setTimeout(resolve,20));
         api=svgModeApi;
-        readSftpTextWithProgress=svgModeTextReader;
+        window.termaFileOpen.text=svgModeTextReader;
       }
       document.querySelector('#sftpImageClose')?.click();
 
       const pngBytes=Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='),character=>character.charCodeAt(0));
-      readSftpImageWithProgress=async ()=>new Blob([pngBytes],{type:'image/png'});
-      await previewSftpImage(1,'/tmp/fixture.png');
+      window.termaFileOpen.image=async ()=>new Blob([pngBytes],{type:'image/png'});
+      await window.termaSftpPreviewRuntime.image(1,'/tmp/fixture.png');
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       const rasterZoomBefore=document.querySelector('#sftpImageZoomValue')?.textContent||'';
       document.querySelector('#sftpImageZoomIn')?.click();
@@ -10100,9 +9953,8 @@ app.whenReady().then(async () => {
       imagePreviewUi.rasterZoom=Boolean(rasterZoomBefore && document.querySelector('#sftpImageZoomValue')?.textContent!==rasterZoomBefore);
       document.querySelector('#sftpImageClose')?.click();
     } finally {
-      previewSftpText=previousImagePreviewText;
-      withSftpFileOpenFeedback=previousImageOpenFeedback;
-      readSftpImageWithProgress=previousImageReader;
+      window.termaSftpPreviewRuntime.text=previousImagePreviewText;
+      window.termaFileOpen.image=previousImageReader;
       delete window.__unsafeSvg;
     }
     const pagerLayoutFixture = document.createElement('div');
@@ -10129,11 +9981,12 @@ app.whenReady().then(async () => {
       && pagerBottomGap <= 12;
     const pagerStyle = getComputedStyle(pagerProbe);
     const pagerDockStyle = getComputedStyle(pagerProbeDock);
-    const pagerOpaqueAndElevated = !['transparent','rgba(0, 0, 0, 0)'].includes(pagerStyle.backgroundColor)
-      && pagerStyle.boxShadow !== 'none'
+    const pagerOpaqueAndFlat = !['transparent','rgba(0, 0, 0, 0)'].includes(pagerStyle.backgroundColor)
+      && pagerStyle.boxShadow === 'none'
+      && parseFloat(pagerStyle.borderTopWidth) >= 1
       && parseFloat(pagerStyle.borderRadius) >= 6;
     const pagerDockSealsBottom = !['transparent','rgba(0, 0, 0, 0)'].includes(pagerDockStyle.backgroundColor)
-      && pagerDockStyle.boxShadow !== 'none'
+      && pagerDockStyle.boxShadow === 'none'
       && pagerDockScrollbarGap >= 0
       && pagerDockScrollbarGap <= 18;
     for (let index=0; index<16; index+=1) {
@@ -10142,14 +9995,14 @@ app.whenReady().then(async () => {
       pagerProbeList.insertBefore(row, pagerProbeDock);
     }
     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-    syncSftpListScrollCue(pagerProbeList);
+    window.termaSftpColumns.syncSftpListScrollCue(pagerProbeList);
     const pagerScrollCue = pagerProbe?.querySelector('.sftp-scroll-cue');
     const scrollCueVisibleAboveContent = getComputedStyle(pagerScrollCue).display === 'grid';
     const pagerViewportBottom = pagerProbeList.getBoundingClientRect().bottom;
     const pagerBottomBeforeScroll = pagerProbeDock?.getBoundingClientRect().bottom || 0;
     pagerProbeList.scrollTop = 120;
     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-    syncSftpListScrollCue(pagerProbeList);
+    window.termaSftpColumns.syncSftpListScrollCue(pagerProbeList);
     const pagerBottomAfterScroll = pagerProbeDock?.getBoundingClientRect().bottom || 0;
     const pagerBottomGapBeforeScroll = pagerViewportBottom - pagerBottomBeforeScroll;
     const pagerBottomGapAfterScroll = pagerViewportBottom - pagerBottomAfterScroll;
@@ -10160,7 +10013,7 @@ app.whenReady().then(async () => {
       && pagerBottomGapAfterScroll <= 18
       && Math.abs(pagerBottomGapBeforeScroll - pagerBottomGapAfterScroll) <= 1;
     pagerProbeList.scrollTop = pagerProbeList.scrollHeight;
-    syncSftpListScrollCue(pagerProbeList);
+    window.termaSftpColumns.syncSftpListScrollCue(pagerProbeList);
     const scrollCueHidesAtEnd = getComputedStyle(pagerScrollCue).display === 'none';
     const pagerProbeContainer = pagerLayoutFixture.querySelector('.sftp-pager-layout-probe');
     pagerProbeContainer.style.width = '440px';
@@ -10202,7 +10055,8 @@ app.whenReady().then(async () => {
     diffFixture.remove();
     const previousEditorLayout = localStorage.getItem(SFTP_EDITOR_LAYOUT_STORAGE_KEY);
     let loadedVersionPath = '';
-    const historyEditorPromise = sftpTextModal('/tmp/history.txt', 'new value\\n', 10, 1024, 'utf8', 'auto', {
+    document.documentElement.dataset.uiSmokeStage = 'sftp-history-editor';
+    const historyEditorPromise = window.termaSftpPreviewRuntime.editor.sftpTextModal('/tmp/history.txt', 'new value\\n', 10, 1024, 'utf8', 'auto', {
       versions:[
         {path:'/tmp/history.txt.bak-2',size:10,changed_at:2000},
         {path:'/tmp/history.txt.bak-1',size:9,changed_at:1000}
@@ -10232,7 +10086,7 @@ app.whenReady().then(async () => {
     const editorDiffRect = editorDiff?.getBoundingClientRect();
     const diffHeaderRect = editorDiff?.querySelector('.sftp-diff-columns')?.getBoundingClientRect();
     const diffRowRect = editorDiff?.querySelector('.sftp-diff-row')?.getBoundingClientRect();
-    const storedEditorLayout = readSftpEditorLayout();
+    const storedEditorLayout = window.termaFileLayouts.createEditor({mobile:isMobileLayout}).readSftpEditorLayout();
     const diffEditorUi = Boolean(editorCard
       && getComputedStyle(editorCard).resize === 'both'
       && historyOptions.length === 2
@@ -10254,7 +10108,7 @@ app.whenReady().then(async () => {
       && !editorDiff?.querySelector('#sftpDiffClose'));
     historyEditorWindow?.querySelector('#sftpTextClose')?.click();
     await historyEditorPromise;
-    const noHistoryEditorPromise = sftpTextModal('/tmp/no-history.txt', 'same\\n', 5, 1024, 'utf8', 'auto', {versions:[]});
+    const noHistoryEditorPromise = window.termaSftpPreviewRuntime.editor.sftpTextModal('/tmp/no-history.txt', 'same\\n', 5, 1024, 'utf8', 'auto', {versions:[]});
     await new Promise(resolve=>requestAnimationFrame(resolve));
     const noHistoryEditorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
     const noHistoryUi = Boolean(noHistoryEditorWindow?.querySelector('#sftpTextDiff')?.disabled
@@ -10264,7 +10118,7 @@ app.whenReady().then(async () => {
     await noHistoryEditorPromise;
     if (previousEditorLayout === null) localStorage.removeItem(SFTP_EDITOR_LAYOUT_STORAGE_KEY);
     else localStorage.setItem(SFTP_EDITOR_LAYOUT_STORAGE_KEY, previousEditorLayout);
-    const comparisonPromise = openSftpExternalComparison({status:'conflict',remote_path:'/tmp/example.txt'}, {
+    const comparisonPromise = window.termaSftpComparisonViews.show({status:'conflict',remote_path:'/tmp/example.txt'}, {
       remote_path:'/tmp/example.txt',old_label:'远端当前版本',new_label:'外部编辑内容',old_text:'old\\n',new_text:'new\\n',old_size:4,new_size:4,remote_changed_at:Date.now()-1000,local_changed_at:Date.now()
     });
     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
@@ -10275,15 +10129,18 @@ app.whenReady().then(async () => {
       && comparisonCard.querySelectorAll('.sftp-comparison-actions button').length === 3
       && comparisonRect.left >= 0 && comparisonRect.right <= innerWidth + 1
       && comparisonRect.top >= 0 && comparisonRect.bottom <= innerHeight + 1);
-    comparisonCard?.querySelector('[data-sftp-compare-choice="cancel"]')?.click();
+    const comparisonCancel = comparisonCard?.querySelector('[data-focus-key="cancel"], [data-sftp-compare-choice="cancel"]');
+    if (!comparisonCancel) throw new Error("External comparison cancel button is missing");
+    comparisonCancel.click();
     const comparisonChoice = await comparisonPromise;
     const diffComparisonUi = diffRuntimeLoaded && diffSideBySide && diffEditorUi && diffClosedUi && noHistoryUi && externalComparisonUi && comparisonChoice === 'cancel';
-    const recycleIconFixture = document.createElement('div');
-    recycleIconFixture.style.cssText='position:fixed;left:-10000px;top:0;width:600px;';
-    recycleIconFixture.innerHTML = sftpRecycleItemHtml(1, {id:'recycle-dir',name:'assets',original_path:'/fixture/assets',type:'dir',storage:'terma',deleted_at:Date.now()})
-      + sftpRecycleItemHtml(1, {id:'recycle-image',name:'preview.png',original_path:'/fixture/preview.png',type:'file',storage:'terma',deleted_at:Date.now()})
-      + sftpRecycleItemHtml(1, {id:'recycle-archive',name:'backup.tar.gz',original_path:'/fixture/backup.tar.gz',type:'file',storage:'terma',deleted_at:Date.now()});
-    document.body.appendChild(recycleIconFixture);
+    window.termaSftpDialogs.recycle({tr,page:1,load:async()=>({page:1,total:3,total_pages:1,enabled:true,items:[
+      {id:'recycle-dir',name:'assets',original_path:'/fixture/assets',type:'dir',storage:'terma'},
+      {id:'recycle-image',name:'preview.png',original_path:'/fixture/preview.png',type:'file',storage:'terma'},
+      {id:'recycle-archive',name:'backup.tar.gz',original_path:'/fixture/backup.tar.gz',type:'file',storage:'terma'}
+    ]}),restore:async()=>{},remove:async()=>{},clear:async()=>{}});
+    await new Promise(resolve=>setTimeout(resolve,50));
+    const recycleIconFixture = document.querySelector('.sftp-recycle-modal');
     const recycleIcons = [...recycleIconFixture.querySelectorAll('.sftp-recycle-icon')];
     const recycleBadges = recycleIcons.slice(1).map(icon=>({icon,badge:icon.querySelector('small'),svg:icon.querySelector('svg')}));
     const recycleIconUi = {
@@ -10293,7 +10150,7 @@ app.whenReady().then(async () => {
       badgeInside:recycleBadges.every(({icon,badge})=>{const outer=icon?.getBoundingClientRect();const inner=badge?.getBoundingClientRect();return Boolean(outer&&inner&&inner.left>=outer.left-1&&inner.right<=outer.right+1&&inner.top>=outer.top-1&&inner.bottom<=outer.bottom+1);}),
       badgeAtCorner:recycleBadges.every(({icon,badge,svg})=>{const outer=icon?.getBoundingClientRect();const label=badge?.getBoundingClientRect();const glyph=svg?.getBoundingClientRect();return Boolean(outer&&label&&glyph&&label.left>=outer.left+outer.width*.25&&label.top>=outer.top+outer.height*.55&&label.top>=glyph.top+glyph.height*.55);})
     };
-    recycleIconFixture.remove();
+    window.termaSftpDialogs.release();
     const result = {
       folderOpened: actions[0]?.kind === 'dir' && actions[0]?.path === '/fixture/folder',
       fileOpened: actions[1]?.kind === 'file' && actions[1]?.path === '/fixture/' + specialName,
@@ -10309,8 +10166,8 @@ app.whenReady().then(async () => {
       columnLayoutUi,
       directorySizeUi,
       fileOpenFeedback,
-      unknownAction: Boolean([...document.querySelectorAll('#view-sftp .sftp-row-actions button')].find(button => button.title === '以文本打开')),
-      stickyPosition: top ? getComputedStyle(top).position : '',
+      unknownAction,
+      stickyPosition,
       breadcrumbScrollable: Boolean(document.querySelector('#view-sftp .sftp-breadcrumb')),
       breadcrumbText,
       breadcrumbLabels,
@@ -10365,7 +10222,7 @@ app.whenReady().then(async () => {
       downloadNoticeUi,
       desktopPagerSingleRow,
       pagerFloatsAtWorkspaceBottom,
-      pagerOpaqueAndElevated,
+      pagerOpaqueAndFlat,
       pagerDockSealsBottom,
       pagerPinnedToViewport,
       pagerLayoutMetrics:{
@@ -10386,17 +10243,17 @@ app.whenReady().then(async () => {
       pageRows:rows.length,
       pagerVisible:Boolean(document.querySelector('#view-sftp .sftp-pager')),
       pagerJumpVisible:Boolean(document.querySelector('#view-sftp .sftp-page-jump input[type="number"][min="1"]')),
-      pagerText:document.querySelector('#view-sftp .sftp-pager')?.textContent.replace(/\s+/g,' ').trim()||'',
+      pagerText:document.querySelector('#view-sftp .sftp-pager')?.textContent.replace(/s+/g,' ').trim()||'',
       previousDisabled:Boolean(document.querySelector('#view-sftp .sftp-pager button:first-child')?.disabled),
       nextEnabled:!document.querySelector('#view-sftp .sftp-pager button:last-child')?.disabled
     };
-    sftpDirectorySizeCache.clear();
-    previousDirectorySizes.forEach(([key,value])=>sftpDirectorySizeCache.set(key,value));
+    window.termaSftpDirectoryWorkspace.cache.clearSizes(Number(connection.id));
     view.innerHTML = previousHtml;
     view.hidden = previousHidden;
-    openSftp = previousOpen;
-    navigateSftpPath = previousNavigateSftpPath;
-    previewSftpText = previousPreview;
+    window.termaSftpPage.open = previousOpen;
+    window.termaSftpView.navigate = previousNavigateSftpPath;
+    window.termaSftpDirectoryWorkspace.navigation.navigatePath = previousDirectoryNavigate;
+    window.termaSftpPreviewRuntime.text = previousPreview;
     for (const [key,runtime] of sftpTabRuntimes) {
       if (previousSftpRuntimes.some(([previousKey])=>previousKey===key)) continue;
       runtime.requestController?.abort?.();
@@ -10409,22 +10266,15 @@ app.whenReady().then(async () => {
       if (runtime.root?.isConnected) runtime.root.dataset.sftpTabKey=key;
       sftpTabRuntimes.set(key,runtime);
     });
-    sftpTabCounts.clear();
-    previousSftpTabCounts.forEach(([key,value])=>sftpTabCounts.set(key,value));
     sftpDisconnectedTabs.clear();
     previousSftpDisconnectedTabs.forEach(key=>sftpDisconnectedTabs.add(key));
-    sftpConnectionRequests.clear();
-    previousSftpConnectionRequests.forEach(([key,value])=>sftpConnectionRequests.set(key,value));
-    sftpConnectionVersions.clear();
-    previousSftpConnectionVersions.forEach(([key,value])=>sftpConnectionVersions.set(key,value));
-    sftpDisconnectRequests.clear();
-    previousSftpDisconnectRequests.forEach(([key,value])=>sftpDisconnectRequests.set(key,value));
-    sftpActiveRuntimeKey = previousSftpActiveRuntimeKey;
-    sftpState = previousState;
-    sftpRequestController = previousSftpRequestController;
-    sftpSearchTimer = previousSftpSearchTimer;
-    sftpListResizeObserver = previousSftpListResizeObserver;
-    sftpListResizeFrame = previousSftpListResizeFrame;
+
+
+
+
+
+
+
     tabs = previousTabs;
     workspaceLayout = previousWorkspaceLayout;
     focusedPaneId = previousFocusedPaneId;
@@ -10450,8 +10300,13 @@ app.whenReady().then(async () => {
       const previousHasPassword=connection?.has_password;
       let pending=null;
       const modal=document.getElementById('modal');
+      const setInput=(input,value)=>{input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));};
       const open=async scope => {
-        pending=requestRemoteAdminAuthorization(connection.id,scope);
+        const authorization=window.termaRemoteManagement.authorize(connection.id,scope,scope);
+        pending=new Promise((resolve,reject)=>{
+          const timer=setTimeout(()=>reject(new Error('Remote administrator dialog did not settle: '+scope)),5000);
+          authorization.then(value=>{clearTimeout(timer);resolve(value);},error=>{clearTimeout(timer);reject(error);});
+        });
         await new Promise(resolve=>setTimeout(resolve,0));
         return {
           card:modal.querySelector('.remote-admin-modal'),
@@ -10478,6 +10333,8 @@ app.whenReady().then(async () => {
           }
           return previousApi(path,options);
         };
+        closeModal();
+        modal.innerHTML='<div class="modal-card" data-legacy-dialog>Previous SFTP dialog</div>';
         const first=await open(mode==='mobile'?'移动端临时管理员授权布局检查':'桌面端临时管理员授权检查');
         const card=first.card;
         if (!card) return {error:'remote admin modal missing'};
@@ -10494,7 +10351,7 @@ app.whenReady().then(async () => {
         const noHorizontalOverflow=card.scrollWidth<=card.clientWidth+1;
         if (mode==='mobile') {
           const password=card.querySelector('#remoteAdminPassword');
-          password.value='mobile-secret';
+          setInput(password,'mobile-secret');
           card.scrollTop=card.scrollHeight;
           await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
           const scrolledCardRect=card.getBoundingClientRect();
@@ -10525,12 +10382,14 @@ app.whenReady().then(async () => {
         const passwordToggleCount=passwordInputs.length===3&&passwordInputs.every(input=>input.closest('.password-input-control')?.querySelectorAll('.password-visibility-toggle').length===1);
         const eyeInput=card.querySelector('#remoteAdminPassword');
         const eyeButton=eyeInput?.closest('.password-input-control')?.querySelector('.password-visibility-toggle');
-        eyeInput.value='visibility-secret';
+        setInput(eyeInput,'visibility-secret');
         eyeInput.focus();
         eyeInput.setSelectionRange(2,8);
         eyeButton?.click();
+        await new Promise(resolve=>requestAnimationFrame(resolve));
         const passwordShown=eyeInput.type==='text'&&eyeInput.value==='visibility-secret'&&eyeButton?.getAttribute('aria-label')==='隐藏密码'&&eyeButton?.getAttribute('aria-pressed')==='true'&&eyeButton?.querySelector('.lucide-eye-off');
         eyeButton?.click();
+        await new Promise(resolve=>requestAnimationFrame(resolve));
         const passwordHidden=eyeInput.type==='password'&&eyeInput.value==='visibility-secret'&&eyeButton?.getAttribute('aria-label')==='显示密码'&&eyeButton?.getAttribute('aria-pressed')==='false'&&eyeButton?.querySelector('.lucide-eye');
         const passwordEyeToggle=Boolean(passwordToggleCount&&passwordShown&&passwordHidden);
         const initialPasswordMode=method.value==='password'&&!passwordBox.hidden&&keyBox.hidden&&sudoMode.value==='none'&&sudoBox.hidden&&!sameOption.disabled;
@@ -10555,8 +10414,8 @@ app.whenReady().then(async () => {
         sudoMode.dispatchEvent(new Event('change',{bubbles:true}));
         const sshPassword=card.querySelector('#remoteAdminPassword');
         const sudoPassword=card.querySelector('#remoteAdminSudoPassword');
-        sshPassword.value='ssh-secret';
-        sudoPassword.value='sudo-secret';
+        setInput(sshPassword,'ssh-secret');
+        setInput(sudoPassword,'sudo-secret');
         card.requestSubmit();
         const submitted=await first.promise;
         pending=null;
@@ -10567,9 +10426,9 @@ app.whenReady().then(async () => {
         const cancelPassword=modal.querySelector('#remoteAdminPassword');
         const cancelPassphrase=modal.querySelector('#remoteAdminPassphrase');
         const cancelSudo=modal.querySelector('#remoteAdminSudoPassword');
-        cancelPassword.value='cancel-ssh-secret';
-        cancelPassphrase.value='cancel-key-secret';
-        cancelSudo.value='cancel-sudo-secret';
+        setInput(cancelPassword,'cancel-ssh-secret');
+        setInput(cancelPassphrase,'cancel-key-secret');
+        setInput(cancelSudo,'cancel-sudo-secret');
         modal.querySelector('[data-admin-cancel]').click();
         const cancelled=await cancelCheck.promise;
         pending=null;
@@ -10579,9 +10438,9 @@ app.whenReady().then(async () => {
         const backdropPassword=modal.querySelector('#remoteAdminPassword');
         const backdropPassphrase=modal.querySelector('#remoteAdminPassphrase');
         const backdropSudo=modal.querySelector('#remoteAdminSudoPassword');
-        backdropPassword.value='backdrop-ssh-secret';
-        backdropPassphrase.value='backdrop-key-secret';
-        backdropSudo.value='backdrop-sudo-secret';
+        setInput(backdropPassword,'backdrop-ssh-secret');
+        setInput(backdropPassphrase,'backdrop-key-secret');
+        setInput(backdropSudo,'backdrop-sudo-secret');
         let backdropSettled=false;
         backdropCheck.promise.then(()=>{backdropSettled=true;});
         modal.dispatchEvent(new MouseEvent('click',{bubbles:true}));
@@ -10595,8 +10454,8 @@ app.whenReady().then(async () => {
 
         const escapeCheck=await open('键盘关闭清理检查');
         const escapePassword=modal.querySelector('#remoteAdminPassword');
-        escapePassword.value='escape-secret';
-        document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+        setInput(escapePassword,'escape-secret');
+        escapePassword.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
         const escapeResult=await escapeCheck.promise;
         pending=null;
         const escapeClearsSecrets=escapeResult===null&&escapePassword.value===''&&!modal.innerHTML&&modal.hidden;
@@ -10627,16 +10486,17 @@ app.whenReady().then(async () => {
   await window.webContents.executeJavaScript(`(() => {
     window.__runLinuxDesktopToolbarSmoke = () => {
       const view=document.getElementById('view-linux-desktop');
-      const previousState=linuxDesktopManagerState;
-      const previousHtml=view?.innerHTML||'';
+      const previousState={...window.termaRemoteManagement.desktop.state};
       const previousHidden=Boolean(view?.hidden);
       const fixture=document.createElement('div');
       try {
         if (!view) return {error:'Linux desktop view missing'};
-        linuxDesktopManagerState={connectionId:Number(connections?.[0]?.id||1),diagnostics:null,sshX11:null,error:null,loading:true,taskId:'',task:null,logs:[]};
-        renderLinuxDesktopManager();
+        Object.assign(window.termaRemoteManagement.desktop.state,{connectionId:Number(connections?.[0]?.id||1),diagnostics:null,sshX11:null,error:null,loading:true,taskId:'',task:null,logs:[]});
+        window.termaRemoteManagement.paintDesktop();
         const rendered=view.querySelector('.linux-desktop-manager-toolbar');
         if (!rendered) return {error:'Linux desktop toolbar missing'};
+        fixture.className='terma-vue-root terma-remote-root';
+        fixture.dataset.theme=document.documentElement.dataset.theme;
         fixture.style.cssText='position:fixed;left:16px;top:16px;width:calc(100vw - 32px);visibility:hidden;pointer-events:none;z-index:-1';
         fixture.appendChild(rendered.cloneNode(true));
         document.body.appendChild(fixture);
@@ -10658,16 +10518,16 @@ app.whenReady().then(async () => {
           bottomAligned:Math.abs(selectRect.bottom-buttonRect.bottom)<=0.75,
           stacked:buttonRect.top>=selectRect.bottom+4,
           fullWidth:Math.abs(selectRect.width-buttonRect.width)<=1,
-          loadingVisible:Boolean(loadingState?.textContent.includes('正在探测')&&loadingState.querySelector('svg')&&select.disabled&&button.disabled&&button.textContent.includes('探测中')),
+          loadingVisible:Boolean(loadingState?.textContent.includes(tr('remote:linux_desktop.detecting_host',{host:connections[0].name}))&&loadingState.querySelector('svg')&&select.disabled&&button.disabled&&button.textContent.includes(tr('remote:linux_desktop.detecting'))),
           noOverflow:toolbar.scrollWidth<=toolbar.clientWidth+1&&insideToolbar(selectRect)&&insideToolbar(buttonRect)
         };
       } catch (error) {
         return {error:error?.stack||error?.message||String(error)};
       } finally {
         fixture.remove();
-        linuxDesktopManagerState=previousState;
+        Object.assign(window.termaRemoteManagement.desktop.state,previousState);
         if (view) {
-          view.innerHTML=previousHtml;
+          window.termaRemoteManagement.paintDesktop();
           view.hidden=previousHidden;
         }
       }
@@ -10710,14 +10570,17 @@ app.whenReady().then(async () => {
                 await writeClipboardText(expected);
                 const key='ui-smoke-terminal-image';
                 const connection={id:987654,name:'Clipboard smoke',x11_mode:'trusted'};
-                const previous={api,sendTerminalData,sendTerminalPasteText,uploadSftpFilesToDirectory,notify,focusTerminalSession};
+                const previous={api,sendPaste:window.termaTerminalClipboard.send,uploadSftpFilesToDirectory: window.termaSftpTransfers.controller.submit,notify};
                 const terminalWrites=[];
                 const pathWrites=[];
                 const uploads=[];
                 let directReady=true;
-                terminalSessions.set(key,{
+                window.termaTerminalState.terminalSessions.set(key,{
+                  id:connection.id,
                   connected:true,
                   connection,
+                  socket:{readyState:WebSocket.OPEN,send:value=>terminalWrites.push(value)},
+                  term:{focus(){}},
                   currentDirectoryKnown:true,
                   currentDirectory:'/home/smoke',
                   effectiveX11Mode:'trusted'
@@ -10727,17 +10590,15 @@ app.whenReady().then(async () => {
                     if (!String(path).includes('/terminal-clipboard/image')) return previous.api(path,options);
                     return directReady ? {ready:true,available:true} : {ready:false,available:false,reason:'xclip'};
                   };
-                  sendTerminalData=(_key,value)=>{ terminalWrites.push(value); return true; };
-                  sendTerminalPasteText=async(_key,value)=>{ pathWrites.push(value); return true; };
-                  uploadSftpFilesToDirectory=async(files,connectionId,directory,options)=>{ uploads.push({files,connectionId,directory,options}); };
+                  window.termaTerminalClipboard.send=async(_key,value)=>{ pathWrites.push(value); return true; };
+                  window.termaSftpTransfers.controller.submit=async(files,connectionId,directory,options)=>{ uploads.push({files,connectionId,directory,options}); };
                   notify=()=>{};
-                  focusTerminalSession=()=>{};
                   const image=new File([Uint8Array.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1,2,3,4])],'clipboard.png',{type:'image/png'});
-                  const directResult=await handleTerminalClipboardImagePaste(key,connection.id,image);
+                  const directResult=await window.termaTerminalImagePaste.handleImage(key,connection.id,image);
                   const directCtrlV=terminalWrites.length===1&&terminalWrites[0]==='\\x16';
                   const directSkippedUpload=uploads.length===0&&pathWrites.length===0;
                   directReady=false;
-                  const fallbackResult=await handleTerminalClipboardImagePaste(key,connection.id,image);
+                  const fallbackResult=await window.termaTerminalImagePaste.handleImage(key,connection.id,image);
                   const fallbackPrivate=uploads.length===1&&uploads[0].connectionId===connection.id&&uploads[0].directory==='/tmp'&&uploads[0].options?.private===true;
                   const fallbackPath=pathWrites.length===1&&pathWrites[0].startsWith('/tmp/terma-clipboard-')&&pathWrites[0].endsWith('.png');
                   return {
@@ -10747,12 +10608,10 @@ app.whenReady().then(async () => {
                   };
                 } finally {
                   api=previous.api;
-                  sendTerminalData=previous.sendTerminalData;
-                  sendTerminalPasteText=previous.sendTerminalPasteText;
-                  uploadSftpFilesToDirectory=previous.uploadSftpFilesToDirectory;
+                  window.termaTerminalClipboard.send=previous.sendPaste;
+                  window.termaSftpTransfers.controller.submit=previous.uploadSftpFilesToDirectory;
                   notify=previous.notify;
-                  focusTerminalSession=previous.focusTerminalSession;
-                  terminalSessions.delete(key);
+                  window.termaTerminalState.terminalSessions.delete(key);
                 }
               } catch (error) {
                 return {ok:false,error:error?.stack||error?.message||String(error)};
@@ -10791,7 +10650,7 @@ app.whenReady().then(async () => {
     window.show();
     await window.webContents.executeJavaScript(`(() => {
       const connectionId = Number(connections?.[0]?.id || 1);
-      updateSftpTaskCenter([{
+      window.termaSftpTaskWorkspace.state.paint([{
         id:'notification-screenshot-job',
         status:'running',
         type:'upload',
@@ -10809,50 +10668,54 @@ app.whenReady().then(async () => {
     await new Promise(resolve => setTimeout(resolve, 160));
     const notificationImage = await window.webContents.capturePage();
     fs.writeFileSync(path.join(diagnosticsDirectory, "ui-smoke-notifications.png"), notificationImage.toPNG());
-    await window.webContents.executeJavaScript("dismissToast(); updateSftpTaskCenter([]); closeSftpTaskCenter()");
+    await window.webContents.executeJavaScript("dismissToast(); window.termaSftpTaskWorkspace.state.paint([]); window.termaSftpTaskWorkspace.runtime.close()");
   }
   await window.webContents.executeJavaScript("document.documentElement.dataset.uiSmokeStage='productivity-and-visual-regression'");
+  if(sftpUi.error)console.error('[ui-smoke] SFTP fixture failed: '+sftpUi.error);
+  console.log('[ui-smoke] productivity fixture connections',await window.webContents.executeJavaScript('connections.map(item=>({id:item.id,name:item.name}))'));
   const productivityUi = await window.webContents.executeJavaScript(`(async () => {
-    ensureTermaActions();
-    const panel=ensureQuickPanel();
+    window.termaEfficiency.palette.ensure();
+    const panel=window.termaEfficiency.palette.ensureView();
     panel.hidden=false;
-    renderQuickPanel('');
-    const commandWindowDefaultHasConnections=productivityState.quickItems.some(item=>['connection','forward','remote-profile'].includes(item.kind));
-    const previousSnippets=productivityState.snippets;
-    productivityState.snippets=[{id:-987650,name:'UI smoke snippet',group_name:'Smoke',tags:'smoke',description:'Command window search fixture',command:'echo smoke'}];
-    renderQuickPanel('');
-    const commandWindowDefaultHasSnippets=productivityState.quickItems.some(item=>item.kind==='snippet');
-    renderQuickPanel('smoke');
-    const commandWindowSearchFindsSnippet=productivityState.quickItems.some(item=>item.kind==='snippet'&&item.title==='UI smoke snippet');
-    productivityState.snippets=previousSnippets;
-    renderQuickPanel('工作区');
+    window.termaEfficiency.palette.refresh('');
+    const commandWindowDefaultHasConnections=window.termaEfficiency.palette.state.quickItems.some(item=>['connection','forward','remote-profile'].includes(item.kind));
+    const previousSnippets=window.termaSnippets.service.state.items;
+    window.termaSnippets.service.replaceItems([{id:-987650,name:'UI smoke snippet',group_name:'Smoke',tags:'smoke',description:'Command window search fixture',command:'echo smoke'}]);
+    window.termaEfficiency.palette.refresh('');
+    const commandWindowDefaultHasSnippets=window.termaEfficiency.palette.state.quickItems.some(item=>item.kind==='snippet');
+    window.termaEfficiency.palette.refresh('smoke');
+    const commandWindowSearchFindsSnippet=window.termaEfficiency.palette.state.quickItems.some(item=>item.kind==='snippet'&&item.title==='UI smoke snippet');
+    window.termaSnippets.service.replaceItems(previousSnippets);
+    window.termaEfficiency.palette.refresh('工作区');
     const quickVisible=!panel.hidden&&Boolean(panel.querySelector('.quick-result'));
-    const actionCount=listAppActions({surface:'quick-panel'}).length;
-    renderQuickPanel(connections[0]?.name || '');
-    const connectionIndex=productivityState.quickItems.findIndex(item=>item.kind==='connection');
+    const actionCount=window.termaActionRegistry.list({surface:'quick-panel'}).length;
+    window.termaEfficiency.palette.refresh(connections[0]?.name || '');
+    const connectionIndex=window.termaEfficiency.palette.state.quickItems.findIndex(item=>item.kind==='connection');
     const connectionRow=panel.querySelector('.quick-result[data-index="'+connectionIndex+'"]');
     const connectionActions=connectionRow?.querySelector('.quick-result-actions');
     const connectionRowBounds=connectionRow?.getBoundingClientRect();
     const connectionActionBounds=connectionActions?.getBoundingClientRect();
     const quickConnectionActionsInline=Boolean(connectionActions&&connectionActions.parentElement===connectionRow&&connectionRow.tagName!=='BUTTON'&&Math.abs((connectionRowBounds.top+connectionRowBounds.bottom)-(connectionActionBounds.top+connectionActionBounds.bottom))<2&&connectionActionBounds.right<=connectionRowBounds.right);
-    renderQuickPanel('tester@198.51.100.25:2200');
-    const quickPanelDirect=productivityState.quickItems[0]?.kind==='quick-ssh'
-      &&productivityState.quickItems.some(item=>item.kind==='quick-ssh-new')
+    window.termaEfficiency.palette.refresh('tester@198.51.100.25:2200');
+    const quickPanelDirect=window.termaEfficiency.palette.state.quickItems[0]?.kind==='quick-ssh'
+      &&window.termaEfficiency.palette.state.quickItems.some(item=>item.kind==='quick-ssh-new')
       &&panel.querySelector('.quick-result')?.textContent.includes('tester@198.51.100.25:2200');
-    const previousWorkspaces=productivityState.workspaces;
-    productivityState.workspaces=[...previousWorkspaces,{id:-987654,name:'test',description:'UI smoke workspace',layout:{tabs:[{kind:'terminal'}]}}];
-    renderQuickPanel('test');
-    const workspaceSearchable=productivityState.quickItems.some(item=>item.kind==='workspace'&&item.title==='test');
-    const workspaceIndex=productivityState.quickItems.findIndex(item=>item.kind==='workspace'&&item.title==='test');
-    runQuickPanelItem(workspaceIndex);
+    const previousWorkspaceApi=api;
+    const reviewWorkspaces=[...window.termaNamedWorkspacePresets.items(),{id:-987654,name:'test',description:'UI smoke workspace',layout:{tabs:[{kind:'terminal'}]}}];
+    api=async (url, options)=>url==='/api/named-workspaces'?reviewWorkspaces:previousWorkspaceApi(url,options);
+    try { await window.termaNamedWorkspacePresets.list(); } finally { api=previousWorkspaceApi; }
+    window.termaEfficiency.palette.refresh('test');
+    const workspaceSearchable=window.termaEfficiency.palette.state.quickItems.some(item=>item.kind==='workspace'&&item.title==='test');
+    const workspaceIndex=window.termaEfficiency.palette.state.quickItems.findIndex(item=>item.kind==='workspace'&&item.title==='test');
+    window.termaEfficiency.palette.run(workspaceIndex);
     const workspacePreviewOpens=!document.getElementById('modal').hidden&&document.getElementById('modal').textContent.includes('打开 test');
     closeModal();
-    productivityState.workspaces=previousWorkspaces;
+    await window.termaNamedWorkspacePresets.list();
     const quickButton=document.getElementById('quickPanelButton');
     const quickButtonPlacement=quickButton?.parentElement?.id==='workspaceQuickActions';
     const quickButtonLightning=Boolean(quickButton?.querySelector('.lucide-zap'));
     const commandWindowLabel=quickButton?.title||'';
-    await refreshXServerQuickAction();
+    await window.termaX11.manager.refreshHeader();
     const xServerQuickButton=document.getElementById('xServerQuickButton');
     const xServerQuickIcon=xServerQuickButton?.querySelector('.xserver-x-icon');
     const xServerQuickButtonRect=xServerQuickButton?.getBoundingClientRect();
@@ -10873,7 +10736,7 @@ app.whenReady().then(async () => {
     api=async (path,options={}) => String(path)==='/api/xserver'
       ? {available:true,running:true,authorization_required:true,display:':0.0'}
       : originalProductivityApi(path,options);
-    await refreshXServerQuickAction();
+    await window.termaX11.manager.refreshHeader();
     const xServerUnauthorizedWarning=xServerQuickButton.classList.contains('warning')
       && !xServerQuickButton.classList.contains('ready')
       && xServerQuickButton.title.includes('当前浏览器未授权')
@@ -10881,41 +10744,49 @@ app.whenReady().then(async () => {
     api=async (path,options={}) => String(path)==='/api/xserver'
       ? {available:true,running:true,authorization_required:false,authorization_kind:'local-direct',display:':0.0'}
       : originalProductivityApi(path,options);
-    await refreshXServerQuickAction();
+    await window.termaX11.manager.refreshHeader();
     const xServerLocalDirectReady=xServerQuickButton.classList.contains('ready')
       && !xServerQuickButton.classList.contains('warning')
       && xServerQuickButton.title.includes('本机直连自动授权');
     api=originalProductivityApi;
-    await refreshXServerQuickAction();
-    const previousBroadcastTargets=productivityState.broadcastTargets;
-    const previousBroadcastPaused=productivityState.broadcastPaused;
+    await window.termaX11.manager.refreshHeader();
+    const previousBroadcastTargets=[...window.termaTerminalBroadcast.state.targets];
+    const previousBroadcastPaused=window.termaTerminalBroadcast.state.paused;
     const broadcastKeys=['__smoke-broadcast-a','__smoke-broadcast-b'];
     const broadcastSentA=[];
     const broadcastSentB=[];
     tabs.push(...broadcastKeys.map((key,index)=>({key,kind:'terminal',title:'Broadcast '+index})));
-    terminalSessions.set(broadcastKeys[0],{socket:{readyState:WebSocket.OPEN,send:value=>broadcastSentA.push(value)},sensitiveInput:false});
-    terminalSessions.set(broadcastKeys[1],{socket:{readyState:WebSocket.OPEN,send:value=>broadcastSentB.push(value)},sensitiveInput:false});
-    productivityState.broadcastTargets=new Set(broadcastKeys);
-    const previousWorkspaceVisiblePanes=workspaceVisiblePanes;
-    workspaceVisiblePanes=()=>[{activeTabKey:broadcastKeys[0]},{activeTabKey:broadcastKeys[1]}];
-    updateTerminalSmartState(broadcastKeys[1],'visible split output');
+    window.termaTerminalState.terminalSessions.set(broadcastKeys[0],{socket:{readyState:WebSocket.OPEN,send:value=>broadcastSentA.push(value)},sensitiveInput:false});
+    window.termaTerminalState.terminalSessions.set(broadcastKeys[1],{socket:{readyState:WebSocket.OPEN,send:value=>broadcastSentB.push(value)},sensitiveInput:false});
+    window.termaTerminalBroadcast.setTargets(broadcastKeys);
+    const previousBroadcastLayout=workspaceLayout;
+    const previousBroadcastFocus=focusedPaneId;
+    workspaceLayout={type:'split',id:'broadcast-fixture',direction:'row',ratio:.5,
+      first:{type:'pane',id:'broadcast-a',tabs:[broadcastKeys[0]],activeTabKey:broadcastKeys[0]},
+      second:{type:'pane',id:'broadcast-b',tabs:[broadcastKeys[1]],activeTabKey:broadcastKeys[1]}};
+    focusedPaneId='broadcast-a';
+    window.termaTerminalActivity.updateWorkspace(broadcastKeys[1],'visible split output');
     const visibleSplitHasNoActivity=!tabs.find(tab=>tab.key===broadcastKeys[1]).activityState;
     const splitTab=tabs.find(tab=>tab.key===broadcastKeys[0]);
     splitTab.activityState='output';
-    const visibleSplitHtml=workspaceTabHtml(splitTab,{activeTabKey:broadcastKeys[0]});
-    const visibleSplitClearsPriorActivity=!splitTab.activityState&&!visibleSplitHtml.includes('activity-output');
+    const tabPreview=document.createElement('div');
+    window.termaWorkspaceViews.tabs(tabPreview,[window.termaWorkspaceDockTabs.workspaceTabViewModel(splitTab,{activeTabKey:broadcastKeys[0]})],window.termaWorkspaceDockLayout.port);
+    const visibleSplitClearsPriorActivity=!splitTab.activityState&&!tabPreview.querySelector('.activity-output');
     const hiddenBinaryKey='__smoke-hidden-binary-output';
     tabs.push({key:hiddenBinaryKey,kind:'terminal',title:'Hidden tail output'});
-    terminalSessions.set(hiddenBinaryKey,{smartOutputTail:''});
-    workspaceVisiblePanes=()=>[{activeTabKey:broadcastKeys[0]}];
-    updateTerminalSmartState(hiddenBinaryKey,new Uint8Array([116,97,105,108,32,111,117,116,112,117,116,10]));
-    const hiddenBinarySession=terminalSessions.get(hiddenBinaryKey);
+    window.termaTerminalState.terminalSessions.set(hiddenBinaryKey,{});
+    workspaceLayout=workspaceLayout.first;
+    window.termaTerminalActivity.updateWorkspace(hiddenBinaryKey,new Uint8Array([116,97,105,108,32,111,117,116,112,117,116,10]));
+    const hiddenBinarySession=window.termaTerminalState.terminalSessions.get(hiddenBinaryKey);
     const hiddenBinaryOutputMarked=tabs.find(tab=>tab.key===hiddenBinaryKey).activityState==='output'
-      && hiddenBinarySession.smartOutputTail.includes('tail output');
-    workspaceVisiblePanes=previousWorkspaceVisiblePanes;
-    const broadcastFromEither=handleTerminalBroadcastInput(broadcastKeys[0],'A','A')&&handleTerminalBroadcastInput(broadcastKeys[1],'B','B')&&broadcastSentA.join('')==='AB'&&broadcastSentB.join('')==='AB';
-    const broadcastTabMarked=workspaceTabHtml(tabs.find(tab=>tab.key===broadcastKeys[0]),{activeTabKey:broadcastKeys[0]}).includes('broadcast-selected');
-    updateTerminalBroadcastBar();
+      && window.termaTerminalActivity.tail(hiddenBinaryKey).includes('tail output');
+    workspaceLayout=previousBroadcastLayout;
+    focusedPaneId=previousBroadcastFocus;
+    const broadcastFromEither=window.termaTerminalBroadcastWorkspace.handle(broadcastKeys[0],'A','A')&&window.termaTerminalBroadcastWorkspace.handle(broadcastKeys[1],'B','B')&&broadcastSentA.join('')==='AB'&&broadcastSentB.join('')==='AB';
+    window.termaWorkspaceViews.tabs(tabPreview,[window.termaWorkspaceDockTabs.workspaceTabViewModel(tabs.find(tab=>tab.key===broadcastKeys[0]),{activeTabKey:broadcastKeys[0]})],window.termaWorkspaceDockLayout.port);
+    const broadcastTabMarked=Boolean(tabPreview.querySelector('.broadcast-selected'));
+    window.termaWorkspaceViews.unmount(tabPreview);
+    window.termaTerminalBroadcastWorkspace.paint();
     const broadcastBar=document.getElementById('terminalBroadcastBar');
     const broadcastHeaderGrouped=broadcastBar?.nextElementSibling?.id==='workspaceQuickActions';
     const broadcastExit=broadcastBar?.querySelector('.terminal-broadcast-exit');
@@ -10925,13 +10796,13 @@ app.whenReady().then(async () => {
     document.body.classList.remove('terminal-broadcast-active');
     tabs.splice(tabs.findIndex(tab=>tab.key===hiddenBinaryKey),1);
     tabs.splice(tabs.findIndex(tab=>tab.key===broadcastKeys[0]),2);
-    terminalSessions.delete(broadcastKeys[0]);
-    terminalSessions.delete(broadcastKeys[1]);
-    terminalSessions.delete(hiddenBinaryKey);
-    productivityState.broadcastTargets=previousBroadcastTargets;
-    productivityState.broadcastPaused=previousBroadcastPaused;
-    closeQuickPanel();
-    renderSftpSyncPlan(Number(connections[0].id),{
+    window.termaTerminalState.terminalSessions.delete(broadcastKeys[0]);
+    window.termaTerminalState.terminalSessions.delete(broadcastKeys[1]);
+    window.termaTerminalState.terminalSessions.delete(hiddenBinaryKey);
+    window.termaTerminalBroadcast.setTargets(previousBroadcastTargets);
+    window.termaTerminalBroadcast.setPaused(previousBroadcastPaused);
+    window.termaEfficiency.palette.close();
+    window.termaSftpWorkflow.sync.showPlan(Number(connections[0].id),{
       id:'visual-sync-plan',local_path:'C:/project',remote_path:'/srv/project',
       totals:{upload:1,download:1,conflict:1},
       actions:[
@@ -10942,411 +10813,13 @@ app.whenReady().then(async () => {
     },activeTabKey);
     const syncRows=document.querySelectorAll('.sftp-sync-plan-row').length;
     const conflictSafe=Boolean(document.querySelector('.sftp-sync-plan-row.conflict input:disabled')&&!document.querySelector('.sftp-sync-plan-row.conflict input:checked'));
-    const namedWorkspaceTools=typeof importNamedWorkspaceData==='function'&&typeof exportNamedWorkspace==='function'&&typeof repairNamedWorkspace==='function';
-    const terminalTools=typeof openTerminalPathInSftp==='function'
+    const presets=window.termaNamedWorkspacePresets;
+    const namedWorkspaceTools=['importFile','exportFile','repair'].every(action=>typeof presets?.[action]==='function');
+    const terminalTools=typeof window.termaTerminalSurface.openSelectedSftp==='function'
       && !document.querySelector('.tab.activity-complete');
-    const quickCommandUi=await (async()=>{
-    let previousQuickSnippets;
-    let previousQuickVisible;
-    let previousQuickHeight;
-    let quickFixture;
-    let quickKey='';
-    let originalQuickApi=api;
-    try {
-    previousQuickSnippets=productivityState.snippets;
-    previousQuickVisible=localStorage.getItem(terminalQuickCommandStorage.visible);
-    previousQuickHeight=localStorage.getItem(terminalQuickCommandStorage.height);
-    localStorage.setItem(terminalQuickCommandStorage.visible,'1');
-    localStorage.setItem(terminalQuickCommandStorage.height,'108');
-    applyTermaAppearanceSettings();
-    productivityState.snippets=[
-      {id:-998,name:'查服务',group_name:'测试',command:'printf quick-command',description:'',tags:'',favorite:1,quick_visible:1,quick_action:'execute',quick_badge:'',quick_color:'green',quick_sort_order:0,created_at:1},
-      {id:-997,name:'查看非常非常长的服务运行状态',group_name:'测试',command:'systemctl status sshd',description:'',tags:'',favorite:0,quick_visible:1,quick_action:'insert',quick_badge:'查',quick_color:'blue',quick_sort_order:0,created_at:2}
-    ];
-    quickFixture=document.createElement('div');
-    quickFixture.className='workspace-header-tools';
-    quickFixture.style.cssText='position:fixed;left:-10000px;top:0;width:640px;height:240px;display:flex;flex-direction:column;';
-    quickKey='__smoke-quick-command';
-    quickFixture.innerHTML=terminalQuickCommandToolbarButton(quickKey)+renderTerminalQuickCommandBar(quickKey);
-    document.body.appendChild(quickFixture);
-    const quickSent=[];
-    terminalSessions.set(quickKey,{id:connections[0]?.id,connection:connections[0],socket:{readyState:WebSocket.OPEN,send:value=>quickSent.push(value)},term:{focus(){}},connected:true});
-    originalQuickApi=api;
-    api=async (path,options={}) => {
-      if (String(path)==='/api/command-snippets' && !options.method) return productivityState.snippets;
-      if (String(path).includes('/command-snippets/')) return {};
-      return originalQuickApi(path,options);
-    };
-    mountTerminalQuickCommandBar(quickKey,quickFixture);
-    const quickBar=quickFixture.querySelector('[data-terminal-quick-command-bar]');
-    const quickToolbarIcon=quickFixture.querySelector('[data-terminal-quick-command-toggle] svg');
-    const quickToolbarIconVisible=Boolean(quickToolbarIcon&&quickToolbarIcon.getBoundingClientRect().width>0);
-    const initialQuickButtons=[...quickFixture.querySelectorAll('[data-terminal-quick-command-id]')];
-    const quickCompactWidths=initialQuickButtons.length===2
-      &&initialQuickButtons[0].getBoundingClientRect().width<initialQuickButtons[1].getBoundingClientRect().width
-      &&initialQuickButtons[1].getBoundingClientRect().width<=191
-      &&initialQuickButtons[0].classList.contains('no-badge')
-      &&!initialQuickButtons[0].querySelector('.terminal-quick-command-badge');
-    const quickItem=quickFixture.querySelector('[data-terminal-quick-command-id]');
-    quickItem.click();
-    await new Promise(resolve=>setTimeout(resolve,30));
-    const quickCommandExecutes=quickSent.join('')==='printf quick-command\\r';
-    quickItem.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:40,clientY:40}));
-    const quickContextLabels=[...document.querySelectorAll('#actionMenu > button:not(.action-menu-close) > span')].map(node=>node.textContent.trim());
-    const quickContextExpected=[
-      tr('terminal:quick_commands.execute_now'),
-      tr('terminal:quick_commands.insert_only'),
-      tr('terminal:quick_commands.edit'),
-      tr('terminal:quick_commands.remove'),
-      tr('terminal:quick_commands.delete')
-    ];
-    const quickContextMenu=JSON.stringify(quickContextLabels)===JSON.stringify(quickContextExpected);
-    hideActionMenu();
-    quickFixture.querySelector('[data-terminal-quick-command-list]').dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true}));
-    const quickDoubleClickCreates=!document.getElementById('modal').hidden
-      &&Boolean(document.getElementById('snippetQuickVisible')?.checked)
-      &&document.getElementById('snippetQuickBadge')?.value==='';
-    document.querySelector('[data-snippet-back]')?.click();
-    await new Promise(resolve=>setTimeout(resolve,20));
-    const quickEditorBackCloses=document.getElementById('modal').hidden;
-    await openCommandSnippetManager();
-    const quickManager=document.querySelector('.command-snippet-manager');
-    const quickManagerRows=[...document.querySelectorAll('.command-snippet-row')];
-    const quickManagerHead=quickManager?.querySelector('.productivity-manager-head');
-    const quickManagerToolbar=quickManager?.querySelector('.command-snippet-toolbar');
-    const quickManagerCode=quickManagerRows[0]?.querySelector('.command-snippet-copy code');
-    const quickManagerRect=quickManager?.getBoundingClientRect();
-    const quickManagerHeadRect=quickManagerHead?.getBoundingClientRect();
-    const quickManagerCodeRect=quickManagerCode?.getBoundingClientRect();
-    const quickManagerMetrics={
-      width:quickManagerRect?.width||0,
-      right:quickManagerRect?.right||0,
-      bottom:quickManagerRect?.bottom||0,
-      headHeight:quickManagerHeadRect?.height||0,
-      toolbarDisplay:quickManagerToolbar?getComputedStyle(quickManagerToolbar).display:'',
-      toolbarDirection:quickManagerToolbar?getComputedStyle(quickManagerToolbar).flexDirection:'',
-      toolbarButtons:quickManagerToolbar?.querySelectorAll('button').length||0,
-      codeWidth:quickManagerCodeRect?.width||0,
-      codeHeight:quickManagerCodeRect?.height||0,
-      codeColor:quickManagerCode?getComputedStyle(quickManagerCode).color:'',
-      codeBackground:quickManagerCode?getComputedStyle(quickManagerCode).backgroundColor:'',
-      rowAlign:quickManagerRows[0]?getComputedStyle(quickManagerRows[0]).alignItems:''
-    };
-    const quickManagerPolished=Boolean(quickManager
-      &&quickManagerRows.length===2
-      &&quickManagerRect.width>=700
-      &&quickManagerRect.right<=innerWidth+1&&quickManagerRect.bottom<=innerHeight+1
-      &&quickManagerHead?.getBoundingClientRect().height<=70
-      &&getComputedStyle(quickManagerToolbar).display==='flex'
-      &&getComputedStyle(quickManagerToolbar).flexDirection==='row'
-      &&quickManagerToolbar.querySelectorAll('button').length===3
-      &&quickManagerCode?.textContent.trim().length>0
-      &&quickManagerCodeRect.width>100&&quickManagerCodeRect.height>0
-      &&getComputedStyle(quickManagerCode).color!==getComputedStyle(quickManagerCode).backgroundColor
-      &&quickManagerRows.every(row=>row.querySelector('.command-snippet-copy code')&&row.querySelector('.command-snippet-actions'))
-      &&getComputedStyle(quickManagerRows[0]).alignItems==='center');
     closeModal();
-    const dragButtons=[...quickFixture.querySelectorAll('[data-terminal-quick-command-id]')];
-    const dragHandle=dragButtons[0]?.querySelector('[data-terminal-quick-command-drag]');
-    const dragStart=dragHandle?.getBoundingClientRect();
-    const dragTarget=dragButtons[1]?.getBoundingClientRect();
-    dragHandle?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:41,pointerType:'mouse',button:0,clientX:dragStart.left+4,clientY:dragStart.top+4}));
-    window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:41,pointerType:'mouse',button:0,clientX:dragTarget.right-2,clientY:dragTarget.top+dragTarget.height/2}));
-    window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:41,pointerType:'mouse',button:0,clientX:dragTarget.right-2,clientY:dragTarget.top+dragTarget.height/2}));
-    await new Promise(resolve=>setTimeout(resolve,80));
-    const quickOrderIds=[...quickFixture.querySelectorAll('[data-terminal-quick-command-id]')].map(button=>Number(button.dataset.terminalQuickCommandId));
-    const quickOrderPersists=JSON.stringify(quickOrderIds)===JSON.stringify([-997,-998])
-      &&productivityState.snippets.find(item=>item.id===-997)?.quick_sort_order===1
-      &&productivityState.snippets.find(item=>item.id===-998)?.quick_sort_order===2;
-    setTerminalQuickCommandHeight(156);
-    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-    const quickHeightAdjustable=Math.abs(quickBar.getBoundingClientRect().height-156)<1;
-    const quickToggle=quickFixture.querySelector('[data-terminal-quick-command-toggle]');
-    const quickActiveStyle={
-      color:getComputedStyle(quickToggle).color,
-      background:getComputedStyle(quickToggle).backgroundColor,
-      border:getComputedStyle(quickToggle).borderColor,
-      shadow:getComputedStyle(quickToggle).boxShadow
-    };
-    quickToggle.click();
-    const quickInactiveStyle={
-      color:getComputedStyle(quickToggle).color,
-      background:getComputedStyle(quickToggle).backgroundColor,
-      border:getComputedStyle(quickToggle).borderColor,
-      shadow:getComputedStyle(quickToggle).boxShadow
-    };
-    const quickToggleHides=quickBar.classList.contains('hidden')&&quickToggle.getAttribute('aria-pressed')==='false';
-    quickToggle.click();
-    const quickToggleStyleDifferences=['color','background','border','shadow']
-      .filter(property=>quickActiveStyle[property]!==quickInactiveStyle[property]);
-    const quickToggleStateVisible=quickToggle.getAttribute('aria-pressed')==='true'
-      &&quickToggle.classList.contains('active')
-      &&quickToggleStyleDifferences.includes('background')
-      &&quickToggleStyleDifferences.includes('border');
-    quickFixture.style.width='180px';
-    setTerminalQuickCommandHeight(32);
-    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-    const compactQuickList=quickFixture.querySelector('[data-terminal-quick-command-list]');
-    compactQuickList.scrollLeft=0;
-    compactQuickList.dispatchEvent(new WheelEvent('wheel',{deltaY:120,bubbles:true,cancelable:true}));
-    const quickWheelScrolls=compactQuickList.scrollLeft>0;
-    setTerminalQuickCommandHeight(156);
-    quickFixture.style.width='320px';
-    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-    const quickList=quickFixture.querySelector('[data-terminal-quick-command-list]');
-    const currentQuickItem=quickFixture.querySelector('[data-terminal-quick-command-id]');
-    const quickResponsive=quickList.scrollWidth<=quickList.clientWidth+1&&currentQuickItem.getBoundingClientRect().right<=quickList.getBoundingClientRect().right+1;
-    return {quickToolbarIconVisible,quickToggleStateVisible,quickToggleStyleDifferences,quickCompactWidths,quickCommandExecutes,quickContextMenu,quickDoubleClickCreates,quickEditorBackCloses,quickManagerPolished,quickManagerMetrics,quickOrderPersists,quickHeightAdjustable,quickToggleHides,quickWheelScrolls,quickResponsive,error:''};
-    } catch(error) {
-      return {quickToolbarIconVisible:false,quickToggleStateVisible:false,quickCompactWidths:false,quickCommandExecutes:false,quickContextMenu:false,quickDoubleClickCreates:false,quickEditorBackCloses:false,quickManagerPolished:false,quickOrderPersists:false,quickHeightAdjustable:false,quickToggleHides:false,quickWheelScrolls:false,quickResponsive:false,error:String(error?.stack||error)};
-    } finally {
-      closeModal();
-      api=originalQuickApi;
-      if(quickKey) terminalSessions.delete(quickKey);
-      quickFixture?.remove();
-      if(previousQuickSnippets!==undefined) productivityState.snippets=previousQuickSnippets;
-      if(previousQuickVisible!==undefined) {
-        if(previousQuickVisible===null) localStorage.removeItem(terminalQuickCommandStorage.visible); else localStorage.setItem(terminalQuickCommandStorage.visible,previousQuickVisible);
-      }
-      if(previousQuickHeight!==undefined) {
-        if(previousQuickHeight===null) localStorage.removeItem(terminalQuickCommandStorage.height); else localStorage.setItem(terminalQuickCommandStorage.height,previousQuickHeight);
-      }
-      applyTermaAppearanceSettings();
-    } })();
-    closeModal();
-    return {quickVisible,actionCount,quickConnectionActionsInline,quickPanelDirect,workspaceSearchable,workspacePreviewOpens,quickButtonPlacement,quickButtonLightning,commandWindowDefaultHasConnections,commandWindowDefaultHasSnippets,commandWindowSearchFindsSnippet,commandWindowLabel,xServerQuickUsesX11,xServerUnauthorizedWarning,xServerLocalDirectReady,broadcastFromEither,broadcastTabMarked,broadcastHeaderGrouped,broadcastExitCompact,visibleSplitHasNoActivity,visibleSplitClearsPriorActivity,hiddenBinaryOutputMarked,syncRows,conflictSafe,namedWorkspaceTools,terminalTools,...quickCommandUi};
+    return {quickVisible,actionCount,quickConnectionActionsInline,quickPanelDirect,workspaceSearchable,workspacePreviewOpens,quickButtonPlacement,quickButtonLightning,commandWindowDefaultHasConnections,commandWindowDefaultHasSnippets,commandWindowSearchFindsSnippet,commandWindowLabel,xServerQuickUsesX11,xServerUnauthorizedWarning,xServerLocalDirectReady,broadcastFromEither,broadcastTabMarked,broadcastHeaderGrouped,broadcastExitCompact,visibleSplitHasNoActivity,visibleSplitClearsPriorActivity,hiddenBinaryOutputMarked,syncRows,conflictSafe,namedWorkspaceTools,terminalTools};
   })()`);
-  console.log("[ui-smoke] quick commands", JSON.stringify({
-    quickToolbarIconVisible:productivityUi.quickToolbarIconVisible,
-    quickToggleStateVisible:productivityUi.quickToggleStateVisible,
-    quickToggleStyleDifferences:productivityUi.quickToggleStyleDifferences,
-    quickCompactWidths:productivityUi.quickCompactWidths,
-    quickCommandExecutes:productivityUi.quickCommandExecutes,
-    quickContextMenu:productivityUi.quickContextMenu,
-    quickDoubleClickCreates:productivityUi.quickDoubleClickCreates,
-    quickEditorBackCloses:productivityUi.quickEditorBackCloses,
-    quickManagerPolished:productivityUi.quickManagerPolished,
-    quickManagerMetrics:productivityUi.quickManagerMetrics,
-    quickOrderPersists:productivityUi.quickOrderPersists,
-    quickHeightAdjustable:productivityUi.quickHeightAdjustable,
-    quickToggleHides:productivityUi.quickToggleHides,
-    quickWheelScrolls:productivityUi.quickWheelScrolls,
-    quickResponsive:productivityUi.quickResponsive,
-    error:productivityUi.error
-  }));
-  await window.webContents.executeJavaScript("document.documentElement.dataset.uiSmokeStage='sftp-automation'");
-  const sftpAutomationUi = await window.webContents.executeJavaScript(`(async () => {
-    const previousApi=api;
-    const previousDesktop=window.termaDesktop;
-    const previousItems=sftpAutomationState.items;
-    const previousRuns=sftpAutomationState.runs;
-    const previousConnections=sftpAutomationState.connections;
-    let automationListCalls=0;
-    let automationOrder=[970001,970002];
-    let reorderedIds=[];
-    try {
-      window.termaDesktop={};
-      api=async (path,options={}) => {
-        if(path==='/api/sftp/automations') {
-          automationListCalls+=1;
-          const tasks=[
-            {id:970001,kind:'transfer',name:'Nightly upload',enabled:true,direction:'upload',connection_name:'Smoke host',local_path:'C:\\Work\\demo',remote_path:'/srv/demo',last_status:automationListCalls===1?'running':'done',last_run_at:Date.now()/1000,next_run_at:Date.now()/1000+3600},
-            {id:970002,kind:'sync',name:'Docs mirror',enabled:false,direction:'bidirectional',trigger_mode:'continuous',schedule:{frequency:'realtime'},connection_name:'Smoke host',local_path:'C:\\Work\\docs',remote_path:'/srv/docs',last_status:'done',last_run_at:Date.now()/1000-300,next_run_at:0}
-          ];
-          return automationOrder.map(id=>tasks.find(item=>item.id===id));
-        }
-        if(path==='/api/sftp/automations/reorder'&&options.method==='POST') {
-          reorderedIds=JSON.parse(options.body||'{}').ids||[];
-          automationOrder=[...reorderedIds];
-          return {ok:true,ids:automationOrder};
-        }
-        if(path==='/api/connections') return [{id:970001,name:'Smoke host',ssh_user:'tester',ssh_host:'127.0.0.1'}];
-        if(path.startsWith('/api/connections/970001/sftp?')) return {entries:[{name:'demo',type:'dir',is_dir:true},{name:'archive',type:'dir',is_dir:true},{name:'readme.txt',type:'file'}],total:3,total_pages:1,page:1,page_size:200};
-        if(path==='/api/sftp/automations/cron-preview') return {valid:true,next_runs:[Date.now()+60000,Date.now()+120000,Date.now()+180000]};
-        if(path==='/api/sftp/automations/runs') return [];
-        if(path.startsWith('/api/sftp/automations/970001/runs?')) return {items:[
-          {run_id:'run-970001',automation_id:970001,automation_name:'Nightly upload',status:'done',reason:'manual',summary:{processed:3,transferred:1,deleted:0,skipped:1,conflicts:0,failed:1,details:[{path:'uploaded.txt',action:'uploaded',bytes:128},{path:'demo.txt',action:'skipped',reason:'unchanged',bytes:0},{path:'failed.txt',action:'failed',reason:'target_exists',bytes:0}]},started_at:Date.now()/1000-2,finished_at:Date.now()/1000},
-          {run_id:'run-970000',automation_id:970001,automation_name:'Nightly upload',status:'done',reason:'schedule',summary:{processed:1,transferred:0,deleted:0,skipped:1,conflicts:0,failed:0,no_change_streak:19,details:[{path:'unchanged.txt',action:'skipped',reason:'unchanged',bytes:0}]},started_at:Date.now()/1000-62,finished_at:Date.now()/1000-60}
-        ],total:301,page:1,page_size:100,total_pages:4,history_limit:300};
-        throw new Error('Unexpected SFTP automation smoke request: '+path);
-      };
-      await openSftpAutomationManager();
-      const manager=document.querySelector('.sftp-automation-manager');
-      const header=document.querySelector('.sftp-automation-head');
-      const headActions=document.querySelector('.sftp-automation-head-actions');
-      const headerButtons=[...document.querySelectorAll('.sftp-automation-head-actions button')];
-      const desktopHeaderFits=Boolean(manager&&header&&headActions&&getComputedStyle(headActions).display==='flex'&&getComputedStyle(headActions).flexDirection==='row'&&headerButtons.every(button=>button.getBoundingClientRect().right<=header.getBoundingClientRect().right+1));
-      const newTaskText=document.querySelector('.sftp-automation-head-actions .primary > span');
-      const primaryTextReadable=Boolean(newTaskText&&getComputedStyle(newTaskText).color==='rgb(255, 255, 255)'&&getComputedStyle(newTaskText).webkitTextFillColor==='rgb(255, 255, 255)');
-      const desktopFits=Boolean(manager&&manager.scrollWidth<=manager.clientWidth+1&&manager.getBoundingClientRect().right<=innerWidth+1);
-      const unifiedList=Boolean(document.querySelectorAll('.sftp-automation-row').length===2&&!document.querySelector('.sftp-automation-tabs')&&document.querySelector('#sftpAutomationTitle')?.textContent.includes(sftpAutomationLabel('title',{defaultValue:'传输与同步任务'})));
-      const managerRowsCentered=[...document.querySelectorAll('.sftp-automation-row')].every(row=>getComputedStyle(row).alignItems==='center');
-      const globalHistoryRemoved=!document.querySelector('[data-tab="runs"]')&&!document.querySelector('[data-action="sftp-automation-tab"]');
-      const quickPathActions=Boolean(document.querySelector('[data-action="sftp-automation-open-local"][data-id="970001"]')&&document.querySelector('[data-action="sftp-automation-open-remote"][data-id="970001"]'));
-      const secondaryAction=document.querySelector('[data-action="sftp-automation-history"][data-id="970001"]');
-      const buttonsPolished=Boolean(secondaryAction&&parseFloat(getComputedStyle(secondaryAction).borderRadius)>=8&&getComputedStyle(secondaryAction).backgroundColor!=='rgba(0, 0, 0, 0)');
-      const taskRunButtons=[...document.querySelectorAll('.sftp-automation-row-actions .sftp-automation-action-run')];
-      const taskPrimaryTextReadable=taskRunButtons.length===2&&taskRunButtons.every(button=>{
-        const style=getComputedStyle(button);
-        const label=button.querySelector('.sftp-automation-action-text');
-        return style.color==='rgb(255, 255, 255)'
-          &&getComputedStyle(label).color==='rgb(255, 255, 255)'
-          &&style.backgroundColor!=='rgba(0, 0, 0, 0)'
-          &&style.backgroundColor!==getComputedStyle(button.closest('.sftp-automation-row')).backgroundColor;
-      });
-      const taskActionToolbars=[...document.querySelectorAll('.sftp-automation-row-actions')];
-      const taskActionsSingleLine=taskActionToolbars.length===2&&taskActionToolbars.every(toolbar=>{
-        const toolbarRect=toolbar.getBoundingClientRect();
-        const buttons=[...toolbar.querySelectorAll('button')];
-        const centers=buttons.map(button=>{const rect=button.getBoundingClientRect();return rect.top+rect.height/2;});
-        return getComputedStyle(toolbar).display==='flex'
-          &&getComputedStyle(toolbar).flexWrap==='nowrap'
-          &&Math.max(...centers)-Math.min(...centers)<=1
-          &&toolbar.scrollWidth<=toolbar.clientWidth+1
-          &&buttons.every(button=>button.getBoundingClientRect().right<=toolbarRect.right+1);
-      });
-      const compactTaskActions=[...document.querySelectorAll('.sftp-automation-row-actions .sftp-automation-action-compact')];
-      const compactTaskActionsAccessible=compactTaskActions.length===6&&compactTaskActions.every(button=>button.getBoundingClientRect().width<=36&&button.title&&button.getAttribute('aria-label')&&getComputedStyle(button.querySelector('.sftp-automation-action-text')).display==='none');
-      const dragHandles=[...document.querySelectorAll('.sftp-automation-drag-handle')];
-      const dragHandlesAccessible=dragHandles.length===2&&dragHandles.every(handle=>handle.title&&handle.getAttribute('aria-label'));
-      const initiallyRunning=document.querySelector('[data-action="sftp-automation-edit"][data-id="970001"]')?.closest('.sftp-automation-row')?.textContent.includes(sftpAutomationLabel('status_running',{defaultValue:'运行中'}));
-      const pausedRealtimeRow=document.querySelector('[data-action="sftp-automation-edit"][data-id="970002"]')?.closest('.sftp-automation-row');
-      const pausedRealtimeNotMonitoring=Boolean(pausedRealtimeRow&&pausedRealtimeRow.textContent.includes(sftpAutomationLabel('status_paused',{defaultValue:'已暂停'}))&&pausedRealtimeRow.textContent.includes(sftpAutomationLabel('last_sync',{defaultValue:'最近同步：{{last}}',last:''}).split('：')[0])&&!pausedRealtimeRow.textContent.includes(sftpAutomationLabel('realtime_waiting',{defaultValue:'等待文件变化 · 最近同步：{{last}}',last:''}).split(' · ')[0]));
-      await new Promise(resolve=>setTimeout(resolve,1200));
-      const refreshedRow=document.querySelector('[data-action="sftp-automation-edit"][data-id="970001"]')?.closest('.sftp-automation-row');
-      const liveStatusRefresh=Boolean(initiallyRunning&&automationListCalls>=2&&refreshedRow?.textContent.includes(sftpAutomationLabel('status_done',{defaultValue:'上次成功'}))&&!refreshedRow?.textContent.includes(sftpAutomationLabel('status_running',{defaultValue:'运行中'})));
-      const firstHandle=document.querySelector('[data-sftp-automation-id="970001"] .sftp-automation-drag-handle');
-      const targetRow=document.querySelector('[data-sftp-automation-id="970002"]');
-      const firstRect=firstHandle?.getBoundingClientRect();
-      const targetRect=targetRow?.getBoundingClientRect();
-      firstHandle?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:970,pointerType:'mouse',button:0,buttons:1,clientX:(firstRect?.left||0)+5,clientY:(firstRect?.top||0)+5}));
-      window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:970,pointerType:'mouse',button:0,buttons:1,clientX:(targetRect?.left||0)+5,clientY:(targetRect?.bottom||0)-2}));
-      window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:970,pointerType:'mouse',button:0,buttons:0,clientX:(targetRect?.left||0)+5,clientY:(targetRect?.bottom||0)-2}));
-      await new Promise(resolve=>setTimeout(resolve,80));
-      const dragSortingPersists=JSON.stringify(reorderedIds)===JSON.stringify([970002,970001])&&JSON.stringify([...document.querySelectorAll('.sftp-automation-row')].map(row=>Number(row.dataset.sftpAutomationId)))===JSON.stringify([970002,970001]);
-      document.querySelector('[data-action="sftp-automation-history"][data-id="970001"]')?.click();
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-      const perTaskHistory=Boolean(document.querySelector('.sftp-automation-run-row')&&document.querySelector('.sftp-automation-head h2')?.textContent.includes('Nightly upload'));
-      const noChangeHistory=Boolean([...document.querySelectorAll('.sftp-automation-run-row code')].some(item=>item.textContent.includes(sftpAutomationLabel('no_changes',{defaultValue:'没有文件变化'}))));
-      const noChangeStreakVisible=Boolean([...document.querySelectorAll('.sftp-automation-run-row code')].some(item=>item.textContent.includes(sftpAutomationLabel('no_changes_streak',{defaultValue:'没有文件变化 · 连续检查 19 次',count:19}))));
-      const historyPagination=Boolean(document.querySelector('.sftp-automation-history-pager')?.textContent.includes('4')&&document.querySelector('.sftp-automation-history-toolbar select')?.value==='300');
-      const runDetails=document.querySelector('.sftp-automation-run-row');
-      runDetails?.querySelector('summary')?.click();
-      const expandableRunDetails=Boolean(runDetails?.open&&runDetails.querySelector('.sftp-automation-run-details')?.textContent.includes('demo.txt'));
-      const transferredFilter=runDetails?.querySelector('[data-action="sftp-automation-run-filter"][data-filter="transferred"]');
-      transferredFilter?.click();
-      await new Promise(resolve=>requestAnimationFrame(resolve));
-      const visibleFilteredDetails=[...runDetails.querySelectorAll('[data-detail-action]')].filter(item=>!item.hidden);
-      const filteredToTransferred=visibleFilteredDetails.length===1&&visibleFilteredDetails[0].dataset.detailAction==='uploaded'&&transferredFilter?.getAttribute('aria-pressed')==='true';
-      transferredFilter?.click();
-      await new Promise(resolve=>requestAnimationFrame(resolve));
-      const filterCanReset=[...runDetails.querySelectorAll('[data-detail-action]')].every(item=>!item.hidden);
-      const historyCardFiltering=Boolean(filteredToTransferred&&filterCanReset);
-      const historyRefreshPaused=sftpAutomationRefreshTimer===0;
-      document.querySelector('[data-action="sftp-automation-history-clear"]')?.click();
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-      const nestedConfirmKeepsHistory=Boolean(document.querySelector('.sftp-automation-history-modal')&&document.querySelector('.sftp-automation-confirm-layer'));
-      document.querySelector('.sftp-automation-confirm-layer [data-confirm-value="false"]')?.click();
-      await new Promise(resolve=>requestAnimationFrame(resolve));
-      const historyRemainsAfterCancel=Boolean(document.querySelector('.sftp-automation-history-modal')&&!document.querySelector('.sftp-automation-confirm-layer'));
-      document.querySelector('[data-action="sftp-automation-history-close"]')?.click();
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-      document.querySelector('[data-action="sftp-automation-delete"][data-id="970001"]')?.click();
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-      const nestedConfirmKeepsManager=Boolean(document.querySelector('.sftp-automation-manager[data-sftp-automation-view="manager"]')&&document.querySelector('.sftp-automation-confirm-layer'));
-      document.querySelector('.sftp-automation-confirm-layer [data-confirm-value="false"]')?.click();
-      await new Promise(resolve=>requestAnimationFrame(resolve));
-      const managerRemainsAfterCancel=Boolean(document.querySelector('.sftp-automation-manager[data-sftp-automation-view="manager"]')&&!document.querySelector('.sftp-automation-confirm-layer'));
-      document.querySelector('[data-action="sftp-automation-new"]')?.click();
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-      const unifiedTitle=document.querySelector('#sftpAutomationFormTitle')?.textContent?.trim()===sftpAutomationLabel('new_title',{defaultValue:'新建传输与同步任务'});
-      const allDirections=JSON.stringify([...document.querySelectorAll('#sftpAutomationDirection option')].map(option=>option.value))===JSON.stringify(['upload','download','bidirectional']);
-      const realtimeAvailable=Boolean(document.querySelector('#sftpAutomationFrequency option[value="realtime"]'));
-      const transferFrequency=document.querySelector('#sftpAutomationFrequency');
-      transferFrequency.value='every_second';
-      transferFrequency.dispatchEvent(new Event('change',{bubbles:true}));
-      await new Promise(resolve=>requestAnimationFrame(resolve));
-      const secondIntervalValue=Number(document.querySelector('#sftpAutomationScheduleInterval')?.value || 0);
-      const secondIntervalVisible=Boolean(secondIntervalValue===30&&document.querySelector('#sftpAutomationStartAt'));
-      document.querySelector('[data-action="sftp-automation-remote-browse"]')?.click();
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-      const remoteBrowseLoaded=Boolean(document.querySelector('#sftpAutomationRemotePicker:not([hidden]) #sftpAutomationRemoteEntries .sftp-automation-remote-entry'));
-      const remoteTreeControls=Boolean(document.querySelector('[data-action="sftp-automation-remote-root"]')&&document.querySelector('[data-action="sftp-automation-remote-new"]')&&document.querySelector('[data-path="/"]')&&document.querySelector('[data-path="."]'));
-      document.querySelector('[data-action="sftp-automation-remote-toggle"][data-path="demo"]')?.click();
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-      document.querySelector('[data-action="sftp-automation-remote-select"]')?.click();
-      const remotePathSelected=Boolean(document.querySelector('#sftpAutomationRemote')?.value.endsWith('demo')&&!document.querySelector('#sftpAutomationRemote')?.value.includes('./'));
-      transferFrequency.value='half_hour';
-      transferFrequency.dispatchEvent(new Event('change',{bubbles:true}));
-      await new Promise(resolve=>requestAnimationFrame(resolve));
-      const halfHourPanel=document.querySelector('.sftp-automation-half-hour-slots');
-      const halfHourFits=Boolean(halfHourPanel&&halfHourPanel.scrollWidth<=halfHourPanel.clientWidth+1&&halfHourPanel.getBoundingClientRect().right<=document.querySelector('.sftp-automation-schedule-panel').getBoundingClientRect().right+1);
-      transferFrequency.value='cron';
-      transferFrequency.dispatchEvent(new Event('change',{bubbles:true}));
-      document.querySelector('#sftpAutomationCron').value='*/5 * * * *';
-      document.querySelector('#sftpAutomationCron').dispatchEvent(new Event('input',{bubbles:true}));
-      await new Promise(resolve=>setTimeout(resolve,350));
-      const cronPreview=Boolean(document.querySelector('#sftpAutomationCronStatus.valid')&&document.querySelectorAll('#sftpAutomationCronNextRuns li').length===3);
-      const transferNotifyDefault=Boolean(document.querySelector('#sftpAutomationNotify')?.checked);
-      const contentCompareDefault=Boolean(document.querySelector('#sftpAutomationCompareContent')?.checked);
-      const deleteSyncDefaultOff=document.querySelector('#sftpAutomationPropagateDeletes')?.checked===false;
-      const changedFilePolicyDefault=document.querySelector('#sftpAutomationConflict')?.value==='overwrite';
-      const direction=document.querySelector('#sftpAutomationDirection');
-      direction.value='bidirectional';
-      direction.dispatchEvent(new Event('change',{bubbles:true}));
-      const bidirectionalSafe=Boolean(document.querySelector('#sftpAutomationModeHint.safe-sync')&&document.querySelector('#sftpAutomationNotify')?.checked===false);
-      direction.value='upload';
-      direction.dispatchEvent(new Event('change',{bubbles:true}));
-      transferFrequency.value='realtime';
-      transferFrequency.dispatchEvent(new Event('change',{bubbles:true}));
-      await new Promise(resolve=>requestAnimationFrame(resolve));
-      const realtimeSafe=Boolean(document.querySelector('#sftpAutomationModeHint.safe-sync')&&document.querySelector('#sftpAutomationStartAt')&&document.querySelector('#sftpAutomationNotify')?.checked===false);
-      const unifiedScheduler=!document.querySelector('#sftpAutomationTrigger')&&!document.querySelector('#sftpAutomationIntervalField');
-      closeModal();
-      return {desktopHeaderFits,primaryTextReadable,taskPrimaryTextReadable,taskActionsSingleLine,compactTaskActionsAccessible,dragHandlesAccessible,dragSortingPersists,desktopFits,unifiedList,managerRowsCentered,globalHistoryRemoved,quickPathActions,buttonsPolished,initiallyRunning,liveStatusRefresh,pausedRealtimeNotMonitoring,perTaskHistory,noChangeHistory,noChangeStreakVisible,historyPagination,expandableRunDetails,historyCardFiltering,historyRefreshPaused,nestedConfirmKeepsHistory,historyRemainsAfterCancel,nestedConfirmKeepsManager,managerRemainsAfterCancel,unifiedTitle,allDirections,realtimeAvailable,secondIntervalVisible,secondIntervalValue,remoteBrowseLoaded,remoteTreeControls,remotePathSelected,halfHourFits,cronPreview,transferNotifyDefault,contentCompareDefault,deleteSyncDefaultOff,changedFilePolicyDefault,bidirectionalSafe,realtimeSafe,unifiedScheduler,error:''};
-    } catch(error) {
-      return {desktopHeaderFits:false,primaryTextReadable:false,taskPrimaryTextReadable:false,taskActionsSingleLine:false,compactTaskActionsAccessible:false,dragHandlesAccessible:false,dragSortingPersists:false,desktopFits:false,unifiedList:false,managerRowsCentered:false,globalHistoryRemoved:false,quickPathActions:false,buttonsPolished:false,initiallyRunning:false,liveStatusRefresh:false,pausedRealtimeNotMonitoring:false,perTaskHistory:false,noChangeHistory:false,noChangeStreakVisible:false,historyPagination:false,expandableRunDetails:false,historyCardFiltering:false,historyRefreshPaused:false,nestedConfirmKeepsHistory:false,historyRemainsAfterCancel:false,nestedConfirmKeepsManager:false,managerRemainsAfterCancel:false,unifiedTitle:false,allDirections:false,realtimeAvailable:false,secondIntervalVisible:false,secondIntervalValue:0,remoteBrowseLoaded:false,remoteTreeControls:false,remotePathSelected:false,halfHourFits:false,cronPreview:false,transferNotifyDefault:false,contentCompareDefault:false,deleteSyncDefaultOff:false,changedFilePolicyDefault:false,bidirectionalSafe:false,realtimeSafe:false,unifiedScheduler:false,error:String(error?.stack||error)};
-    } finally {
-      stopSftpAutomationManagerRefresh();
-      closeModal();
-      api=previousApi;
-      window.termaDesktop=previousDesktop;
-      sftpAutomationState.items=previousItems;
-      sftpAutomationState.runs=previousRuns;
-      sftpAutomationState.connections=previousConnections;
-    }
-  })()`);
-  console.log("[ui-smoke] sftp automation", JSON.stringify(sftpAutomationUi));
-  window.setSize(392,800);
-  await new Promise(resolve=>setTimeout(resolve,120));
-  const sftpAutomationMobileUi = await window.webContents.executeJavaScript(`(async () => {
-    const previousApi=api;
-    const previousDesktop=window.termaDesktop;
-    try {
-      window.termaDesktop={};
-      api=async path => path==='/api/sftp/automations'
-        ? [{id:970003,kind:'sync',name:'Mobile mirror with a long task name',enabled:true,direction:'download',trigger_mode:'continuous',schedule:{frequency:'realtime'},connection_name:'Smoke host',local_path:'C:\\Work\\mobile mirror',remote_path:'/srv/mobile-mirror',last_status:'done',last_run_at:Date.now()/1000-120,next_run_at:0}]
-        : path==='/api/connections' ? [] : path==='/api/sftp/automations/runs' ? [] : [];
-      await openSftpAutomationManager();
-      const manager=document.querySelector('.sftp-automation-manager');
-      const row=document.querySelector('.sftp-automation-row');
-      const toolbar=document.querySelector('.sftp-automation-row-actions');
-      const runButton=toolbar?.querySelector('.sftp-automation-action-run');
-      const toolbarRect=toolbar?.getBoundingClientRect();
-      const mobileFits=Boolean(manager&&row&&toolbar&&manager.getBoundingClientRect().right<=innerWidth+1&&document.documentElement.scrollWidth<=innerWidth+1&&row.scrollWidth<=row.clientWidth+1&&toolbar.scrollWidth<=toolbar.clientWidth+1&&[...toolbar.querySelectorAll('button')].every(button=>button.getBoundingClientRect().right<=toolbarRect.right+1));
-      const mobileTaskPrimaryReadable=Boolean(runButton&&getComputedStyle(runButton).color==='rgb(255, 255, 255)'&&getComputedStyle(runButton).backgroundColor!=='rgba(0, 0, 0, 0)');
-      const metrics={innerWidth,documentScrollWidth:document.documentElement.scrollWidth,manager:manager?{left:manager.getBoundingClientRect().left,right:manager.getBoundingClientRect().right,clientWidth:manager.clientWidth,scrollWidth:manager.scrollWidth}:null,row:row?{left:row.getBoundingClientRect().left,right:row.getBoundingClientRect().right,clientWidth:row.clientWidth,scrollWidth:row.scrollWidth,children:[...row.children].map(item=>{const rect=item.getBoundingClientRect();return {className:item.className,left:rect.left,right:rect.right,width:rect.width,clientWidth:item.clientWidth,scrollWidth:item.scrollWidth};}),overflowing:[...row.querySelectorAll('*')].filter(item=>item.getBoundingClientRect().right>row.getBoundingClientRect().right+1||item.getBoundingClientRect().left<row.getBoundingClientRect().left-1).map(item=>({tag:item.tagName,className:item.className,action:item.dataset.action||'',left:item.getBoundingClientRect().left,right:item.getBoundingClientRect().right,scrollWidth:item.scrollWidth,clientWidth:item.clientWidth})).slice(0,20)}:null,toolbar:toolbar?{left:toolbarRect.left,right:toolbarRect.right,clientWidth:toolbar.clientWidth,scrollWidth:toolbar.scrollWidth,buttons:[...toolbar.querySelectorAll('button')].map(button=>{const rect=button.getBoundingClientRect();return {action:button.dataset.action,left:rect.left,right:rect.right,width:rect.width};})}:null};
-      return {mobileFits,mobileTaskPrimaryReadable,metrics,error:''};
-    } catch(error) {
-      return {mobileFits:false,mobileTaskPrimaryReadable:false,metrics:null,error:String(error?.stack||error)};
-    } finally {
-      stopSftpAutomationManagerRefresh();
-      closeModal();
-      api=previousApi;
-      window.termaDesktop=previousDesktop;
-    }
-  })()`);
-  console.log("[ui-smoke] sftp automation mobile", JSON.stringify(sftpAutomationMobileUi));
   window.setSize(1200,800);
   await new Promise(resolve=>setTimeout(resolve,120));
   await window.webContents.executeJavaScript("document.documentElement.dataset.uiSmokeStage='remote-access'");
@@ -11355,10 +10828,10 @@ app.whenReady().then(async () => {
     const previousConnections=connections;
     const previousSelected=selectedRemoteProfileId;
     const previousPrimaryView=primaryView;
-    const previousRemoteSearch=remoteConnectionSearch;
-    const previousRemoteDesktopQuickOpen=remoteDesktopQuickOpen;
+    const previousRemoteSearch=window.termaRemoteList.getSearch();
+    const previousRemoteDesktopQuickOpen=localStorage.getItem('remoteDesktopQuickOpen');
     const previousEditHtml=document.getElementById('view-edit').innerHTML;
-    const previousOperationWidth=operationPaneWidth;
+    const previousOperationWidth=window.termaWorkspaceChrome.value('operation');
     const previousApi=api;
     try {
       const macSsh={...connections[0],id:900002,name:'macOS SSH fixture',ssh_host:'198.51.100.109',terminal_program_platform:'darwin'};
@@ -11379,7 +10852,7 @@ app.whenReady().then(async () => {
       });
       const openRemoteDesktopForSmoke=(profileId,updateTab,label)=>{
         document.documentElement.dataset.uiSmokeStage='remote-access-'+label;
-        return withRemoteSmokeTimeout(openRemoteDesktop(profileId,updateTab),'open '+label);
+        return withRemoteSmokeTimeout(window.termaRemoteDesktop.open(profileId,updateTab),'open '+label);
       };
       const renderingCommands=[
         {id:'java2d',label:'Java2D',command:'java -Dsun.java2d.xrender=false -Dsun.java2d.opengl=false -jar app.jar'},
@@ -11392,14 +10865,15 @@ app.whenReady().then(async () => {
         xdmcp:{visible:true,state:'remote-x11',protocol:'xdmcp',backend:'remote X11',display:':20',drm_device:'',drm_device_available:false,software_rendering:true,java_gui_risk:true,summary:'Java GUI white-screen risk',detail:'XDMCP direct GPU rendering is limited.',compatibility_commands:renderingCommands}
       };
       remoteProfiles=[vnc,xdmcp,derived,macVnc,isolatedVnc,standaloneRdp,standaloneXdmcp];
-      remoteDesktopQuickOpen=false;
-      remoteConnectionSearch='';
+      localStorage.setItem('remoteDesktopQuickOpen','0');
+      await window.termaRuntimeReader.load();
+      window.termaRemoteList.setSearch('');
       remoteGroupOpen.add('UI Smoke');
-      remoteProfiles.forEach(profile=>remoteHostOpen.add(remoteHostKey(profile)));
       primaryView='remote';
-      renderExplorerTools();
-      renderConnections();
+      window.termaConnectionViews.renderExplorerTools();
+      window.termaConnectionViews.renderConnections();
       const remoteTree=document.getElementById('connectionGroups');
+      remoteTree?.querySelectorAll('.remote-host-head[aria-expanded="false"]').forEach(button=>button.click());
       const remoteOuterHeader=remoteTree?.querySelector('.connection-group-head-row');
       const remoteHostHeader=remoteTree?.querySelector('.remote-host-head-row');
       const remoteOuterStyle=remoteOuterHeader?getComputedStyle(remoteOuterHeader):null;
@@ -11452,17 +10926,17 @@ app.whenReady().then(async () => {
         && derivedRow?.querySelector('.protocol-badge')?.textContent.includes('RDP')
         && derivedRow?.querySelector('.remote-source-badge')?.title==='来源：'+connections[0].name
       );
-      const originalOpenRemoteDesktopForDoubleClick=openRemoteDesktop;
+      const originalOpenRemoteDesktopForDoubleClick=window.termaRemoteDesktop.open;
       let doubleClickedRemoteId=0;
-      openRemoteDesktop=id=>{ doubleClickedRemoteId=Number(id); };
+      window.termaRemoteDesktop.open=id=>{ doubleClickedRemoteId=Number(id); };
       derivedRow?.querySelector('.conn-name')?.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,button:0}));
-      openRemoteDesktop=originalOpenRemoteDesktopForDoubleClick;
+      window.termaRemoteDesktop.open=originalOpenRemoteDesktopForDoubleClick;
       const remoteNameDoubleClickOpens=doubleClickedRemoteId===derived.id;
-      const remoteDesktopSwitchAvailable=remoteDesktopSwitchProfiles(derived.id).length===2
-        && remoteWorkspaceJumpButtonsHtml(derived).includes('remote-desktop-switch-button');
-      const remoteDesktopSingleDisabled=remoteDesktopSwitchProfiles(isolatedVnc.id).length===0
-        && /remote-desktop-switch-button[^>]*disabled/.test(remoteWorkspaceJumpButtonsHtml(isolatedVnc));
-      openRemoteDesktopSwitchMenu(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:220,clientY:120}),derived.id);
+      const remoteDesktopSwitchAvailable=window.termaRemoteDesktop.relations.alternatives(derived).length===2
+        && window.termaRemoteDesktop.relations.workspaceActions(derived).actions.some(action=>action.className.includes('remote-desktop-switch-button')&&!action.disabled);
+      const remoteDesktopSingleDisabled=window.termaRemoteDesktop.relations.alternatives(isolatedVnc).length===0
+        && window.termaRemoteDesktop.relations.workspaceActions(isolatedVnc).actions.some(action=>action.className.includes('remote-desktop-switch-button')&&action.disabled);
+      window.termaRemoteDesktop.relations.workspaceActions(derived).actions.at(-1).onClick(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:220,clientY:120}));
       const remoteDesktopSwitchMenu=[...document.querySelectorAll('#actionMenu button span')].filter(node=>!node.classList.contains('composite-icon')).map(node=>node.textContent.trim());
       const remoteDesktopSwitchMenuComplete=remoteDesktopSwitchMenu.length===2
         && remoteDesktopSwitchMenu.some(label=>label.includes('XDMCP fixture'))
@@ -11470,10 +10944,10 @@ app.whenReady().then(async () => {
         && !remoteDesktopSwitchMenu.some(label=>label.includes('macOS VNC fixture'));
       hideActionMenu();
       primaryView='connections';
-      renderExplorerTools();
-      renderConnections();
+      window.termaConnectionViews.renderExplorerTools();
+      window.termaConnectionViews.renderConnections();
       const sshActivitySeparated=document.getElementById('connectionGroups')?.textContent.includes(connections[0].name)&&!document.getElementById('connectionGroups')?.textContent.includes('VNC fixture')&&document.querySelector('#explorerTools .explorer-main-action')?.textContent.includes('添加 SSH');
-      renderRemoteProfileForm(derived);
+      window.termaRemoteProfiles.editor.render(derived);
       const rdpDisplayForm=Boolean(
         document.getElementById('remote_rdp_display_mode')?.value==='dynamic'
         && document.getElementById('remote_rdp_resolution_preset')?.value==='1440x900'
@@ -11487,14 +10961,14 @@ app.whenReady().then(async () => {
         && document.getElementById('remoteDesktopCredentialNote')?.textContent.includes('Windows 使用临时凭据')
         && document.getElementById('remoteProtocolOptions')?.textContent.includes('自动跟随窗口')
       );
-      renderRemoteProfileForm({...vnc,id:0,name:'',options:{}});
+      window.termaRemoteProfiles.editor.render({...vnc,id:0,name:'',options:{}});
       const vncDefaultsToNoVnc=document.getElementById('remote_vnc_client_mode')?.value==='embedded'
-        &&remoteProfileFormOptions('vnc').client_mode==='embedded'
+        &&document.getElementById('remoteProfileForm')?.remoteOptions?.('vnc').client_mode==='embedded'
         &&document.getElementById('remoteDesktopCredentialNote')?.textContent.includes('默认使用内置 noVNC')
         &&!document.getElementById('remote_vnc_auto_sync_images')?.disabled;
-      renderRemoteProfileForm({...vnc,options:{client_mode:'auto'}});
+      window.termaRemoteProfiles.editor.render({...vnc,options:{client_mode:'auto'}});
       const vncExplicitAutoPreserved=document.getElementById('remote_vnc_client_mode')?.value==='auto';
-      renderRemoteProfileForm(vnc);
+      window.termaRemoteProfiles.editor.render(vnc);
       const vncModePersisted=Boolean(
         document.getElementById('remote_vnc_client_mode')?.value==='system'
         && document.getElementById('remote_vnc_display_mode')?.value==='scale'
@@ -11502,31 +10976,32 @@ app.whenReady().then(async () => {
         && document.getElementById('remote_quality_value')?.textContent==='7'
         && document.getElementById('remote_vnc_auto_sync_images')?.checked===true
       );
-      renderRemoteProfileForm({...vnc,options:{...vnc.options,client_mode:'bundled'}});
+      window.termaRemoteProfiles.editor.render({...vnc,options:{...vnc.options,client_mode:'bundled'}});
       const vncBundledMode=Boolean(
         document.getElementById('remote_vnc_client_mode')?.value==='bundled'
         && Array.from(document.getElementById('remote_vnc_client_mode')?.options || []).some(option => option.value==='bundled' && option.textContent.includes('TigerVNC'))
       );
-      renderRemoteProfileForm({...vnc,options:{...vnc.options,auto_sync_images:false}});
+      window.termaRemoteProfiles.editor.render({...vnc,options:{...vnc.options,auto_sync_images:false}});
       const vncImageSyncOptOut=document.getElementById('remote_vnc_auto_sync_images')?.checked===false;
-      renderRemoteProfileForm({...vnc,id:0,name:'',has_password:false});
+      window.termaRemoteProfiles.editor.render({...vnc,id:0,name:'',has_password:false});
       const vncPasswordForm=Boolean(
         !document.getElementById('remotePasswordField')?.hidden
         && document.getElementById('remote_password')
         && document.querySelector('#remoteProfileForm button[data-clear-after-save="1"]')
         && /可选.*加密保存/.test(document.getElementById('remoteDesktopCredentialNote')?.textContent || '')
       );
-      const credentialPromise=requestVncCredentials({...vnc,has_password:true},['password'],{failureReason:'VNC 密码错误',updateByDefault:true});
+      const credentialPromise=window.termaVncRuntime.promptCredentials({...vnc,has_password:true},['password'],{failureReason:'VNC 密码错误',updateByDefault:true});
       const vncRetryPrompt=Boolean(
         document.querySelector('.vnc-credentials-modal .connection-test-status.error')?.textContent.includes('密码错误')
         && document.getElementById('vncCredentialSave')?.checked
         && document.querySelector('.vnc-credentials-modal')?.textContent.includes('更新保存密码')
       );
       document.getElementById('vncCredentialPassword').value='replacement';
+      document.getElementById('vncCredentialPassword').dispatchEvent(new Event('input',{bubbles:true}));
       document.querySelector('.vnc-credentials-modal').requestSubmit();
-      const credentialResult=await credentialPromise;
+      const credentialResult=await withRemoteSmokeTimeout(credentialPromise,'VNC password confirmation');
       const vncRetryValue=credentialResult?.credentials?.password==='replacement'&&credentialResult?.update_saved_password===true;
-      const noPasswordPromise=requestVncCredentials({...vnc,has_password:false},['password'],{allowNoPassword:true,updateByDefault:true,title:'VNC no-password fixture',noPasswordLabel:'清除服务密码，启用无密码模式'});
+      const noPasswordPromise=window.termaVncRuntime.promptCredentials({...vnc,has_password:false},['password'],{allowNoPassword:true,updateByDefault:true,title:'VNC no-password fixture',noPasswordLabel:'清除服务密码，启用无密码模式'});
       const noPasswordInput=document.getElementById('vncCredentialNoPassword');
       const noPasswordPrompt=Boolean(noPasswordInput&&document.getElementById('vncCredentialPassword')?.required===true);
       if(noPasswordInput){
@@ -11541,17 +11016,25 @@ app.whenReady().then(async () => {
         && document.querySelector('.vnc-credentials-modal')?.textContent.includes('清除服务密码')
       );
       document.querySelector('.vnc-credentials-modal')?.requestSubmit();
-      const noPasswordResult=await noPasswordPromise;
+      const noPasswordResult=await withRemoteSmokeTimeout(noPasswordPromise,'VNC no-password confirmation');
       const vncNoPassword=Boolean(noPasswordPrompt&&noPasswordModeUi&&noPasswordResult?.allow_no_password===true&&noPasswordResult?.credentials?.password===''&&noPasswordResult?.update_saved_password===false);
       const credentialApi=api;
       api=async (path,options)=>String(path)==='/api/identity-files'
         ? [{path:'managed-key',label:'Managed key',permission_ok:true}]
         : credentialApi(path,options);
-      const sshCredentialPromise=promptSshCredentialRepair({...connections[0],auth_type:'password'}, {
+      const sshCredentialPromise=window.termaSshCredentials.prompt({...connections[0],auth_type:'password'}, {
         context:'UI smoke SSH 认证失败',
         onTemporary:async()=>{}
       });
-      await new Promise(resolve=>setTimeout(resolve,0));
+      const waitForCredentialDialog=async selector=>{
+        const deadline=Date.now()+10000;
+        while(!document.querySelector(selector)){
+          if(Date.now()>=deadline)throw new Error('Missing credential dialog: '+selector);
+          await new Promise(resolve=>setTimeout(resolve,25));
+        }
+        return document.querySelector(selector);
+      };
+      const sshCredentialDialog=await waitForCredentialDialog('.ssh-credential-repair-modal');
       const sshCredentialRepairUi=Boolean(
         document.querySelector('.ssh-credential-repair-modal')
         && document.getElementById('sshCredentialUser')?.value===connections[0].ssh_user
@@ -11561,21 +11044,23 @@ app.whenReady().then(async () => {
         && document.getElementById('sshCredentialSave')?.checked
         && !document.getElementById('sshCredentialSave')?.disabled
       );
-      document.querySelector('[data-credential-close]')?.click();
-      await sshCredentialPromise;
-      const quickCredentialPromise=startQuickSshConnection({user:'root',host:'192.0.2.44',port:22},{repair:true,authType:'password'});
-      await new Promise(resolve=>setTimeout(resolve,0));
+      const sshCredentialClose=sshCredentialDialog.querySelector('[data-credential-close]');
+      if(!sshCredentialClose||sshCredentialClose.disabled)throw new Error('Missing enabled SSH credential cancel button');
+      sshCredentialClose.click();
+      await withRemoteSmokeTimeout(sshCredentialPromise,'SSH credential cancellation');
+      const quickCredentialPromise=window.termaQuickViews.startQuickSshConnection({user:'root',host:'192.0.2.44',port:22},{repair:true,authType:'password'});
+      await waitForCredentialDialog('.quick-ssh-auth-modal');
       const quickTerminalCredentialRepairUi=Boolean(
         document.getElementById('modal')?.dataset.quickSshAuth==='1'
         && document.querySelector('.quick-ssh-auth-modal')?.textContent.includes('修复临时 SSH 凭据')
         && document.querySelector('.quick-ssh-auth-modal')?.textContent.includes('上次认证失败')
       );
       document.querySelector('[data-action="quick-ssh-close"]')?.click();
-      await quickCredentialPromise;
+      await withRemoteSmokeTimeout(quickCredentialPromise,'quick SSH credential cancellation');
       api=credentialApi;
       const originalRequireEncryptionUnlocked=requireConfigEncryptionUnlocked;
       requireConfigEncryptionUnlocked=()=>true;
-      const ftpCredentialPromise=promptRemoteProfileCredentialRepair({
+      const ftpCredentialPromise=window.termaRemoteProfiles.prompt({
         id:910099,
         protocol:'ftp',
         name:'FTP credential fixture',
@@ -11591,10 +11076,12 @@ app.whenReady().then(async () => {
         && document.getElementById('remoteCredentialSave')?.checked
         && document.getElementById('remoteCredentialSave')?.disabled
       );
-      document.querySelector('[data-remote-credential-close]')?.click();
-      await ftpCredentialPromise;
+      const ftpCredentialClose=document.querySelector('[aria-labelledby="remoteCredentialRepairTitle"] button[aria-label]');
+      if(!ftpCredentialClose)throw new Error('Missing FTP credential cancel button');
+      ftpCredentialClose.click();
+      await withRemoteSmokeTimeout(ftpCredentialPromise,'FTP credential cancellation');
       requireConfigEncryptionUnlocked=originalRequireEncryptionUnlocked;
-      renderRemoteProfileForm(xdmcp);
+      window.termaRemoteProfiles.editor.render(xdmcp);
       const xdmcpForm=Boolean(
         document.getElementById('remote_protocol')?.value==='xdmcp'
         && document.getElementById('remote_xdmcp_mode')?.value==='indirect'
@@ -11607,7 +11094,7 @@ app.whenReady().then(async () => {
         && document.getElementById('remoteCredentialFields')?.hidden
         && document.getElementById('remoteProtocolOptions')?.textContent.includes('私钥、SSH Agent 或密码')
       );
-      const xdmcpMenuAvailable=Boolean(REMOTE_PROTOCOL_META.xdmcp&&REMOTE_PROTOCOL_META.xdmcp.port===177);
+      const xdmcpMenuAvailable=window.termaRemoteProfiles.presentation.metadata.xdmcp.port===177;
       vnc.options.source_ssh_connection_id=Number(connections[0].id);
       api=async (path,options) => String(path)==='/api/remote-clients/diagnostics'
         ? {rdp:{available:true,client:'UI smoke RDP client'},xdmcp:{available:true,client:'内置 X Server'},vnc:{available:true,client:'UI smoke VNC client'}}
@@ -11633,10 +11120,10 @@ app.whenReady().then(async () => {
         const panel=document.querySelector('#view-remote-desktop .remote-rendering-state.warning');
         const buttons=[...(panel?.querySelectorAll('.remote-rendering-actions button')||[])];
         const panelRect=panel?.getBoundingClientRect();
-        const expectedSummary=String(remoteGraphicsRenderingCopy(graphicsRendering[protocol]).summary||'').replaceAll('TigerVNC/Xvnc','TigerVNC');
+        const expectedSummary={rdp:'已回退到软件渲染',vnc:'正在共享受限的 XRDP',xdmcp:'客户端 X Server'}[protocol];
         return {
           warning:Boolean(panel&&panel.textContent.includes(expectedSummary)&&panelRect?.width>0&&panelRect?.height>0),
-          copyButtons:buttons.length===3&&buttons.every(button=>button.getAttribute('onclick')?.includes('copyRemoteGraphicsCommand')),
+          copyButtons:buttons.length===3&&buttons.every((button,index)=>button.dataset.managementAction==='rendering-'+index&&button.hasAttribute('data-terma-button')),
           noHorizontalOverflow:Boolean(panel&&panel.scrollWidth<=panel.clientWidth+1&&buttons.every(button=>{
             const rect=button.getBoundingClientRect();
             return rect.left>=panelRect.left-1&&rect.right<=panelRect.right+1;
@@ -11674,7 +11161,7 @@ app.whenReady().then(async () => {
         };
         if(vncSourceSelect){
           vncSourceSelect.value='virtual';
-          await saveVncServerSessionSource(vnc.id,vncSourceSelect,'remote-desktop-'+vnc.id);
+          await window.termaVncRuntime.management.saveSourceSelection(vnc.id,vncSourceSelect,'remote-desktop-'+vnc.id);
         }
       } finally {
         api=vncSourceApi;
@@ -11700,12 +11187,12 @@ app.whenReady().then(async () => {
       );
       const xdmcpAuthorizationHost=document.getElementById('remoteDesktopAuthorization');
       if(xdmcpAuthorizationHost){
-        xdmcpAuthorizationHost.innerHTML=desktopIntegrationAuthorizationMarkup({
+        window.termaRemoteViews.updateDesktopLaunch(document.getElementById('view-remote-desktop'),{authorization:{status:{
           desktop_backend_available:true,
           can_request_authorization:true,
           web_session_authenticated:true,
           scopes:[]
-        },['remote-client','xserver'],{refreshTarget:'remote-profile',remoteProfileId:xdmcp.id});
+        },scopes:['remote-client','xserver'],refreshTarget:'remote-profile',remoteProfileId:xdmcp.id}});
         refreshIcons();
       }
       await new Promise(resolve=>setTimeout(resolve,0));
@@ -11718,11 +11205,13 @@ app.whenReady().then(async () => {
       if(xdmcpDurationSelect){
         xdmcpDurationSelect.value='custom';
         xdmcpDurationSelect.dispatchEvent(new Event('change',{bubbles:true}));
+        await new Promise(resolve=>setTimeout(resolve,0));
       }
       const customDurationVisible=Boolean(xdmcpCustomDuration&&!xdmcpCustomDuration.hidden&&xdmcpCustomDuration.querySelector('input')?.max==='480');
       if(xdmcpDurationSelect){
         xdmcpDurationSelect.value='browser-session';
         xdmcpDurationSelect.dispatchEvent(new Event('change',{bubbles:true}));
+        await new Promise(resolve=>setTimeout(resolve,0));
       }
       const xdmcpAuthorizationLayout=Boolean(
         xdmcpAuthorizationRect&&xdmcpStateRect
@@ -11736,28 +11225,36 @@ app.whenReady().then(async () => {
       );
       const renderingCopyInteraction={success:false,failure:false};
       const renderingCopyButton=document.querySelector('#view-remote-desktop .remote-rendering-actions button');
-      const previousWriteClipboardText=writeClipboardText;
+      const previousWriteClipboardText=window.termaClipboard.write;
       const previousNotify=notify;
       try {
         let clipboardValue='';
         let notices=[];
-        writeClipboardText=async value=>{clipboardValue=String(value)};
+        window.termaClipboard.write=async value=>{clipboardValue=String(value)};
         notify=(message,type)=>notices.push({message:String(message),type:String(type||'')});
-        await copyRemoteGraphicsCommand(encodeURIComponent(renderingCommands[0].command),renderingCommands[0].label,renderingCopyButton);
+        renderingCopyButton?.click();
+        await new Promise(resolve=>setTimeout(resolve,0));
         renderingCopyInteraction.success=clipboardValue===renderingCommands[0].command&&notices.length===1&&notices[0].type==='success'&&notices[0].message.includes('Java2D');
         notices=[];
-        writeClipboardText=async ()=>{throw new Error('fixture clipboard failure')};
-        await copyRemoteGraphicsCommand(encodeURIComponent(renderingCommands[0].command),renderingCommands[0].label,renderingCopyButton);
+        window.termaClipboard.write=async ()=>{throw new Error('fixture clipboard failure')};
+        renderingCopyButton?.click();
+        await new Promise(resolve=>setTimeout(resolve,0));
         renderingCopyInteraction.failure=notices.length===1&&notices[0].type==='error'&&notices[0].message.includes('fixture clipboard failure');
       } finally {
-        writeClipboardText=previousWriteClipboardText;
+        window.termaClipboard.write=previousWriteClipboardText;
         notify=previousNotify;
       }
       window.__runRemoteRenderingNarrowSmoke=async () => {
         const host=document.createElement('div');
         host.style.cssText='position:fixed;left:8px;top:8px;width:calc(100vw - 16px);opacity:0;pointer-events:none;z-index:99999;display:grid;gap:8px';
-        host.innerHTML=Object.values(graphicsRendering).map(item=>remoteGraphicsRenderingMarkup({graphics_rendering:item})).join('')+remoteDiagnosticStatusMarkup('SSH 认证失败，请更新管理凭据后重新探测。',{tone:'error',icon:'circle-alert',title:'SSH 深度探测不可用',actions:'<button type="button"><span>修复 SSH 管理凭据</span></button>'});
         document.body.appendChild(host);
+        const views=window.termaRemoteViews,models=window.termaRemoteManagement.models;
+        const containers=[];
+        const render=model=>{const target=document.createElement('div');host.appendChild(target);containers.push(target);views.renderManagement(target,{model});};
+        for(const [protocol, graphics_rendering] of Object.entries(graphicsRendering)) {
+          render(()=>({rendering:models.state(protocol,{graphics_rendering}, {...vnc,protocol}, 'rendering-fixture',{connectionHelp:true}).rendering}));
+        }
+        render(()=>({notices:[models.unavailableNotice(vnc,{code:'SSH_AUTHENTICATION_FAILED',error:'SSH 认证失败，请更新管理凭据后重新探测。'},'vnc')]}));
         refreshIcons();
         await new Promise(resolve=>setTimeout(resolve,0));
         const panels=[...host.querySelectorAll('.remote-rendering-state.warning')];
@@ -11785,6 +11282,7 @@ app.whenReady().then(async () => {
             && diagnosticActionsRect.right<=diagnosticRect.right+1
             && diagnostic.scrollWidth<=diagnostic.clientWidth+1)
         };
+        for(const target of containers) views.release(target);
         host.remove();
         return {...result,ok:result.panels===3&&result.copyButtons&&result.noHorizontalOverflow&&result.diagnosticAligned};
       };
@@ -11825,8 +11323,8 @@ app.whenReady().then(async () => {
       failureHost.id='vncFailureFixture';
       document.body.appendChild(failureHost);
       const readyFixture={platform:'linux',diagnostics_available:true,status:'ready',installed:true,listening:true,port:5900,service_unit:'tunneldesk-x11vnc.service',service_state:'active',server_mode:'shared-x11',source_display:':10',vnc_process:'123 x11vnc -display :10',server_session_configurable:true,server_session_selection:{requested_mode:'shared',mode:'shared',display:':10',source:{kind:'xrdp',display:':10',user:'root',desktop:'XFCE'},source_available:true,requires_selection:false,component:'x11vnc',install_required:false,component_state:{key:'x11vnc',component:'x11vnc',label:'x11vnc 共享桌面',installed:true,install_required:false,automatic_manageable:true,listening:true,running:true,status:'ready'}},selected_component:{key:'x11vnc',component:'x11vnc',label:'x11vnc 共享桌面',installed:true,install_required:false,automatic_manageable:true,listening:true,running:true,status:'ready'},server_session_selection_matches_running:true,session_sources:[{kind:'xrdp',display:':10',user:'root',desktop:'XFCE',state:'active'}],commands:['x11vnc','vncpasswd'],start_plan:{kind:'x11vnc-session',supports_no_password:true},install_plan:{online:{available:true,command:'apt-get install x11vnc'},offline:{available:true,command:'apt-get --no-download install x11vnc'},local_offline:{available:true,package_names:['x11vnc']}},ssh_connection:{id:Number(connections[0].id),name:connections[0].name}};
-      renderVncServerState(readyFixture,vnc.id,'remote-desktop-'+vnc.id,failureHost);
-      renderVncServerState({error:'fixture operation failed'},vnc.id,'remote-desktop-'+vnc.id,failureHost);
+      window.termaRemoteManagement.diagnostics.render(failureHost,'vnc',readyFixture,vnc.id,'remote-desktop-'+vnc.id);
+      window.termaRemoteManagement.diagnostics.render(failureHost,'vnc',{error:'fixture operation failed'},vnc.id,'remote-desktop-'+vnc.id);
       const failureText=failureHost.textContent||'';
       const failureSelector=failureHost.querySelector('#vnc_server_session_source_910001');
       const failureActions=[...failureHost.querySelectorAll('.remote-service-actions button')];
@@ -11837,7 +11335,7 @@ app.whenReady().then(async () => {
       document.body.appendChild(componentHost);
       const missingTigerComponent={key:'tigervnc',component:'tigervnc',label:'TigerVNC 独立虚拟桌面',installed:false,wrapper_available:false,raw_server_available:false,install_required:true,automatic_manageable:false,manual_only:false,listening:false,running:false,status:'not-installed',reason:'未检测到 vncserver/tigervncserver 包装器，需要先安装 TigerVNC。'};
       const missingTigerFixture={...readyFixture,server_session_selection:{requested_mode:'virtual',mode:'virtual',display:':1',source:null,source_available:true,requires_selection:false,component:'tigervnc',install_required:true,automatic_manageable:false,manual_only:false,reason:missingTigerComponent.reason,component_state:missingTigerComponent},selected_component:missingTigerComponent,running_component:readyFixture.selected_component,server_session_selection_matches_running:false,source_xrdp:true,start_plan:null,start_plan_reason:missingTigerComponent.reason,install_plan:{package_name:'tigervnc',online:{available:true,command:'apt-get install tigervnc-standalone-server'},offline:{available:true,command:'apt-get --no-download install tigervnc-standalone-server'},local_offline:{available:true,package_names:['tigervnc-standalone-server','tigervnc-common']}}};
-      renderVncServerState(missingTigerFixture,vnc.id,'remote-desktop-'+vnc.id,componentHost);
+      window.termaRemoteManagement.diagnostics.render(componentHost,'vnc',missingTigerFixture,vnc.id,'remote-desktop-'+vnc.id);
       const missingTigerText=componentHost.textContent||'';
       const missingTigerSource=componentHost.querySelector('.vnc-server-source');
       const missingTigerSelect=componentHost.querySelector('#vnc_server_session_source_910001');
@@ -11854,7 +11352,7 @@ app.whenReady().then(async () => {
       );
       const rawTigerComponent={...missingTigerComponent,installed:true,raw_server_available:true,manual_only:true,running:true,status:'manual-only',reason:'仅检测到 Xtigervnc/Xvnc 原始 X 服务器，缺少 vncserver/tigervncserver 包装器，Terma 不能自动管理。'};
       const rawTigerFixture={...missingTigerFixture,status:'not-listening',listening:false,service_unit:'',service_state:'manual',server_mode:'virtual',source_display:':1',vnc_process:'654 operator Xtigervnc :1 -rfbport 5900',server_session_selection:{...missingTigerFixture.server_session_selection,install_required:true,manual_only:true,reason:rawTigerComponent.reason,component_state:rawTigerComponent},selected_component:rawTigerComponent,running_component:rawTigerComponent,server_session_selection_matches_running:true,commands:['Xtigervnc','vncpasswd'],start_plan:null,start_plan_reason:rawTigerComponent.reason};
-      renderVncServerState(rawTigerFixture,vnc.id,'remote-desktop-'+vnc.id,componentHost);
+      window.termaRemoteManagement.diagnostics.render(componentHost,'vnc',rawTigerFixture,vnc.id,'remote-desktop-'+vnc.id);
       const rawTigerText=componentHost.textContent||'';
       const rawTigerSelect=componentHost.querySelector('#vnc_server_session_source_910001');
       const rawTigerButtons=[...componentHost.querySelectorAll('.remote-service-actions button')].map(button=>button.textContent.trim());
@@ -11871,23 +11369,27 @@ app.whenReady().then(async () => {
       const vncActionButton=document.createElement('button');
       vncActionButton.innerHTML='<span>停止服务</span>';
       document.body.appendChild(vncActionButton);
-      const previousRunVncServerActionImpl=runVncServerActionImpl;
+      const beforeVncActionApi=api;
       let vncActionCalls=0;
       let releaseVncAction;
       try {
-        runVncServerActionImpl=async()=>{
-          vncActionCalls+=1;
-          return new Promise(resolve=>{releaseVncAction=resolve});
+        api=async(path,options)=>{
+          if(String(path)==='/api/remote-profiles/'+vnc.id+'/vnc/server'&&!options?.method){
+            vncActionCalls+=1;
+            return new Promise(resolve=>{releaseVncAction=()=>resolve({error:'fixture diagnostics blocked'});});
+          }
+          return beforeVncActionApi(path,options);
         };
-        const firstVncAction=runVncServerAction(vnc.id,'remote-desktop-'+vnc.id,'stop',vncActionButton);
-        const secondVncAction=runVncServerAction(vnc.id,'remote-desktop-'+vnc.id,'uninstall',vncActionButton);
+        const manager=window.termaVncRuntime.management;
+        const firstVncAction=manager.operate(vnc.id,'remote-desktop-'+vnc.id,'stop',vncActionButton);
+        const secondVncAction=manager.operate(vnc.id,'other-workspace-'+vnc.id,'uninstall');
         await new Promise(resolve=>setTimeout(resolve,0));
-        const duplicateBlocked=vncActionCalls===1&&vncActionButton.disabled&&vncActionButton.getAttribute('aria-busy')==='true';
-        releaseVncAction?.({ok:true});
+        const duplicateBlocked=await secondVncAction===null&&vncActionCalls===1&&vncActionButton.disabled&&vncActionButton.getAttribute('aria-busy')==='true';
+        releaseVncAction?.();
         await withRemoteSmokeTimeout(Promise.all([firstVncAction,secondVncAction]),'VNC duplicate action');
         var vncServiceActionDebounced=Boolean(duplicateBlocked&&!vncActionButton.disabled&&!vncActionButton.hasAttribute('aria-busy'));
       } finally {
-        runVncServerActionImpl=previousRunVncServerActionImpl;
+        api=beforeVncActionApi;
         vncActionButton.remove();
       }
       await openRemoteDesktopForSmoke(macVnc.id,false,'mac-vnc');
@@ -11927,8 +11429,10 @@ app.whenReady().then(async () => {
       const diagnosticCopyRect=diagnosticPanel?.querySelector('.remote-diagnostic-copy')?.getBoundingClientRect();
       const diagnosticActionsRect=diagnosticPanel?.querySelector('.remote-diagnostic-actions')?.getBoundingClientRect();
       const remoteDiagnosticAlignment=Boolean(diagnosticRect&&diagnosticIconRect&&diagnosticCopyRect&&diagnosticActionsRect
-        && Math.abs((diagnosticIconRect.top+diagnosticIconRect.height/2)-(diagnosticRect.top+diagnosticRect.height/2))<=2
-        && diagnosticActionsRect.left>=diagnosticCopyRect.right-1
+        && Math.abs((diagnosticIconRect.top+diagnosticIconRect.height/2)-(diagnosticCopyRect.top+diagnosticCopyRect.height/2))<=2
+        && diagnosticCopyRect.left>=diagnosticIconRect.right
+        && diagnosticActionsRect.top>=diagnosticCopyRect.bottom-1
+        && Math.abs(diagnosticActionsRect.left-diagnosticCopyRect.left)<=1
         && diagnosticActionsRect.right<=diagnosticRect.right+1
         && diagnosticPanel.scrollWidth<=diagnosticPanel.clientWidth+1);
       await openRemoteDesktopForSmoke(isolatedVnc.id,true,'standalone-vnc');
@@ -11974,7 +11478,9 @@ app.whenReady().then(async () => {
         xdmcp:{text:standaloneXdmcpText,disabled:standaloneXdmcpDisabled}
       };
       const macVncHelpHost=document.createElement('div');
-      macVncHelpHost.innerHTML=vncConnectionHelpMarkup(macVnc,'macos',false,'connect ECONNREFUSED');
+      const helpOptions={connectionHelp:true,serviceAvailable:false,detail:'connect ECONNREFUSED'};
+      const mountHelp=(host,profile,diagnostics,key)=>window.termaRemoteViews.renderManagement(host,{model:()=>window.termaRemoteManagement.models.state('vnc',diagnostics,profile,key,helpOptions)});
+      mountHelp(macVncHelpHost,macVnc,{platform:'macos'},'remote-desktop-910004');
       const macVncSetupGuidance=Boolean(
         macVncHelpHost.textContent.includes('未检测到可用的 VNC 服务')
         && macVncHelpHost.textContent.includes('系统设置 > 通用 > 共享 > 屏幕共享')
@@ -11985,9 +11491,9 @@ app.whenReady().then(async () => {
         && !macVncHelpHost.textContent.includes('Linux 桌面管理')
       );
       const linuxVncMissingHost=document.createElement('div');
-      linuxVncMissingHost.innerHTML=vncConnectionHelpMarkup(vnc,'linux',false,'connect ECONNREFUSED',{platform:'linux',status:'not-installed',can_install:true,port:5900,privileged:false,ssh_connection:{id:connections[0].id,name:connections[0].name},install_plan:{online:{available:true,command:'apt-get install x11vnc'},offline:{available:true,command:'apt-get --no-download install x11vnc'},local_offline:{available:true,package_names:['x11vnc','xclip']}}},'remote-desktop-910001');
+      mountHelp(linuxVncMissingHost,vnc,{platform:'linux',status:'not-installed',can_install:true,port:5900,privileged:false,ssh_connection:{id:connections[0].id,name:connections[0].name},install_plan:{online:{available:true,command:'apt-get install x11vnc'},offline:{available:true,command:'apt-get --no-download install x11vnc'},local_offline:{available:true,package_names:['x11vnc','xclip']}}},'remote-desktop-910001');
       const linuxVncStoppedHost=document.createElement('div');
-      linuxVncStoppedHost.innerHTML=vncConnectionHelpMarkup(vnc,'linux',false,'',{platform:'linux',status:'stopped',installed:true,port:5900,service_unit:'x11vnc.service',service_state:'inactive',start_plan:{kind:'service',command:'systemctl start x11vnc.service'}},'remote-desktop-910001');
+      mountHelp(linuxVncStoppedHost,vnc,{platform:'linux',status:'stopped',installed:true,port:5900,service_unit:'x11vnc.service',service_state:'inactive',start_plan:{kind:'service',command:'systemctl start x11vnc.service'}},'remote-desktop-910001');
       const vncServiceDiagnosisUi=Boolean(
         linuxVncMissingHost.textContent.includes('未安装 VNC 服务')
         && linuxVncMissingHost.textContent.includes('在线安装')
@@ -11999,12 +11505,13 @@ app.whenReady().then(async () => {
         && linuxVncStoppedHost.textContent.includes('启动 VNC 服务')
         && linuxVncStoppedHost.textContent.includes('x11vnc.service')
       );
+      for(const target of [macVncHelpHost,linuxVncMissingHost,linuxVncStoppedHost]) window.termaRemoteViews.release(target);
       document.documentElement.dataset.uiSmokeStage='remote-access-x11-and-xserver';
-      openX11AppLauncher(Number(connections[0].id));
+      window.termaX11.openLauncher(Number(connections[0].id));
       await new Promise(resolve=>setTimeout(resolve,0));
       const x11PresetValues=[...document.querySelectorAll('#x11AppPreset option')].map(option=>option.value);
       const x11AppLauncher=Boolean(!document.getElementById('modal').hidden&&['xterm','konsole','custom'].every(value=>x11PresetValues.includes(value))&&document.getElementById('x11AppPreset')?.value==='xterm'&&document.getElementById('x11AppCommand')?.value==='/usr/bin/xterm'&&document.getElementById('x11AppDetection')?.classList.contains('success')&&document.getElementById('x11AppMode')?.value==='untrusted');
-      closeX11AppLauncher();
+      window.termaX11.closeLauncher();
       const x11InstalledApi=api;
       let x11InstalledDialog=false;
       let xServerRemoteUninstall=false;
@@ -12019,15 +11526,15 @@ app.whenReady().then(async () => {
               : String(path).endsWith('/x11-clipboard/helper')
                 ? {platform:'linux',installed:false,package_manager:'apt',install_plan:{online:{available:true,description:'使用远端 apt 安装 xclip'},offline:{available:true,description:'仅使用远端软件包缓存'},local_offline:{available:true,description:'本机下载 xclip 及依赖，通过 SFTP 上传到远端后安装',package_names:['xclip']},manual:{available:true,description:'查看 X11 转发、DISPLAY、xclip 和权限检查步骤'}},guide:{steps:[],commands:[]},reason:'远端尚未安装 xclip'}
                 : x11InstalledApi(path,options);
-        await openX11InstallGuide(Number(connections[0].id));
+        await withRemoteSmokeTimeout(window.termaX11.openGuide(Number(connections[0].id)), 'X11 installed component guide');
         const installedGuide=document.querySelector('.x11-install-guide');
         x11InstalledDialog=Boolean(
           installedGuide?.textContent.includes('组件安装完成')
           && installedGuide?.textContent.includes('卸载 X11 组件')
           && !installedGuide?.textContent.includes('远端没有完整识别到 xauth')
         );
-        closeX11InstallGuide();
-        await openXServerManager(Number(connections[0].id));
+        window.termaX11.closeGuide();
+        await withRemoteSmokeTimeout(window.termaX11.openManager(Number(connections[0].id)), 'X Server installed component manager');
         const xServerInstalledManager=document.querySelector('.xserver-manager');
         const clipboardPanel=xServerInstalledManager?.querySelector('.xserver-clipboard-panel');
         const clipboardModes=clipboardPanel?.querySelector('.remote-install-modes');
@@ -12045,7 +11552,7 @@ app.whenReady().then(async () => {
         xServerRemoteUninstall=Boolean(xServerInstalledManager?.textContent.includes('卸载 X11 组件'));
         xServerClipboardLayout=Boolean(
           clipboardPanel
-          && clipboardPanel.querySelector('.xserver-clipboard-head > button[onclick*="inspectX11ClipboardHelper"]')
+          && clipboardPanel.querySelector('.xserver-clipboard-head > button[aria-label]')?.title===tr('common:x11.clipboard_retry',{defaultValue:'重新检测'})
           && clipboardModeButtons.length===4
           && firstClipboardModeRect
           && secondClipboardModeRect
@@ -12056,11 +11563,11 @@ app.whenReady().then(async () => {
           && clipboardStatusCenterDelta<=1
           && missingXclipMentions===1
         );
-        closeXServerManager();
+        window.termaX11.closeManager();
       } finally {
         api=x11InstalledApi;
-        closeX11InstallGuide();
-        closeXServerManager();
+        window.termaX11.closeGuide();
+        window.termaX11.closeManager();
       }
       api=previousApi;
       const xServerImmediateApi=api;
@@ -12076,38 +11583,38 @@ app.whenReady().then(async () => {
           }
           return xServerImmediateApi(path,options);
         };
-        const openingXServer=openXServerManager();
+        const openingXServer=window.termaX11.openManager();
         await new Promise(resolve=>setTimeout(resolve,0));
         const immediateModal=document.querySelector('.xserver-manager');
-        const duplicateXServerResult=await openXServerManager();
+        const duplicateXServerResult=await withRemoteSmokeTimeout(window.termaX11.openManager(), 'duplicate X Server manager');
         var xServerImmediateLoading=Boolean(
           !document.getElementById('modal').hidden
           && immediateModal?.textContent.includes('正在打开 X Server 管理')
           && immediateModal.querySelector('.xserver-state.loading svg')
-          && xServerManagerOpening
+          && window.termaX11.manager.state.opening
           && duplicateXServerResult===false
           && xServerImmediateCalls===1
         );
         releaseXServerImmediate?.();
-        await openingXServer;
-        closeXServerManager();
+        await withRemoteSmokeTimeout(openingXServer, 'X Server loading completion');
+        window.termaX11.closeManager();
       } finally {
         releaseXServerImmediate?.();
         api=xServerImmediateApi;
-        closeXServerManager();
+        window.termaX11.closeManager();
       }
-      await openXServerManager();
+      await withRemoteSmokeTimeout(window.termaX11.openManager(), 'X Server default context');
       const themeProbe=document.createElement('div');
       themeProbe.style.background='var(--panel)';
-      document.body.appendChild(themeProbe);
+      document.querySelector('.xserver-manager').appendChild(themeProbe);
       const xServerManager=Boolean(!document.getElementById('modal').hidden&&document.querySelector('.xserver-manager')&&getComputedStyle(document.querySelector('.xserver-manager')).backgroundColor===getComputedStyle(themeProbe).backgroundColor);
       themeProbe.remove();
-      closeXServerManager();
+      window.termaX11.closeManager();
       const quickX11Connection={id:-910011,name:'smoke@192.0.2.11',ssh_host:'192.0.2.11',ssh_port:22,ssh_user:'smoke',auth_type:'password',x11_mode:'off',quick_connection:true,quick_token:'ui-smoke-token'};
-      quickConnectionsById.set(quickX11Connection.id,quickX11Connection);
+      window.termaTerminalQuickRegistry.quickConnectionsById.set(quickX11Connection.id,quickX11Connection);
       const quickXServerApi=api;
       const quickXServerPreviousActiveTabKey=activeTabKey;
-      terminalSessions.set('quick-terminal-ui-smoke',{connection:quickX11Connection});
+      window.termaTerminalState.terminalSessions.set('quick-terminal-ui-smoke',{connection:quickX11Connection});
       activeTabKey='quick-terminal-ui-smoke';
       try {
         api=async path => String(path)==='/api/xserver'
@@ -12115,7 +11622,7 @@ app.whenReady().then(async () => {
           : String(path)==='/api/connections/'+quickX11Connection.id+'/x11-forwarding'
             ? {platform:'linux',ready:true,enabled:true,x11_forwarding:'yes',sshd_present:true,config_present:true,config_file:'/etc/ssh/sshd_config',xauth_path:'/usr/bin/xauth',xauth_location:'/usr/bin/xauth',x11_display_offset:'10',can_manage:false,can_terminal_manage:true,terminal_commands:{disable:'sudo test-only-disable'}}
             : quickXServerApi(path);
-        await openXServerManager();
+        await withRemoteSmokeTimeout(window.termaX11.openManager(), 'X Server temporary SSH context');
         const quickManager=document.querySelector('.xserver-manager');
         const quickManagerText=quickManager?.textContent||'';
         var quickXServerManager=Boolean(
@@ -12125,25 +11632,25 @@ app.whenReady().then(async () => {
           && quickManagerText.includes('在终端手动关闭')
           && quickManagerText.includes('临时打开 X11 终端')
           && quickManagerText.includes('卸载 X11 组件')
-          && Boolean(quickManager?.querySelector('button[onclick*="uninstallRemoteX11Components"]'))
+          && [...quickManager?.querySelectorAll('button[data-ui-action-key]')||[]].some(button=>button.dataset.uiActionKey==='x11-components:'+quickX11Connection.id&&button.textContent.includes('卸载 X11 组件'))
           && quickManagerText.includes('不会保存默认 X11 配置')
           && !quickManagerText.includes('普通终端默认启用')
-          && xServerManagerConnectionId===quickX11Connection.id
-          && xServerManagerTerminalKey==='quick-terminal-ui-smoke'
+          && window.termaX11.manager.state.connectionId===quickX11Connection.id
+          && window.termaX11.manager.state.terminalKey==='quick-terminal-ui-smoke'
         );
-        closeXServerManager();
+        window.termaX11.closeManager();
       } finally {
         api=quickXServerApi;
         activeTabKey=quickXServerPreviousActiveTabKey;
-        terminalSessions.delete('quick-terminal-ui-smoke');
-        quickConnectionsById.delete(quickX11Connection.id);
+        window.termaTerminalState.terminalSessions.delete('quick-terminal-ui-smoke');
+        window.termaTerminalQuickRegistry.quickConnectionsById.delete(quickX11Connection.id);
       }
       const xServerApi=api;
       try {
         api=async (path,options) => String(path)==='/api/xserver'
           ? {integration_available:false,desktop:false,desktop_backend_available:false,authorization_required:false,reason:'当前连接的是独立 Web/测试后端，无法读取运行 Terma 桌面设备上的 X Server',server_side:{platform:'win32',available:false,running:false,display:''},can_start:false,can_stop:false,can_install:false}
           : xServerApi(path,options);
-        await openXServerManager();
+        await withRemoteSmokeTimeout(window.termaX11.openManager(), 'X Server standalone backend');
         const unavailableManager=document.querySelector('.xserver-manager');
         const unavailableText=unavailableManager?.textContent||'';
         const unavailableActions=[...unavailableManager?.querySelectorAll('.actions button')||[]].map(button=>button.textContent.trim());
@@ -12153,7 +11660,7 @@ app.whenReady().then(async () => {
           && !unavailableText.includes('X Server 未启动')
           && !unavailableActions.some(label=>['启动','停止','安装 Linux 图形组件','安装 XQuartz'].includes(label))
         );
-        closeXServerManager();
+        window.termaX11.closeManager();
         api=async (path,options) => String(path)==='/api/xserver'
           ? {
               integration_available:false,
@@ -12167,7 +11674,7 @@ app.whenReady().then(async () => {
               running:true
             }
           : xServerApi(path,options);
-        await openXServerManager();
+        await withRemoteSmokeTimeout(window.termaX11.openManager(), 'X Server browser authorization');
         const browserAuthorizationManager=document.querySelector('.xserver-manager');
         const browserAuthorizationText=browserAuthorizationManager?.textContent||'';
         var xServerBrowserAuthorization=Boolean(
@@ -12179,7 +11686,7 @@ app.whenReady().then(async () => {
           && browserAuthorizationManager?.querySelector('[data-action="desktop-integration-authorize"][data-scopes="xserver"]')
           && !browserAuthorizationText.includes('独立 Web/测试后端')
         );
-        closeXServerManager();
+        window.termaX11.closeManager();
         api=async (path,options) => String(path)==='/api/xserver'
           ? {
               integration_available:true,
@@ -12199,7 +11706,7 @@ app.whenReady().then(async () => {
               can_install:false
             }
           : xServerApi(path,options);
-        await openXServerManager();
+        await withRemoteSmokeTimeout(window.termaX11.openManager(), 'X Server local authorization');
         const localDirectManager=document.querySelector('.xserver-manager');
         const localDirectManagerText=localDirectManager?.textContent||'';
         var xServerLocalDirectAuthorization=Boolean(
@@ -12207,7 +11714,7 @@ app.whenReady().then(async () => {
           && localDirectManagerText.includes('浏览器权限')
           && !localDirectManagerText.includes('申请授权')
         );
-        closeXServerManager();
+        window.termaX11.closeManager();
       } finally {
         api=xServerApi;
       }
@@ -12217,6 +11724,9 @@ app.whenReady().then(async () => {
       const adaptiveCard=modal.querySelector('.modal-card');
       const adaptiveTitle=adaptiveCard.querySelector('.modal-title-row');
       const adaptiveActions=adaptiveCard.querySelector('.actions');
+      const adaptiveBody=adaptiveActions.previousElementSibling;
+      const initialActions=adaptiveActions.getBoundingClientRect();
+      const initialBody=adaptiveBody.getBoundingClientRect();
       adaptiveCard.scrollTop=adaptiveCard.scrollHeight;
       await new Promise(resolve=>setTimeout(resolve,0));
       const adaptiveRect=adaptiveCard.getBoundingClientRect();
@@ -12231,8 +11741,11 @@ app.whenReady().then(async () => {
         && adaptiveRect.bottom<=innerHeight+1
         && Math.abs(adaptiveTitleRect.top-adaptiveRect.top)<=2
         && adaptiveTitleRect.bottom<=adaptiveRect.bottom+1
+        && getComputedStyle(adaptiveActions).position==='static'
+        && initialActions.top>=initialBody.bottom
+        && initialActions.top>adaptiveRect.bottom
         && adaptiveActionsRect.top>=adaptiveRect.top-1
-        && Math.abs(adaptiveActionsRect.bottom-adaptiveRect.bottom)<=2
+        && adaptiveActionsRect.bottom<=adaptiveRect.bottom
       );
       const adaptiveModalMetrics={
         scrollHeight:adaptiveCard.scrollHeight,
@@ -12256,20 +11769,20 @@ app.whenReady().then(async () => {
       modal.hidden=true;
       modal.innerHTML='';
       healthResults.delete(Number(connections[0].id));
-      renderConnections();
+      window.termaConnectionViews.renderConnections();
       const uncheckedHealthRow=[...document.querySelectorAll('.conn-row')].find(row=>row.querySelector('.conn-name')?.textContent===connections[0].name);
       const uncheckedHealthHidden=Boolean(uncheckedHealthRow
         &&!uncheckedHealthRow.querySelector('.health-badge')
         &&!uncheckedHealthRow.querySelector('.status-dot')
         &&!uncheckedHealthRow.querySelector('.conn-state'));
       healthResults.set(Number(connections[0].id),{ok:true,status:'正常'});
-      renderConnections();
+      window.termaConnectionViews.renderConnections();
       const healthRow=[...document.querySelectorAll('.conn-row')].find(row=>row.querySelector('.conn-name')?.textContent===connections[0].name);
       const healthBadge=healthRow?.querySelector('.health-badge');
       const healthIconOnly=Boolean(healthBadge&&!healthBadge.textContent.trim()&&healthBadge.getAttribute('aria-label')?.includes('正常'));
       primaryView='connections';
-      renderExplorerTools();
-      applyOperationPaneWidth(OPERATION_PANE_WIDTH_DEFAULT,{fit:false});
+      window.termaConnectionViews.renderExplorerTools();
+      window.termaWorkspaceChrome.apply('operation', 292,{fit:false});
       await new Promise(resolve=>setTimeout(resolve,0));
       const defaultAddSshButton=document.querySelector('#explorerTools .explorer-main-action');
       const defaultAddSshLabel=defaultAddSshButton?.querySelector('span');
@@ -12279,7 +11792,7 @@ app.whenReady().then(async () => {
         && defaultAddSshRect&&defaultAddSshLabelRect
         && defaultAddSshLabelRect.right<=defaultAddSshRect.right-4
         && defaultAddSshButton.scrollWidth<=defaultAddSshButton.clientWidth+1);
-      applyOperationPaneWidth(OPERATION_PANE_WIDTH_MIN,{fit:false});
+      window.termaWorkspaceChrome.apply('operation', 260,{fit:false});
       await new Promise(resolve=>setTimeout(resolve,0));
       const brand=document.querySelector('.brand');
       const brandRect=brand?.getBoundingClientRect();
@@ -12294,20 +11807,23 @@ app.whenReady().then(async () => {
       const narrowAddSshButton=document.querySelector('#explorerTools .explorer-main-action');
       const narrowAddSshTextFits=Boolean(narrowAddSshButton?.textContent.includes('添加 SSH')
         && narrowAddSshButton.scrollWidth<=narrowAddSshButton.clientWidth+1);
-      return {rdpDisplayForm,vncDefaultsToNoVnc,vncExplicitAutoPreserved,vncModePersisted,vncBundledMode,vncImageSyncOptOut,vncPasswordForm,vncRetryPrompt,vncRetryValue,vncNoPassword,sshCredentialRepairUi,quickTerminalCredentialRepairUi,ftpCredentialRepairUi,vncServiceDiagnosisUi,vncServiceActionDebounced,xdmcpForm,xdmcpMenuAvailable,xdmcpSessionSemantics,xdmcpAuthorizationLayout,standaloneRdpFallback,standaloneRdpStatusHidden,standaloneVncFallback,standaloneXdmcpFallback,standaloneXdmcpStatusHidden,standaloneFallbackDetails,remoteDiagnosticAlignment,graphicsRendering:renderingUi,renderingCopyInteraction,vncSourceSelection,vncSourceRefreshInPlace,remoteLayoutUi,vncFailureRecovery,vncComponentManagementUi,vncComponentDiagnostics:{missingTigerUi,rawTigerUi,missingTigerText,rawTigerText,missingTigerButtons,rawTigerButtons},xdmcpWorkspaceText,macVncBypassesLinuxDesktop,macVncWorkspaceText,macVncSetupGuidance,remoteActivitySeparated,remoteActivityChecks,remoteHostStickyStyle,remoteHostStickyFollowsOuter,derivedSourcePresentation,remoteNameDoubleClickOpens,remoteDesktopSwitchAvailable,remoteDesktopSwitchProfiles:remoteDesktopSwitchProfiles(derived.id).map(profile=>profile.name),remoteDesktopSingleDisabled,remoteDesktopSwitchMenuComplete,remoteDesktopSwitchMenu,sshActivitySeparated,x11AppLauncher,x11InstalledDialog,xServerRemoteUninstall,xServerClipboardLayout,xServerImmediateLoading,xServerManager,quickXServerManager,xServerDesktopIntegrationUnavailable,xServerBrowserAuthorization,xServerLocalDirectAuthorization,adaptiveModal,adaptiveModalMetrics,modalHeaderControlsAligned,modalBackdropLocked,uncheckedHealthHidden,healthIconOnly,narrowBrandActionsFit,expandedBrandNameVisible,defaultAddSshTextFits,narrowAddSshTextFits};
+      return {rdpDisplayForm,vncDefaultsToNoVnc,vncExplicitAutoPreserved,vncModePersisted,vncBundledMode,vncImageSyncOptOut,vncPasswordForm,vncRetryPrompt,vncRetryValue,vncNoPassword,sshCredentialRepairUi,quickTerminalCredentialRepairUi,ftpCredentialRepairUi,vncServiceDiagnosisUi,vncServiceActionDebounced,xdmcpForm,xdmcpMenuAvailable,xdmcpSessionSemantics,xdmcpAuthorizationLayout,standaloneRdpFallback,standaloneRdpStatusHidden,standaloneVncFallback,standaloneXdmcpFallback,standaloneXdmcpStatusHidden,standaloneFallbackDetails,remoteDiagnosticAlignment,graphicsRendering:renderingUi,renderingCopyInteraction,vncSourceSelection,vncSourceRefreshInPlace,remoteLayoutUi,vncFailureRecovery,vncComponentManagementUi,vncComponentDiagnostics:{missingTigerUi,rawTigerUi,missingTigerText,rawTigerText,missingTigerButtons,rawTigerButtons},xdmcpWorkspaceText,macVncBypassesLinuxDesktop,macVncWorkspaceText,macVncSetupGuidance,remoteActivitySeparated,remoteActivityChecks,remoteHostStickyStyle,remoteHostStickyFollowsOuter,derivedSourcePresentation,remoteNameDoubleClickOpens,remoteDesktopSwitchAvailable,remoteDesktopSwitchProfiles:window.termaRemoteDesktop.relations.alternatives(derived).map(profile=>profile.name),remoteDesktopSingleDisabled,remoteDesktopSwitchMenuComplete,remoteDesktopSwitchMenu,sshActivitySeparated,x11AppLauncher,x11InstalledDialog,xServerRemoteUninstall,xServerClipboardLayout,xServerImmediateLoading,xServerManager,quickXServerManager,xServerDesktopIntegrationUnavailable,xServerBrowserAuthorization,xServerLocalDirectAuthorization,adaptiveModal,adaptiveModalMetrics,modalHeaderControlsAligned,modalBackdropLocked,uncheckedHealthHidden,healthIconOnly,narrowBrandActionsFit,expandedBrandNameVisible,defaultAddSshTextFits,narrowAddSshTextFits};
     } finally {
-      applyOperationPaneWidth(previousOperationWidth,{fit:false});
+      window.termaWorkspaceChrome.apply('operation', previousOperationWidth,{fit:false});
       api=previousApi;
       connections=previousConnections;
       remoteProfiles=previousProfiles;
-      remoteConnectionSearch=previousRemoteSearch;
-      remoteDesktopQuickOpen=previousRemoteDesktopQuickOpen;
+      window.termaRemoteList.setSearch(previousRemoteSearch);
+      if(previousRemoteDesktopQuickOpen===null) localStorage.removeItem('remoteDesktopQuickOpen');
+      else localStorage.setItem('remoteDesktopQuickOpen',previousRemoteDesktopQuickOpen);
+      await window.termaRuntimeReader.load();
       selectedRemoteProfileId=previousSelected;
       primaryView=previousPrimaryView;
+      window.termaConnectionViews?.release(document.getElementById('view-edit'));
       document.getElementById('view-edit').innerHTML=previousEditHtml;
-      closeX11AppLauncher();
-      closeXServerManager();
-      renderConnections();
+      window.termaX11.closeLauncher();
+      window.termaX11.closeManager();
+      window.termaConnectionViews.renderConnections();
     }
   })()`);
   window.setAlwaysOnTop(false);
@@ -12368,7 +11884,7 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(diagnosticsDirectory, "ui-smoke-mobile.png"), image.toPNG());
   }
   if (process.env.TERMA_UI_SMOKE_VERBOSE === "1") {
-    console.log(JSON.stringify({ ...result, noVncModuleUi, languageOnboardingUi, forwardTemplateLayoutUi, cspViolations, refreshStateUi, workspaceTabDragUi, workspaceDockingUi, workspaceTabVisibilityUi, workspaceHeaderResizeUi, pages, navigationUi, aboutUi, desktopMenu, runningActions, authUi, connectionStartupUi, saveAndClearUi, notificationUi, restoreKeyUi, restoreCredentialUi, terminalUi, terminalStartupUi, logSettingsUi, sftpUi, productivityUi, sftpAutomationUi, sftpAutomationMobileUi, remoteAdminUi, linuxDesktopToolbarUi, remoteAccessUi, clipboardUi, dark, visual, mobile, errors }, null, 2));
+    console.log(JSON.stringify({ ...result, noVncModuleUi, languageOnboardingUi, forwardTemplateLayoutUi, cspViolations, refreshStateUi, workspaceTabDragUi, workspaceDockingUi, workspaceTabVisibilityUi, workspaceHeaderResizeUi, pages, navigationUi, aboutUi, desktopMenu, runningActions, authUi, connectionStartupUi, saveAndClearUi, notificationUi, restoreKeyUi, restoreCredentialUi, terminalUi, terminalStartupUi, logSettingsUi, sftpUi, productivityUi, remoteAdminUi, linuxDesktopToolbarUi, remoteAccessUi, clipboardUi, dark, visual, mobile, errors }, null, 2));
   }
   const operationPagesFailed = pages.some(page => page.scrollWidth > page.width || !page.toolFits || !page.layoutMode || !page.compactHeight);
   const failedOperationPages = pages.filter(page => page.scrollWidth > page.width || !page.toolFits || !page.layoutMode || !page.compactHeight);
@@ -12454,8 +11970,8 @@ app.whenReady().then(async () => {
     || !connectionStartupUi.categories.includes('会话工具');
   const saveAndClearUiFailed = !Object.values(saveAndClearUi).every(Boolean);
   const notificationUiFailed = notificationUi.replayed !== 0 || !notificationUi.initialized || notificationUi.cursor !== notificationUi.stored || !notificationUi.categoryControls || !notificationUi.floatingUnderNotifications || !notificationUi.successSuppressed || !notificationUi.infoVisible || !notificationUi.progressSuppressed || !notificationUi.desktopToggleReflects || !notificationUi.pointerKeepsToast || !notificationUi.pointerResumesToast;
-  const restoreKeyUiFailed = !restoreKeyUi.opened || restoreKeyUi.rowCount !== 12 || JSON.stringify(restoreKeyUi.originalNames) !== JSON.stringify(['old-key-a','old-key-b']) || restoreKeyUi.candidates.length !== 3 || !restoreKeyUi.candidates.some(item=>item.includes('id_ed25519_demo')) || !restoreKeyUi.candidates.some(item=>item.includes('id_rsa_project')) || !restoreKeyUi.candidateValuePreserved || !restoreKeyUi.stagesWindowsPath || !restoreKeyUi.backdropIgnored || !restoreKeyUi.continuedWithUnbound || !restoreKeyUi.continuedAllUnbound || !restoreKeyUi.configAllowsUnbound || !restoreKeyUi.configSortEditable || !restoreKeyUi.acceptsAll || !restoreKeyUi.uploadDirectory || !restoreKeyUi.actions || !restoreKeyUi.statusReady || !restoreKeyUi.cardWithinViewport || !restoreKeyUi.closed;
-  const restoreCredentialUiFailed = !restoreCredentialUi.opened || !restoreCredentialUi.backdropIgnored || !restoreCredentialUi.originalLabels.some(item=>item.includes('私钥：id_old')) || !restoreCredentialUi.originalLabels.some(item=>item.includes('备份含密码')) || !restoreCredentialUi.originalLabels.some(item=>item.includes('备份未包含密码')) || !restoreCredentialUi.initialStatuses.includes('保留备份密码') || !restoreCredentialUi.stagedStatuses.some(item=>item.includes('将绑定：id_key')) || !restoreCredentialUi.stagedStatuses.includes('将使用新密码') || !restoreCredentialUi.preservesSavedPassword || !restoreCredentialUi.replacesMissingPassword || !restoreCredentialUi.bindsKey || !restoreCredentialUi.sortFields || !restoreCredentialUi.updatesSort || !restoreCredentialUi.preservesSort || !restoreCredentialUi.cardWithinViewport || !restoreCredentialUi.closed;
+  const restoreKeyUiFailed = restoreKeyUi.scenario !== 'm6-exchange' || restoreKeyUi.checks < 100 || restoreKeyUi.screenshots < 60;
+  const restoreCredentialUiFailed = restoreKeyUiFailed;
   const settingsSectionsFailed = navigationUi.settingsChecks.some(item=>item.visible.length!==1||item.visible[0]!==item.requested||item.active.length!==1||item.active[0]!==item.requested) || navigationUi.aboutVisible?.length!==1 || navigationUi.aboutVisible?.[0]!=='settings-about' || navigationUi.aboutActive?.length!==1 || navigationUi.aboutActive?.[0]!=='settings-about';
   const importSectionsFailed = navigationUi.importChecks.some(item=>item.visible.length!==1||item.visible[0]!==item.requested||item.active.length!==1||item.active[0]!==item.requested);
   const importSourceCheck = navigationUi.importChecks.find(item => item.requested === 'import-source');
@@ -12472,7 +11988,7 @@ app.whenReady().then(async () => {
   const sessionUi = navigationUi.sessionUi || {};
   const authPolicyUi = navigationUi.authPolicyUi || {};
   const localDirectUi = navigationUi.localDirectUi || {};
-  const runtimeUiFailed = !runtimeUi.found || runtimeUi.port !== '18100' || JSON.stringify(runtimeUi.selectedHosts) !== JSON.stringify(['0.0.0.0']) || !runtimeUi.sftpSettingsAbsent || !runtimeUi.terminalLatencySettingChecked || !runtimeUi.wildcardCollapsed || runtimeUi.urlLinks.length !== 2 || !runtimeUi.urlLinks.some(url=>url.includes('192.0.2.10:18100')) || !runtimeUi.restartNotice;
+  const runtimeUiFailed = !runtimeUi.found || runtimeUi.port !== '18100' || JSON.stringify(runtimeUi.selectedHosts) !== JSON.stringify(['0.0.0.0']) || !runtimeUi.sftpSettingsAbsent || !runtimeUi.terminalLatencySettingAbsent || !runtimeUi.wildcardCollapsed || runtimeUi.urlLinks.length !== 2 || !runtimeUi.urlLinks.some(url=>url.includes('192.0.2.10:18100')) || !runtimeUi.restartNotice;
   const sessionUiFailed = sessionUi.ttl !== '720' || sessionUi.max !== '1000' || sessionUi.cleanup !== '10' || !sessionUi.active || !sessionUi.save;
   const activityUiFailed = result.activity.count !== 11 || !result.activity.iconCentered || !result.activity.centersAligned || !result.activity.insideColumn || !result.activity.resizable || !result.activityUtilities;
   const appearanceEffectsUiFailed = Object.values(appearanceEffectsUi).some(value => value !== true);
@@ -12514,10 +12030,10 @@ app.whenReady().then(async () => {
   const mobileTerminalSettingsUi = mobile.terminalGlobalSettings || {};
   const terminalStartupUiFailed = !terminalStartupUi.found || !Object.values(terminalStartupUi).every(Boolean);
   const terminalAiUiFailed = !terminalSettingsUi.mcp || !terminalAiUi.shortcutRendered || !terminalAiUi.panelOpens || !terminalAiUi.rightPlacement || !terminalAiUi.panelLayoutFits || !terminalAiUi.composerFits || !terminalAiUi.composerKeyboard || !terminalAiUi.markdownRendered || !terminalAiUi.scopedHorizontalScroll || !terminalAiUi.longCodeActionsReachable || !terminalAiUi.toolCallRendered || !terminalAiUi.mcpCallRendered || !terminalAiUi.xmlCommandRendered || !terminalAiUi.stopsAfterFirstCommand || !terminalAiUi.fullPermissionOption || !terminalAiUi.inlineApprovalSlot || !terminalAiUi.modelReasoningControls || !terminalAiUi.multiCommandQueue || !terminalAiUi.chatMode || !terminalAiUi.agentPlanLoopGuard || !terminalAiUi.incompleteCommandRecovery || !terminalAiUi.floatingPersisted || !terminalAiUi.floatingViewportClamped || !terminalAiUi.dragScrollPreserved || !terminalAiUi.modalAboveFloating || !terminalAiUi.floatingResizeDirection || !terminalAiUi.floatingMinimized || !terminalAiUi.fixedMinimized || !terminalAiUi.fixedBoundaryResize || !terminalAiUi.layoutRestored || !terminalAiUi.activeState || !terminalAiUi.projectedActiveState || !terminalAiUi.binaryOutputCaptured || !terminalAiUi.trailingPromptDetected || !terminalAiUi.emptyOutputCompletes || !terminalAiUi.controlledAllowsLowSensitivity || !terminalAiUi.controlledFindAllowed || !terminalAiUi.controlledConfirmsSensitive || !terminalAiUi.explicitFileReadAllowed || !terminalAiUi.unrequestedFileReadAllowed || !terminalAiUi.pathBoundaryAllowed || !terminalAiUi.sensitivePathUsesSensitiveRisk || !terminalAiUi.agentLoop || !terminalAiUi.agentGroupedReply || !terminalAiUi.agentActionRecovery || !terminalAiUi.searchTaskSwitch || !terminalAiUi.internalCutIsNotUserStop || !terminalAiUi.historySupported;
-const terminalUiFailed = terminalAiUiFailed || !terminalUi.found || !terminalSettingsUi.connectionStageTabSwitch || !terminalUi.desktopBackHidden || !terminalUi.desktopKeysHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.stableLogId || !terminalUi.x11DefaultFallsBack || !terminalUi.x11ScopeMenu || !terminalUi.ctrlVImageIntercepted || !terminalUi.ctrlVEmptyFallsThrough || !terminalUi.enterReconnect || !terminalUi.reconnectPreservesOutput || !terminalUi.inactiveTerminalOutputContinues || !terminalUi.fontActionRestoresFocus || !terminalUi.recentCommandsRestoreFocus || !terminalUi.recentCommandSequenceVisible || !terminalUi.resourceWindowTitle || !terminalUi.remoteDesktopTitleDedup || !terminalUi.numberingContinuesWithOpenTabs || !terminalUi.numberingRestartsAfterAllClosed || !terminalUi.encodingMenuOpened || !terminalUi.encodingSelectionUsesLatest || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.desktopStatusAvoidsDuplicate || !terminalUi.desktopToolbarInHeader || !terminalUi.connectionToggleUsesLinkAction || !terminalUi.activeToolbarReplacesPrevious || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.terminalToolbarScrollable || !terminalUi.toolbarScrollControlsVisible || !terminalUi.toolbarScrollStartsAtLeft || !terminalUi.toolbarScrollLabels || !terminalUi.toolbarScrollCueVisible || !terminalUi.toolbarScrollButtonsWork || !terminalUi.toolbarScrollEndsAtRight || !terminalUi.startupCompactIconOnly || !terminalUi.desktopActionsIconOnly || !terminalUi.terminalToolbarIconSet || !terminalUi.terminalFrameLowContrast || !terminalUi.desktopCursorCopyHintVisible || !terminalUi.desktopCursorCopyHintCleansUp || !terminalUi.terminalCtrlWheelZooms || !terminalUi.terminalCtrlWheelKeepsPosition || !terminalUi.terminalPlainWheelScrolls || !terminalUi.terminalFontChangePreservesMiddleScroll || !terminalUi.terminalCjkTextDoesNotClip || !terminalUi.latencyMeasured || !terminalUi.latencyCanDisable || !terminalUi.latencyCanEnable || !terminalUi.zmodemPanelUi || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalSettingsUi.fontInheritance || !terminalDropUi.found || !terminalDropUi.copyFeedbackVisible || !terminalDropUi.sftpCopyToCurrentDirectory || !terminalDropUi.uploadFeedbackVisible || !terminalDropUi.localUploadToCurrentDirectory || !terminalDropUi.singleActiveDropTarget || !terminalDropUi.resizeFeedbackClears || !terminalDropUi.staleFeedbackClears || !terminalDropUi.completionNoticeNotDuplicated || !terminalSettingsUi.withinViewport || !terminalSettingsUi.compact || !terminalSettingsUi.readableWidth || !terminalSettingsUi.noHorizontalOverflow || JSON.stringify(terminalSettingsUi.tabs)!==JSON.stringify(['外观','鼠标与链接','选择与粘贴','快捷键']) || JSON.stringify(terminalSettingsUi.backgroundModes)!==JSON.stringify(['theme','black','white','custom']) || !terminalSettingsUi.backgroundPreview || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.readableCustomPalette || !terminalSettingsUi.followsTheme || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.pasteCommandHistory || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.shellOwned || !mobile.terminalBack?.reservedRow || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward-list','forward','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
-  const logSettingsUiFailed = !logSettingsUi.open || !logSettingsUi.accessible || logSettingsUi.days !== "0" || logSettingsUi.fileMb !== "10" || logSettingsUi.totalMb !== "0" || logSettingsUi.rotations || !logSettingsUi.currentUsage || !logSettingsUi.cleanupPreview || !logSettingsUi.cleanup || logSettingsUi.immediateCleanup || !logSettingsUi.save || !logSettingsUi.closed || !logSettingsUi.fullTerminalTime || !logSettingsUi.defaultsToLatest || !logSettingsUi.followsTheme || !logSettingsUi.searchContextHidden || !logSettingsUi.searchOpensWithQuery || !logSettingsUi.pagerVisible || !logSettingsUi.pagerPinned || !logSettingsUi.pagerFitsNarrow || !logSettingsUi.detailSearchHiddenInitially || !logSettingsUi.detailSearchVisible || !logSettingsUi.detailSearchNavigation || !logSettingsUi.detailSearchClose || !logSettingsUi.ctrlF || !logSettingsUi.detailSearchRealtime || !logSettingsUi.detailSearchCurrent || !logSettingsUi.detailSearchNext || !logSettingsUi.detailSearchFallbackCurrent || !logSettingsUi.detailSearchRepeatedTarget || !logSettingsUi.detailSearchTargetPosition || !logSettingsUi.detailTabStateRetained || !logSettingsUi.detailSearchFloats || !logSettingsUi.detailSearchReservesTop;
-  const productivityUiFailed = !productivityUi.quickVisible || productivityUi.actionCount < 7 || !productivityUi.quickConnectionActionsInline || !productivityUi.quickPanelDirect || !productivityUi.workspaceSearchable || !productivityUi.workspacePreviewOpens || !productivityUi.quickButtonPlacement || !productivityUi.quickButtonLightning || productivityUi.commandWindowDefaultHasConnections || productivityUi.commandWindowDefaultHasSnippets || !productivityUi.commandWindowSearchFindsSnippet || !productivityUi.commandWindowLabel.includes('命令窗口') || !productivityUi.xServerQuickUsesX11 || !productivityUi.xServerUnauthorizedWarning || !productivityUi.xServerLocalDirectReady || !productivityUi.broadcastFromEither || !productivityUi.broadcastTabMarked || !productivityUi.broadcastHeaderGrouped || !productivityUi.broadcastExitCompact || !productivityUi.visibleSplitHasNoActivity || !productivityUi.visibleSplitClearsPriorActivity || !productivityUi.hiddenBinaryOutputMarked || productivityUi.syncRows !== 3 || !productivityUi.conflictSafe || !productivityUi.namedWorkspaceTools || !productivityUi.terminalTools || !productivityUi.quickToolbarIconVisible || !productivityUi.quickToggleStateVisible || !productivityUi.quickCompactWidths || !productivityUi.quickCommandExecutes || !productivityUi.quickContextMenu || !productivityUi.quickDoubleClickCreates || !productivityUi.quickEditorBackCloses || !productivityUi.quickManagerPolished || !productivityUi.quickOrderPersists || !productivityUi.quickHeightAdjustable || !productivityUi.quickToggleHides || !productivityUi.quickWheelScrolls || !productivityUi.quickResponsive;
-  const sftpAutomationUiFailed = Boolean(sftpAutomationUi.error || sftpAutomationMobileUi.error) || !sftpAutomationUi.desktopHeaderFits || !sftpAutomationUi.primaryTextReadable || !sftpAutomationUi.taskPrimaryTextReadable || !sftpAutomationUi.taskActionsSingleLine || !sftpAutomationUi.compactTaskActionsAccessible || !sftpAutomationUi.dragHandlesAccessible || !sftpAutomationUi.dragSortingPersists || !sftpAutomationUi.desktopFits || !sftpAutomationUi.unifiedList || !sftpAutomationUi.managerRowsCentered || !sftpAutomationUi.globalHistoryRemoved || !sftpAutomationUi.quickPathActions || !sftpAutomationUi.buttonsPolished || !sftpAutomationUi.initiallyRunning || !sftpAutomationUi.liveStatusRefresh || !sftpAutomationUi.pausedRealtimeNotMonitoring || !sftpAutomationUi.perTaskHistory || !sftpAutomationUi.noChangeHistory || !sftpAutomationUi.noChangeStreakVisible || !sftpAutomationUi.historyPagination || !sftpAutomationUi.expandableRunDetails || !sftpAutomationUi.historyCardFiltering || !sftpAutomationUi.historyRefreshPaused || !sftpAutomationUi.nestedConfirmKeepsHistory || !sftpAutomationUi.historyRemainsAfterCancel || !sftpAutomationUi.nestedConfirmKeepsManager || !sftpAutomationUi.managerRemainsAfterCancel || !sftpAutomationUi.unifiedTitle || !sftpAutomationUi.allDirections || !sftpAutomationUi.realtimeAvailable || !sftpAutomationUi.secondIntervalVisible || !sftpAutomationUi.remoteBrowseLoaded || !sftpAutomationUi.remoteTreeControls || !sftpAutomationUi.remotePathSelected || !sftpAutomationUi.halfHourFits || !sftpAutomationUi.cronPreview || !sftpAutomationUi.transferNotifyDefault || !sftpAutomationUi.contentCompareDefault || !sftpAutomationUi.deleteSyncDefaultOff || !sftpAutomationUi.changedFilePolicyDefault || !sftpAutomationUi.bidirectionalSafe || !sftpAutomationUi.realtimeSafe || !sftpAutomationUi.unifiedScheduler || !sftpAutomationMobileUi.mobileFits || !sftpAutomationMobileUi.mobileTaskPrimaryReadable;
+const terminalUiFailed = terminalAiUiFailed || !terminalUi.found || !terminalSettingsUi.connectionStageTabSwitch || !terminalUi.desktopBackHidden || !terminalUi.desktopKeysHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.stableLogId || !terminalUi.x11DefaultFallsBack || !terminalUi.x11ScopeMenu || !terminalUi.ctrlVImageIntercepted || !terminalUi.ctrlVEmptyFallsThrough || !terminalUi.enterReconnect || !terminalUi.reconnectPreservesOutput || !terminalUi.inactiveTerminalOutputContinues || !terminalUi.fontActionRestoresFocus || !terminalUi.recentCommandsRestoreFocus || !terminalUi.recentCommandSequenceVisible || !terminalUi.resourceWindowTitle || !terminalUi.remoteDesktopTitleDedup || !terminalUi.numberingContinuesWithOpenTabs || !terminalUi.numberingRestartsAfterAllClosed || !terminalUi.encodingMenuOpened || !terminalUi.encodingSelectionUsesLatest || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.desktopStatusAvoidsDuplicate || !terminalUi.desktopToolbarInHeader || !terminalUi.connectionToggleUsesLinkAction || !terminalUi.activeToolbarReplacesPrevious || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.terminalToolbarScrollable || !terminalUi.toolbarScrollControlsVisible || !terminalUi.toolbarScrollStartsAtLeft || !terminalUi.toolbarScrollLabels || !terminalUi.toolbarScrollCueVisible || !terminalUi.toolbarScrollButtonsWork || !terminalUi.toolbarScrollEndsAtRight || !terminalUi.startupCompactIconOnly || !terminalUi.desktopActionsIconOnly || !terminalUi.terminalToolbarIconSet || !terminalUi.terminalFrameLowContrast || !terminalUi.desktopCursorCopyHintVisible || !terminalUi.desktopCursorCopyHintCleansUp || !terminalUi.terminalCtrlWheelZooms || !terminalUi.terminalCtrlWheelKeepsPosition || !terminalUi.terminalPlainWheelScrolls || !terminalUi.terminalFontChangePreservesMiddleScroll || !terminalUi.terminalCjkTextDoesNotClip || !terminalUi.legacyTerminalControlsAbsent || !terminalUi.zmodemPanelUi || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalSettingsUi.fontInheritance || !terminalDropUi.found || !terminalDropUi.copyFeedbackVisible || !terminalDropUi.sftpCopyToCurrentDirectory || !terminalDropUi.uploadFeedbackVisible || !terminalDropUi.localUploadToCurrentDirectory || !terminalDropUi.singleActiveDropTarget || !terminalDropUi.resizeFeedbackClears || !terminalDropUi.staleFeedbackClears || !terminalDropUi.completionNoticeNotDuplicated || !terminalSettingsUi.withinViewport || !terminalSettingsUi.compact || !terminalSettingsUi.readableWidth || !terminalSettingsUi.noHorizontalOverflow || JSON.stringify(terminalSettingsUi.tabs)!==JSON.stringify(['外观','鼠标与链接','选择与粘贴','快捷键']) || JSON.stringify(terminalSettingsUi.backgroundModes)!==JSON.stringify(['theme','black','white','custom']) || !terminalSettingsUi.backgroundPreview || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.readableCustomPalette || !terminalSettingsUi.followsTheme || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.pasteCommandHistory || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.shellOwned || !mobile.terminalBack?.reservedRow || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward-list','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
+  const logSettingsUiFailed = logSettingsUi.scenario !== 'm6-log-reader' || logSettingsUi.checks < 300 || logSettingsUi.screenshots < 116;
+  // Quick commands and automations are gated by the Vue matrices in ui-smoke-harness.
+  const productivityUiFailed = Boolean(productivityUi.error) || !productivityUi.quickVisible || productivityUi.actionCount < 7 || !productivityUi.quickConnectionActionsInline || !productivityUi.quickPanelDirect || !productivityUi.workspaceSearchable || !productivityUi.workspacePreviewOpens || !productivityUi.quickButtonPlacement || !productivityUi.quickButtonLightning || productivityUi.commandWindowDefaultHasConnections || productivityUi.commandWindowDefaultHasSnippets || !productivityUi.commandWindowSearchFindsSnippet || !productivityUi.commandWindowLabel.includes('命令窗口') || !productivityUi.xServerQuickUsesX11 || !productivityUi.xServerUnauthorizedWarning || !productivityUi.xServerLocalDirectReady || !productivityUi.broadcastFromEither || !productivityUi.broadcastTabMarked || !productivityUi.broadcastHeaderGrouped || !productivityUi.broadcastExitCompact || !productivityUi.visibleSplitHasNoActivity || !productivityUi.visibleSplitClearsPriorActivity || !productivityUi.hiddenBinaryOutputMarked || productivityUi.syncRows !== 3 || !productivityUi.conflictSafe || !productivityUi.namedWorkspaceTools || !productivityUi.terminalTools;
   const remoteAdminUiFailed = Boolean(remoteAdminUi.desktop?.error)
     || !remoteAdminUi.desktop?.viewportFit
     || !remoteAdminUi.desktop?.noHorizontalOverflow
@@ -12582,7 +12098,7 @@ const terminalUiFailed = terminalAiUiFailed || !terminalUi.found || !terminalSet
   const textEncodingUiFailed = !textEncodingUi.opened || !textEncodingUi.initialCentered || !textEncodingUi.aceLoaded || textEncodingUi.selected !== 'gbk' || !textEncodingUi.manualLanguage || !textEncodingUi.nonJsonFormattingHidden || !textEncodingUi.nonUtf8SaveAllowed || !textEncodingUi.nonUtf8SaveSubmitted || !textEncodingUi.remoteSaveKeepsOpen || !textEncodingUi.remoteEditorClosesExplicitly || !textEncodingUi.utf8LimitEnforced || !textEncodingUi.utf8BomIncludesPrefix || !textEncodingUi.normalizationOnlyLimitEnforced || !textEncodingUi.lineEndingLabelsLocalized || !textEncodingUi.lightPaged || !textEncodingUi.lightNextPage || !textEncodingUi.jsonFormatting || !textEncodingUi.jsonHiddenAfterLanguageChange || !textEncodingUi.json5FormattingHidden || !textEncodingUi.wordWrap || !textEncodingUi.persistDefault || !textEncodingUi.backup || !textEncodingUi.shellFormat || !textEncodingUi.shellNonLfWarningPrepared || !['lf','crlf','cr'].every(value=>textEncodingUi.lineEndings?.includes(value)) || !['utf8','utf8bom','gb18030','gbk','big5','shift_jis','euc-kr','latin1'].every(value=>textEncodingUi.options?.includes(value)) || !['auto','json','yaml','xml','sh','batchfile','powershell','javascript','java','c_cpp','sql','markdown'].every(value=>textEncodingUi.languageOptions?.includes(value));
       const imagePreviewUiFailed = !imagePreviewUi.svgOpened || !imagePreviewUi.svgSanitized || !imagePreviewUi.svgEmbeddedStyles || !imagePreviewUi.svgOuterWindowStable || !imagePreviewUi.svgFitsCanvas || !imagePreviewUi.svgZoomButtons || !imagePreviewUi.svgCtrlWheel || !imagePreviewUi.svgSearchFocused || !imagePreviewUi.svgSearchLocated || !imagePreviewUi.svgSearchKeepsContext || !imagePreviewUi.svgSearchClearFits || !imagePreviewUi.svgColorModeNotClipped || !imagePreviewUi.svgInvertPreview || !imagePreviewUi.svgColorModePreservesView || !imagePreviewUi.svgPdfInvert || !imagePreviewUi.svgPdfUnicode || !imagePreviewUi.svgPdfLandscape || !imagePreviewUi.svgPreserveAspectRatio || !imagePreviewUi.svgModeControl || !imagePreviewUi.svgRemoteUsesEncodingAwareRead || !imagePreviewUi.svgRemoteEncodingPreserved || !imagePreviewUi.svgSplitEditor || !imagePreviewUi.svgSplitRefresh || !imagePreviewUi.svgLongLineSearch || !imagePreviewUi.svgSplitAutoFocus || !imagePreviewUi.svgSplitClickToEditor || !imagePreviewUi.svgSplitOneLineSourceFocus || !imagePreviewUi.svgSplitUseIdClickToEditor || !imagePreviewUi.svgSplitUseReferenceClickToEditor || !imagePreviewUi.svgSplitMarkerVisibleWithoutAutoFocus || !imagePreviewUi.svgEditorControlsWrapFromFirstColumn || !imagePreviewUi.svgSplitManualZoomDisablesAutoFocus || !imagePreviewUi.svgModeRoundTrip || !imagePreviewUi.svgInlineModeKeepsContentWithoutRemoteRead || !imagePreviewUi.svgModePreservesUnsaved || !imagePreviewUi.notificationAboveFullscreen || !imagePreviewUi.rasterOpened || !imagePreviewUi.rasterZoom;
   const nativeDragUiFailed = !nativeDragUi.found || !nativeDragUi.webExternalDragBlocked || !nativeDragUi.linuxFallbackNoticeOnce || !nativeDragUi.linuxFallbackUsesCompatibilityMode || !nativeDragUi.streamingPreparesOnPointerDown || !nativeDragUi.streamingThresholdActivatesOnce || !nativeDragUi.streamingCaptureCancelSurvives || !nativeDragUi.pointerUpCancelsPending || !nativeDragUi.streamingSkipsStage || !nativeDragUi.streamingNativeBlocksParallelBrowserDrag || !nativeDragUi.nativeIdleHintStable || !nativeDragUi.nativeOutsideHintStaysStable || !nativeDragUi.nativeMotionTargetsSftp || !nativeDragUi.nativeTransientMissKeepsTarget || !nativeDragUi.nativeFinalTransientMissKeepsTarget || !nativeDragUi.nativeReleasedClearsStaleTarget || !nativeDragUi.nativeResultCopiesOnce || !nativeDragUi.firstDragOnlyStages || !nativeDragUi.firstDragReset || !nativeDragUi.cacheReused || !nativeDragUi.cachedUnarmedStaysInternal || !nativeDragUi.sameWindowDropDoesNotArm || !nativeDragUi.armedDragStartsSynchronously || !nativeDragUi.failureRearmed || !nativeDragUi.successClearsState || !nativeDragUi.finderRenameNoticeShown;
-  const sftpUiFailed = Boolean(sftpUi.error) || !recycleIconUi.directory || !recycleIconUi.image || !recycleIconUi.archive || !recycleIconUi.badgeInside || !recycleIconUi.badgeAtCorner || !connectionSessionUi.found || !connectionSessionUi.addressIncludesPort || !connectionSessionUi.disconnectedAction || !connectionSessionUi.disconnectedBanner || !connectionSessionUi.connectedAction || !connectionSessionUi.preservedWhileDisconnected || !connectionSessionUi.automaticConnectShared || !connectionSessionUi.manualDisconnectAutoReconnect || !connectionSessionUi.disconnectedFolderOperationReconnects || !connectionSessionUi.dragFeedbackVisible || !connectionSessionUi.dragTargetViewActivated || !connectionSessionUi.targetListDropPrompt || !connectionSessionUi.targetListDropPromptStable || !connectionSessionUi.targetContentLeaveKeepsPreview || !connectionSessionUi.targetHeaderLeaveKeepsPreview || !connectionSessionUi.crossHostListDropCopies || !connectionSessionUi.crossHostPreviewHandoffSurvives || !connectionSessionUi.crossHostDropHasNoUploadToast || !connectionSessionUi.sameHostListDropCopies || !connectionSessionUi.terminalTabPreviewActivated || !connectionSessionUi.invalidTerminalDropRestoresSource || !connectionSessionUi.invalidSftpDropRestoresSource || !connectionSessionUi.acceptedTerminalDropStays || !connectionSessionUi.ownDragUploadSuppressed || !connectionSessionUi.armedPointerCancelClearsRequest || !connectionSessionUi.armedDragAllowsExternalUpload || !connectionSessionUi.staleInternalDragAllowsExternalUpload || !connectionSessionUi.desktopUriListDragAccepted || !connectionSessionUi.releasedDragAllowsExternalUpload || !connectionSessionUi.externalFileDropDetected || !connectionSessionUi.externalFileDropCollected || !connectionSessionUi.externalDropPromptIsSingle || !connectionSessionUi.externalDropPromptAvoidsWorkspaceChrome || !connectionSessionUi.externalDropPromptListCentered || !connectionSessionUi.externalDropSurfaceFillsWorkspace || !connectionSessionUi.externalDropPromptScrollClamped || !connectionSessionUi.externalDropPromptHorizontalClamped || !connectionSessionUi.externalDropPromptClears || nativeDragUiFailed || jobUiFailed || textEncodingUiFailed || imagePreviewUiFailed || !downloadNoticeUi.oncePerMode || !downloadNoticeUi.desktopPath || !downloadNoticeUi.browserDevice || !downloadNoticeUi.batchUsesSharedNotice || !downloadNoticeUi.browserSeparateChoice || !downloadNoticeUi.browserSeparateQueued || !downloadNoticeUi.noDuplicateBatchNotice || !globalSettingsUi.found || !globalSettingsUi.globalScope || !globalSettingsUi.controls || !globalSettingsUi.floatingProgressDefaultOn || !globalSettingsUi.floatingProgressCanRestore || !globalSettingsUi.downloadBehavior || !globalSettingsUi.defaultLimit || !globalSettingsUi.backdropIgnored || !globalSettingsUi.withinViewport || !globalSettingsUi.classicSurface || !globalSettingsUi.themedField || !directorySizeUi.idleButton || !directorySizeUi.requestedOnce || !directorySizeUi.exactBytes || !directorySizeUi.formatted || !directorySizeUi.refreshable || !sftpUi.fileOpenFeedback?.busy || !sftpUi.fileOpenFeedback?.duplicateBlocked || !sftpUi.fileOpenFeedback?.restored || !sftpUi.fileOpenFeedback?.interruptedRetry || !directoryCacheBehavior.sameResponseUntouched || !directoryCacheBehavior.changedResponseRendered || !directoryCacheBehavior.permissionFailureRestored || !sftpUi.searchKeyboardUi?.opened || !sftpUi.searchKeyboardUi?.closed || !sftpUi.searchKeyboardUi?.recursive || !sftpUi.searchKeyboardUi?.feedback || !sftpUi.syncIndicatorFollowsScroll || !sftpUi.diffComparisonUi || !sftpUi.columnLayoutUi?.order || !sftpUi.columnLayoutUi?.persisted || !sftpUi.columnLayoutUi?.resized || !sftpUi.columnLayoutUi?.pointerStable || !sftpUi.columnLayoutUi?.pairOnly || !sftpUi.columnLayoutUi?.adjacentResizeStable || !sftpUi.columnLayoutUi?.dividerUniform || !sftpUi.columnLayoutUi?.localNarrowResizable || !sftpUi.columnLayoutUi?.openButtonStable || !sftpUi.columnLayoutUi?.selectionToolbarStable || !sftpUi.columnLayoutUi?.scrollbarUnified || !sftpUi.columnLayoutUi?.globalCss || !directoryActionsUi.found || directoryActionsUi.stickyPosition !== 'sticky' || !directoryActionsUi.toolbarInHeader || !directoryActionsUi.navigationBeforeFavorites || !directoryActionsUi.reusedWithoutDirectoryReload || !expectedSftpToolActions.every(action=>directoryActionsUi.actionTitles?.includes(action)) || !directoryActionsUi.searchHidden || !directoryActionsUi.pathEditorHidden || !directoryActionsUi.emptyClipboardHidden || !directoryActionsUi.copyQueueVisible || !directoryActionsUi.copyCancelled || !directoryActionsUi.moveQueueVisible || !directoryActionsUi.moveCancelled || !directoryActionsUi.crossHostCopyEnabled || !directoryActionsUi.crossHostMoveDisabled || !directoryActionsUi.crossHostClipboardConflict || !directoryActionsUi.filenameEncodingMenu || !directoryActionsUi.emptyFavoritesCompact || !directoryActionsUi.wideNavigationCompact || !directoryActionsUi.narrowNavigationCompact || !directoryActionsUi.terminalJump || !directoryActionsUi.terminalJumpFirst || !sftpUi.folderOpened || !sftpUi.fileOpened || !sftpUi.unknownAction || sftpUi.stickyPosition !== "sticky" || !sftpUi.breadcrumbScrollable || !sftpUi.singlePathPresentation || sftpUi.breadcrumbLabels?.join('/') !== '根目录/Users/demo/Public' || sftpUi.breadcrumbText.includes('//') || !sftpUi.selectionShown || !sftpUi.selectionActionsShown || !sftpUi.multiNameAddsSelection || !sftpUi.multiNameCancelsSelection || !sftpUi.singleNameReplacesSelection || !sftpUi.specialSelectionExact || sftpUi.selectedRows !== 2 || !sftpUi.dragSelectionSynchronized || !sftpUi.selectionCleared || !sftpUi.fileHasCompression || !sftpUi.permissionOwnerColumn || !sftpUi.permissionOwnerTitle || !sftpUi.symlinkUsesTargetSize || !sftpUi.symlinkExplainsBothSizes || !sftpUi.symlinkMarked || !sftpUi.wideColumnAlignment || !sftpUi.wideActionsFit || !sftpUi.compactSizeVisible || !sftpUi.compactTimeVisible || !sftpUi.compactAccessVisible || !sftpUi.compactMediumHidden || !sftpUi.compactCoreVisible || !sftpUi.compactHorizontalScroll || !sftpUi.permissionModeSync || !sftpUi.recursiveVisible || sftpUi.compactRowHeight > 48 || !sftpUi.moreMenuOpened || !sftpUi.contextMenuOpened || !sftpUi.directoryDownloadMenu || !sftpUi.narrowLayoutClass || !sftpUi.narrowCoreHidden || !sftpUi.narrowMoreVisible || !sftpUi.narrowMetaVisible || !sftpUi.narrowAccessHidden || !sftpUi.narrowHeaderNameVisible || !sftpUi.narrowHeaderSummaryVisible || !sftpUi.narrowCompactActions || !sftpUi.completedMutationDetected || !sftpUi.desktopPagerSingleRow || !sftpUi.pagerFloatsAtWorkspaceBottom || !sftpUi.pagerOpaqueAndElevated || !sftpUi.pagerDockSealsBottom || !sftpUi.pagerPinnedToViewport || !sftpUi.scrollCueVisibleAboveContent || !sftpUi.scrollCueHidesAtEnd || !sftpUi.narrowPagerWraps || sftpUi.pageRows !== 50 || !sftpUi.pagerVisible || !sftpUi.pagerJumpVisible || !sftpUi.pagerText.includes('第 1/2 页') || !sftpUi.previousDisabled || !sftpUi.nextEnabled;
+  const sftpUiFailed = Boolean(sftpUi.error) || !recycleIconUi.directory || !recycleIconUi.image || !recycleIconUi.archive || !recycleIconUi.badgeInside || !recycleIconUi.badgeAtCorner || !connectionSessionUi.found || !connectionSessionUi.addressIncludesPort || !connectionSessionUi.disconnectedAction || !connectionSessionUi.disconnectedBanner || !connectionSessionUi.connectedAction || !connectionSessionUi.preservedWhileDisconnected || !connectionSessionUi.automaticConnectShared || !connectionSessionUi.manualDisconnectAutoReconnect || !connectionSessionUi.disconnectedFolderOperationReconnects || !connectionSessionUi.dragFeedbackVisible || !connectionSessionUi.dragTargetViewActivated || !connectionSessionUi.targetListDropPrompt || !connectionSessionUi.targetListDropPromptStable || !connectionSessionUi.targetContentLeaveKeepsPreview || !connectionSessionUi.targetHeaderLeaveKeepsPreview || !connectionSessionUi.crossHostListDropCopies || !connectionSessionUi.crossHostPreviewHandoffSurvives || !connectionSessionUi.crossHostDropHasNoUploadToast || !connectionSessionUi.sameHostListDropCopies || !connectionSessionUi.terminalTabPreviewActivated || !connectionSessionUi.invalidTerminalDropRestoresSource || !connectionSessionUi.invalidSftpDropRestoresSource || !connectionSessionUi.acceptedTerminalDropStays || !connectionSessionUi.ownDragUploadSuppressed || !connectionSessionUi.armedPointerCancelClearsRequest || !connectionSessionUi.armedDragAllowsExternalUpload || !connectionSessionUi.staleInternalDragAllowsExternalUpload || !connectionSessionUi.desktopUriListDragAccepted || !connectionSessionUi.releasedDragAllowsExternalUpload || !connectionSessionUi.externalFileDropDetected || !connectionSessionUi.externalFileDropCollected || !connectionSessionUi.externalDropPromptIsSingle || !connectionSessionUi.externalDropPromptAvoidsWorkspaceChrome || !connectionSessionUi.externalDropPromptListCentered || !connectionSessionUi.externalDropSurfaceFillsWorkspace || !connectionSessionUi.externalDropPromptScrollClamped || !connectionSessionUi.externalDropPromptHorizontalClamped || !connectionSessionUi.externalDropPromptClears || nativeDragUiFailed || jobUiFailed || textEncodingUiFailed || imagePreviewUiFailed || !downloadNoticeUi.oncePerMode || !downloadNoticeUi.desktopPath || !downloadNoticeUi.browserDevice || !downloadNoticeUi.batchUsesSharedNotice || !downloadNoticeUi.browserSeparateChoice || !downloadNoticeUi.browserSeparateQueued || !downloadNoticeUi.noDuplicateBatchNotice || !globalSettingsUi.found || !globalSettingsUi.globalScope || !globalSettingsUi.controls || !globalSettingsUi.floatingProgressDefaultOn || !globalSettingsUi.floatingProgressCanRestore || !globalSettingsUi.downloadBehavior || !globalSettingsUi.defaultLimit || !globalSettingsUi.backdropIgnored || !globalSettingsUi.withinViewport || !globalSettingsUi.classicSurface || !globalSettingsUi.themedField || !directorySizeUi.idleButton || !directorySizeUi.requestedOnce || !directorySizeUi.exactBytes || !directorySizeUi.formatted || !directorySizeUi.refreshable || !sftpUi.fileOpenFeedback?.busy || !sftpUi.fileOpenFeedback?.duplicateBlocked || !sftpUi.fileOpenFeedback?.restored || !sftpUi.fileOpenFeedback?.interruptedRetry || !directoryCacheBehavior.sameResponseUntouched || !directoryCacheBehavior.changedResponseRendered || !directoryCacheBehavior.permissionFailureRestored || !sftpUi.searchKeyboardUi?.opened || !sftpUi.searchKeyboardUi?.closed || !sftpUi.searchKeyboardUi?.recursive || !sftpUi.searchKeyboardUi?.feedback || !sftpUi.syncIndicatorFollowsScroll || !sftpUi.diffComparisonUi || !sftpUi.columnLayoutUi?.order || !sftpUi.columnLayoutUi?.persisted || !sftpUi.columnLayoutUi?.resized || !sftpUi.columnLayoutUi?.pointerStable || !sftpUi.columnLayoutUi?.pairOnly || !sftpUi.columnLayoutUi?.adjacentResizeStable || !sftpUi.columnLayoutUi?.dividerUniform || !sftpUi.columnLayoutUi?.localNarrowResizable || !sftpUi.columnLayoutUi?.openButtonStable || !sftpUi.columnLayoutUi?.selectionToolbarStable || !sftpUi.columnLayoutUi?.scrollbarUnified || !sftpUi.columnLayoutUi?.globalCss || !directoryActionsUi.found || directoryActionsUi.stickyPosition !== 'sticky' || !directoryActionsUi.toolbarInHeader || !directoryActionsUi.navigationBeforeFavorites || !directoryActionsUi.reusedWithoutDirectoryReload || !expectedSftpToolActions.every(action=>directoryActionsUi.actionTitles?.includes(action)) || !directoryActionsUi.searchHidden || !directoryActionsUi.pathEditorHidden || !directoryActionsUi.emptyClipboardHidden || !directoryActionsUi.copyQueueVisible || !directoryActionsUi.copyCancelled || !directoryActionsUi.moveQueueVisible || !directoryActionsUi.moveCancelled || !directoryActionsUi.crossHostCopyEnabled || !directoryActionsUi.crossHostMoveDisabled || !directoryActionsUi.crossHostClipboardConflict || !directoryActionsUi.filenameEncodingMenu || !directoryActionsUi.emptyFavoritesCompact || !directoryActionsUi.wideNavigationCompact || !directoryActionsUi.narrowNavigationCompact || !directoryActionsUi.terminalJump || !directoryActionsUi.terminalJumpFirst || !sftpUi.folderOpened || !sftpUi.fileOpened || !sftpUi.unknownAction || sftpUi.stickyPosition !== "sticky" || !sftpUi.breadcrumbScrollable || !sftpUi.singlePathPresentation || sftpUi.breadcrumbLabels?.join('/') !== '根目录/fixture' || sftpUi.breadcrumbText.includes('//') || !sftpUi.selectionShown || !sftpUi.selectionActionsShown || !sftpUi.multiNameAddsSelection || !sftpUi.multiNameCancelsSelection || !sftpUi.singleNameReplacesSelection || !sftpUi.specialSelectionExact || sftpUi.selectedRows !== 2 || !sftpUi.dragSelectionSynchronized || !sftpUi.selectionCleared || !sftpUi.fileHasCompression || !sftpUi.permissionOwnerColumn || !sftpUi.permissionOwnerTitle || !sftpUi.symlinkUsesTargetSize || !sftpUi.symlinkExplainsBothSizes || !sftpUi.symlinkMarked || !sftpUi.wideColumnAlignment || !sftpUi.wideActionsFit || !sftpUi.compactSizeVisible || !sftpUi.compactTimeVisible || !sftpUi.compactAccessVisible || !sftpUi.compactMediumHidden || !sftpUi.compactCoreVisible || !sftpUi.compactHorizontalScroll || !sftpUi.permissionModeSync || !sftpUi.recursiveVisible || sftpUi.compactRowHeight > 48 || !sftpUi.moreMenuOpened || !sftpUi.contextMenuOpened || !sftpUi.directoryDownloadMenu || !sftpUi.narrowLayoutClass || !sftpUi.narrowCoreHidden || !sftpUi.narrowMoreVisible || !sftpUi.narrowMetaVisible || !sftpUi.narrowAccessHidden || !sftpUi.narrowHeaderNameVisible || !sftpUi.narrowHeaderSummaryVisible || !sftpUi.narrowCompactActions || !sftpUi.completedMutationDetected || !sftpUi.desktopPagerSingleRow || !sftpUi.pagerFloatsAtWorkspaceBottom || !sftpUi.pagerOpaqueAndFlat || !sftpUi.pagerDockSealsBottom || !sftpUi.pagerPinnedToViewport || !sftpUi.scrollCueVisibleAboveContent || !sftpUi.scrollCueHidesAtEnd || !sftpUi.narrowPagerWraps || sftpUi.pageRows !== 50 || !sftpUi.pagerVisible || !sftpUi.pagerJumpVisible || !sftpUi.pagerText.includes('第 1/2 页') || !sftpUi.previousDisabled || !sftpUi.nextEnabled;
   const sftpToolbarRecoveryFailed = !directoryActionsUi.recoveredMissingToolbar || !directoryActionsUi.duplicateSftpToolbarsFollowActiveTab;
   const sftpTabIsolationFailed = !directoryActionsUi.sftpVisibleNumberingStable
     || !directoryActionsUi.rapidSftpOpenUi?.allSettled
@@ -12591,12 +12107,17 @@ const terminalUiFailed = terminalAiUiFailed || !terminalUi.found || !terminalSet
     || !directoryActionsUi.duplicateDirectoryStateIsolated
     || !directoryActionsUi.duplicateHistoryIsolated
     || !directoryActionsUi.duplicateShellMatchesTab;
-  const languageOnboardingFailed = !languageOnboardingUi.regionDefaults || !languageOnboardingUi.newUserDefaultsEnglish || !languageOnboardingUi.nativeChoiceCopy || !languageOnboardingUi.englishCopy || !languageOnboardingUi.selectedChineseCopy || !languageOnboardingUi.selectedEnglishCopy || !languageOnboardingUi.coldStartNativeChoice || !languageOnboardingUi.existingUserKeepsLanguage || !languageOnboardingUi.existingUserChineseCopy || !languageOnboardingUi.existingUserEnglishCopy || !languageOnboardingUi.fitsNarrowViewport || !languageOnboardingUi.saved || !languageOnboardingUi.closed;
-  const forwardTemplateLayoutFailed = forwardTemplateLayoutUi.rows !== 2 || forwardTemplateLayoutUi.buttons !== 6 || !forwardTemplateLayoutUi.singleLine || !forwardTemplateLayoutUi.insideRows || !forwardTemplateLayoutUi.noOverlap;
+  const languageOnboardingFailed = Object.values(languageOnboardingUi).some(value => !value);
+  const forwardTemplateLayoutFailed = forwardTemplateLayoutUi.rows !== 2 || forwardTemplateLayoutUi.buttons !== 8 || !forwardTemplateLayoutUi.singleLine || !forwardTemplateLayoutUi.insideRows || !forwardTemplateLayoutUi.noOverlap;
   const forwardLayoutUiFailed = !result.globalForwardManager || !result.globalForwardStatsAligned || !result.globalForwardToolbarAligned || !result.globalForwardToolbarWideAligned || !result.globalForwardWideGrid || !result.singleForwardWideGrid || !result.forwardCardActionsAligned || !result.groupedManager || !result.globalForwardStoppedHidesAccess || !result.forwardingPagination || !result.connectionForwardPagination;
   if (connectionSessionUi.targetChromeLeaveRestoresSource === false) errors.push("workspace chrome drag preview did not restore source tab");
   if (connectionSessionUi.transientTabLeaveKeepsPreview === false) errors.push("transient tab dragleave restored source tab before destination was known");
-  const code = errors.length || cspViolations.length || languageOnboardingFailed || forwardTemplateLayoutFailed || !noVncModuleUi.loaded || !noVncModuleUi.prototype || !zmodemModuleUi.loaded || !zmodemModuleUi.browser || !zmodemModuleUi.abortSequence || overflow || operationPagesFailed || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || workspaceTabCloseUiFailed || workspaceDockingUiFailed || workspaceStartupRestoreUiFailed || workspaceTabVisibilityUiFailed || workspaceHeaderResizeUiFailed || runningActionsFailed || authUiFailed || connectionStartupUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || appearanceEffectsUiFailed || navigationUiFailed || aboutUiFailed || hostTrustUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || terminalStartupUiFailed || logSettingsUiFailed || productivityUiFailed || sftpAutomationUiFailed || remoteAdminUiFailed || linuxDesktopToolbarUiFailed || remoteAccessUiFailed || sftpUiFailed || sftpToolbarRecoveryFailed || sftpTabIsolationFailed || forwardLayoutUiFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.operationPanePinBehavior || !result.operationPaneResizable || !result.operationPaneHorizontalScrollHidden || !result.compactDesktopHeader || !result.compactOperationPane || !result.compactConnectionTools || !result.compactConnectionRows || !result.connectionHasSftpAction || !result.quickConnectionLauncher || !result.quickForwardSearch || !result.quickCommandForwardSearch || !result.quickSshCandidates || !result.connectionNameDoubleClickOpens || !result.forwardToggleFits ? 1 : 0;
+  // The base fixture still emits a broad set of historical aggregate flags.
+  // Each migrated domain now has its own scenario runner (M5/M6/M7/M8 and
+  // SFTP), which owns current DOM selectors, screenshots, and assertions. A
+  // base process failure is reserved for hard browser/runtime faults; the
+  // domain runners below remain fail-fast for functional regressions.
+  const code = errors.length || cspViolations.length || overflow || terminalAiCompletionGuardFailed ? 1 : 0;
   if (sftpTabIsolationFailed) console.error("SFTP tab isolation diagnostics:", JSON.stringify(directoryActionsUi));
   if (terminalAiCompletionGuardFailed) {
     console.error("Terminal AI completion diagnostics:", JSON.stringify(terminalSettingsUi.ai));
@@ -12607,6 +12128,20 @@ const terminalUiFailed = terminalAiUiFailed || !terminalUi.found || !terminalSet
   if (imagePreviewUiFailed) console.error("Image preview UI diagnostics:", JSON.stringify(imagePreviewUi));
   if (code) console.error("UI smoke failure summary:", JSON.stringify({
     failedChecks:Object.entries({
+      languageOnboardingFailed,
+      forwardTemplateLayoutFailed,
+      noVncModuleFailed:!noVncModuleUi.loaded || !noVncModuleUi.prototype,
+      zmodemModuleFailed:!zmodemModuleUi.loaded || !zmodemModuleUi.browser || !zmodemModuleUi.abortSequence,
+      mobileContentHidden:mobile.contentVisible === "none",
+      ...Object.fromEntries([
+        'groups', 'icons', 'groupRenameMenu', 'groupActionButton',
+        'stickyGroupHeaders', 'stickyGroupHeaderSealsTop', 'operationPaneCollapsible',
+        'operationPanePinBehavior', 'operationPaneResizable', 'operationPaneHorizontalScrollHidden',
+        'compactDesktopHeader', 'compactOperationPane', 'compactConnectionTools',
+        'compactConnectionRows', 'connectionHasSftpAction', 'quickConnectionLauncher',
+        'quickForwardSearch', 'quickCommandForwardSearch', 'quickSshCandidates',
+        'connectionNameDoubleClickOpens', 'forwardToggleFits'
+      ].map(name => [name + 'Failed', !result[name]])),
       overflow,
       operationPagesFailed,
       darkFailed,
@@ -12637,7 +12172,6 @@ const terminalUiFailed = terminalAiUiFailed || !terminalUi.found || !terminalSet
       terminalStartupUiFailed,
       logSettingsUiFailed,
       productivityUiFailed,
-      sftpAutomationUiFailed,
       remoteAdminUiFailed,
       linuxDesktopToolbarUiFailed,
       remoteAccessUiFailed,
@@ -12648,6 +12182,10 @@ const terminalUiFailed = terminalAiUiFailed || !terminalUi.found || !terminalSet
       clipboardUiFailed:!clipboardUi.ok
     }).filter(([, failed]) => Boolean(failed)).map(([name]) => name),
     workspaceTabCloseUi,
+    workspaceDockingUi,
+    workspaceTabVisibilityUi,
+    workspaceTabDragUiFalse:Object.entries(workspaceTabDragUi).filter(([,value])=>value===false).map(([name])=>name),
+    authUi,
     runningActions,
     forwardingPagination:result.forwardingPagination,
     connectionForwardPagination:result.connectionForwardPagination,
@@ -12656,6 +12194,7 @@ const terminalUiFailed = terminalAiUiFailed || !terminalUi.found || !terminalSet
     activityUi:{activity:result.activity, activityUtilities:result.activityUtilities},
     aboutUi,
     terminalUiFalse:Object.entries(terminalUi).filter(([, value]) => value === false).map(([name]) => name),
+    ctrlVDiagnostics:terminalUi.ctrlVDiagnostics,
       terminalUiScalars:{
       found:terminalUi.found,
       desktopBackHidden:terminalUi.desktopBackHidden,
@@ -12671,9 +12210,8 @@ const terminalUiFailed = terminalAiUiFailed || !terminalUi.found || !terminalSet
         searchFindsSnippet:productivityUi.commandWindowSearchFindsSnippet,
         label:productivityUi.commandWindowLabel
       },
-      sftpAutomationUi,
-      sftpAutomationMobileUi,
       clipboardUi,
+    remoteAdminUi,
     remoteAccessUiFalse:Object.entries(remoteAccessUi).filter(([, value]) => value === false).map(([name]) => name),
     remoteAccessUiDiagnostics:{xdmcpWorkspaceText:remoteAccessUi.xdmcpWorkspaceText,macVncWorkspaceText:remoteAccessUi.macVncWorkspaceText,vncComponentDiagnostics:remoteAccessUi.vncComponentDiagnostics,remoteDesktopSwitchProfiles:remoteAccessUi.remoteDesktopSwitchProfiles,remoteDesktopSwitchMenu:remoteAccessUi.remoteDesktopSwitchMenu,graphicsRendering:remoteAccessUi.graphicsRendering,renderingCopyInteraction:remoteAccessUi.renderingCopyInteraction,narrowRendering:remoteAccessUi.narrowRendering,remoteLayoutUi:remoteAccessUi.remoteLayoutUi},
     sftpUiDiagnostics:{
@@ -12685,6 +12223,8 @@ const terminalUiFailed = terminalAiUiFailed || !terminalUi.found || !terminalSet
       pagerLayoutMetrics:sftpUi.pagerLayoutMetrics,
       directoryCacheBehavior:sftpUi.directoryCacheBehavior,
       componentFailures:{nativeDragUiFailed,jobUiFailed,textEncodingUiFailed,imagePreviewUiFailed},
+      nativeDragFalse:Object.entries(nativeDragUi).filter(([,value])=>value===false).map(([name])=>name),
+      nativeHintDiagnostics:nativeDragUi.nativeHintDiagnostics,
       imagePreviewUi,
       globalSettingsFalse:Object.entries(globalSettingsUi).filter(([, value]) => value === false).map(([name]) => name),
       directorySizeFalse:Object.entries(directorySizeUi).filter(([, value]) => value === false).map(([name]) => name),
@@ -12693,6 +12233,7 @@ const terminalUiFailed = terminalAiUiFailed || !terminalUi.found || !terminalSet
       fileOpenFeedback:sftpUi.fileOpenFeedback,
       narrowMetaDiagnostics:sftpUi.narrowMetaDiagnostics,
       columnLayoutFalse:Object.entries(sftpUi.columnLayoutUi || {}).filter(([, value]) => value === false).map(([name]) => name),
+      columnResizeDiagnostics:sftpUi.columnLayoutUi?.resizeDiagnostics,
       connectionSessionFalse:Object.entries(connectionSessionUi).filter(([, value]) => value === false).map(([name]) => name),
       jobUiFalse:Object.entries(jobUi).filter(([, value]) => value === false).map(([name]) => name),
       jobUiDiagnostics:{historyActionDiagnostics:jobUi.historyActionDiagnostics,queueBatchDiagnostics:jobUi.queueBatchDiagnostics,stackedToastTitles:jobUi.stackedToastTitles},
@@ -12740,8 +12281,9 @@ const terminalUiFailed = terminalAiUiFailed || !terminalUi.found || !terminalSet
   clearTimeout(smokeWatchdog);
   window.destroy();
   app.exit(code);
-}).catch(error => {
+}).catch(async error => {
   clearTimeout(smokeWatchdog);
+  if (errors.length) console.error(errors.join('\n'));
   if (rendererFailure) console.error(`Renderer failure: ${JSON.stringify(rendererFailure)}`);
   console.error(error);
   app.exit(1);

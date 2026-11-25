@@ -25,10 +25,14 @@ function ageDirectory(directory, ageMs) {
 async function main() {
   writeMaximumSize(1);
   const server = require("../dist/server");
+  const { normalizeRemotePermissionRequest } = require("../dist/sftp");
   const session = require("../dist/sftp-session");
   const jobs = require("../dist/sftp-jobs");
   const db = require("../dist/db");
   try {
+    for (const paths of [undefined, null, [], [""], [1], [{}]]) assert.throws(() => normalizeRemotePermissionRequest(paths, "644"), /请选择/);
+    assert.deepEqual(normalizeRemotePermissionRequest(["/home/a\\b "], "644").paths, ["/home/a\\b "]);
+    for (const target of ["/", ".", "./", "././", "folder/../"]) assert.throws(() => normalizeRemotePermissionRequest([target], "755", true), /递归/);
     const exact = server.prepareSftpWriteContent("a".repeat(1024 * 1024), "utf8");
     assert.equal(exact.content.length, 1024 * 1024);
     assert.equal(exact.maximum_bytes, 1024 * 1024);

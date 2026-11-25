@@ -8,34 +8,32 @@ const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.join(__dirname, "..");
 const read = file => fs.readFileSync(path.join(root, file), "utf8");
-const quickCommands = read("public/app-terminal-quick-commands.js");
-const commandSnippets = read("public/app-command-snippets.js");
+const quickCommands = read("frontend/src/features/efficiency/efficiency-runtime.ts");
+const commandSnippets = read("frontend/src/features/snippets/snippet-runtime.ts");
 const terminal = readFrontendDomain(root, "terminal");
 const styles = read("public/app.css");
 const migrations = read("src/database/migrations.ts");
 const database = ["src/db.ts", "src/database/config-snapshot-service.ts"].map(read).join("\n");
 const index = read("public/index.html");
 
-for (const contract of [
-  /terminalQuickCommandToolbarButton/,
-  /renderTerminalQuickCommandBar/,
-  /toggleTerminalQuickCommandBar/,
-  /bindTerminalQuickCommandResize/,
-  /beginTerminalQuickCommandDrag/,
-  /window\.addEventListener\("pointermove"/,
-  /persistTerminalQuickCommandOrder/,
-  /runTerminalQuickCommand/,
-  /showTerminalQuickCommandMenu/,
-  /addEventListener\("wheel"/,
-  /list\.scrollLeft \+= delta/,
-  /openCommandSnippetEditor\(0, \{quick:true\}\)/
-]) assert.match(quickCommands, contract);
-assert.doesNotMatch(quickCommands, /onclick\s*=/i, "new quick command interactions must use delegated listeners");
-assert.match(terminal, /terminalQuickCommandToolbarButton\(key\)/);
-assert.match(terminal, /renderTerminalQuickCommandBar\(key\)/);
-assert.match(terminal, /mountTerminalQuickCommandBar\(key, terminalSurface\)/);
-assert.match(index, /app-command-snippets\.js[^]*app-terminal-quick-commands\.js[^]*app-named-workspaces\.js/);
-assert.match(quickCommands, /icon\("list-checks"\)/);
+const quickRuntime=read('frontend/src/features/efficiency/efficiency-runtime.ts'),quickService=read('frontend/src/features/efficiency/quick-command-service.ts'),quickView=read('frontend/src/features/efficiency/QuickCommandView.ts'),snippetView=read('frontend/src/features/snippets/SnippetViews.ts'),snippetModel=read('frontend/src/features/snippets/snippet-model.ts');
+for (const name of ['mount','persist','beginDrag','menu']) assert.ok(quickCommands.includes('function '+name+'('));
+assert.ok(quickRuntime.includes("window.addEventListener('pointermove',move,true)"));
+assert.ok(quickRuntime.includes("window.removeEventListener('pointermove',move,true)"));
+assert.ok(quickRuntime.includes('list.scrollLeft+=delta'));
+assert.ok(quickRuntime.includes('port.edit(0,true)'));
+assert.ok(quickService.includes('target.current()'));
+assert.ok(quickService.includes('quick_sort_order:ids.indexOf(id)+1'));
+assert.ok(quickView.includes("'data-terminal-quick-command-drag'"));
+assert.doesNotMatch(quickCommands,/onclick\s*=/i);
+const toolbarView = read('frontend/src/features/terminal/TerminalToolbarView.ts');
+assert.match(toolbarView, /terminal-action-quick-commands/);
+assert.match(toolbarView, /actionsPort\?\.quickCommands\(model\.key\)/);
+assert.match(read('frontend/src/features/terminal/terminal-toolbar-service.ts'), /quickCommands: key => efficiencyServices\.termaEfficiency\.quick\.toggle\(key\)/);
+assert.match(terminal, /data-terminal-quick-command-bar/);
+assert.match(terminal, /termaEfficiency\.quick\.mount\(key, terminalSurface\)/);
+assert.doesNotMatch(index, /app-(?:command-snippets|terminal-quick-commands)\.js/);
+assert.match(toolbarView, /list-checks/);
 assert.doesNotMatch(quickCommands, /terminal-quick-command-head/);
 assert.match(styles, /\.terminal-quick-command-list \{[^}]*display:flex;[^}]*flex-wrap:wrap;[^}]*overflow-x:hidden; overflow-y:auto/);
 assert.match(styles, /\.terminal-quick-command \{[^}]*width:max-content;[^}]*max-width:min\(190px,100%\)/);
@@ -44,10 +42,10 @@ assert.match(styles, /\.terminal-quick-command\.no-badge/);
 assert.match(styles, /\.terminal-quick-command-bar\.compact/);
 assert.match(styles, /\.terminal-quick-command-bar:not\(\.compact\) \.terminal-quick-command \{[^}]*min-height:30px/);
 assert.match(styles, /\.terminal-quick-command-bar:not\(\.compact\) \.terminal-quick-command-list \{[^}]*overflow-x:auto/);
-assert.match(commandSnippets, /显示在终端快速命令栏/);
-assert.match(commandSnippets, /无（更紧凑）/);
-assert.match(commandSnippets, /data-snippet-save/);
-assert.match(commandSnippets, /data-snippet-back/);
+assert.ok(snippetView.includes("label('show_in_quick_bar')"));
+assert.ok(snippetView.includes("'badges.'+(code||'none')"));
+assert.match(snippetView,/data-snippet-save/);
+assert.match(snippetView,/data-snippet-back/);
 assert.doesNotMatch(commandSnippets, /onclick="saveCommandSnippetUi/);
 assert.match(migrations, /quick_visible INTEGER NOT NULL DEFAULT 0/);
 assert.match(migrations, /quick_action TEXT NOT NULL DEFAULT 'execute'/);
@@ -121,8 +119,8 @@ assert.equal(changed.quick_color, "purple");
 assert.equal(changed.quick_sort_order, 4);
 assert.equal(updated[5], "");
 assert.deepEqual(updated.slice(6, 12), [1, 1, "insert", "database", "purple", 4]);
-assert.match(commandSnippets, /commandSnippetLegacyBadgeCodes/);
-assert.match(quickCommands, /commandSnippetBadgeGlyph\(item\.quick_badge\)/);
+assert.ok(snippetModel.includes("'服':'service'"));
+assert.ok(quickView.includes('service.glyph(item)'));
 assert.match(migrations, /WHEN '服' THEN 'service'/);
 
 console.log("终端快速命令栏检查通过：独立模块、可调高度、事件委托、数据库兼容和展示字段白名单均已覆盖");

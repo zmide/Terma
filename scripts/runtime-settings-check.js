@@ -3,8 +3,9 @@ const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
+const vm = require("node:vm");
+const { transpileModule, ModuleKind, ScriptTarget } = require("typescript-legacy");
 const { spawn } = require("node:child_process");
-const { readFrontendDomain } = require("./frontend-source");
 const {
   DEFAULT_NOTIFICATION_DISPLAY,
   DEFAULT_UI_REFRESH_INTERVAL_MS,
@@ -46,6 +47,26 @@ async function freePort() {
   const { server, port } = await listen("127.0.0.1");
   await closeServer(server);
   return port;
+}
+
+async function listenWithAvailableFallback(hosts) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const occupied = await listen(hosts[0]);
+    const probes = [];
+    try {
+      if (occupied.port === 65535) continue;
+      for (const host of hosts) {
+        probes.push((await listen(host, occupied.port + 1)).server);
+      }
+      return occupied;
+    } catch (error) {
+      if (!["EADDRINUSE", "EACCES"].includes(error?.code)) throw error;
+    } finally {
+      await Promise.all(probes.map(closeServer));
+      if (probes.length !== hosts.length) await closeServer(occupied.server);
+    }
+  }
+  throw new Error("Could not reserve an occupied port with an available fallback");
 }
 
 async function bindableLoopbackHosts() {
@@ -92,7 +113,40 @@ async function request(base, pathname, options = {}) {
 }
 
 async function main() {
-  const settingsFrontend = readFrontendDomain(root, "settings");
+  const navigationSource = fs.readFileSync(path.join(root, "frontend/src/features/settings/settings-navigation-controller.ts"), "utf8");
+  const navigationModule = {exports:{}, require(name) {
+    if(name === '@/features/settings/installed-services')return {settingsServices:{}};
+    if(name === '@/shared/application-state')return {applicationState:{}};
+    if(['@/shared/i18n/workspace-bootstrap','@/shared/browser-ui','@/shared/workspace-dom'].includes(name))return {};
+    assert.ok([
+      './managed-key-settings',
+      '@/features/workspace/workspace-pane-scope',
+      '@/features/workspace/workspace-shell-controller'
+    ].includes(name), `Unexpected settings navigation dependency: ${name}`);
+    return {};
+  }};
+  vm.runInNewContext(transpileModule(navigationSource, {compilerOptions:{module:ModuleKind.CommonJS, target:ScriptTarget.ES2022}}).outputText, navigationModule);
+  for (const changed of ["activity", "tab", "section", "none"]) {
+    let release, active = "terminal", sequence = 1;
+    const shown = [];
+    const pending = new Promise(resolve => { release = resolve; });
+    const navigation = navigationModule.exports.createSettingsNavigation({
+      capturePane:() => action => action(), activitySequence:() => sequence,
+      inSettings:() => active === "settings", tr:key => key,
+      openSettings:() => { active = "settings"; return pending; },
+      paintSelection:section => shown.push(section)
+    });
+    const selection = navigation.open("settings-about");
+    if (changed === "activity") sequence += 1;
+    if (changed === "tab") active = "sftp";
+    if (changed === "section") await navigation.open("settings-advanced");
+    release();
+    await selection;
+    assert.deepEqual(shown, changed === "none" ? ["settings-about"] : changed === "section" ? ["settings-basic"] : [],
+      `late settings selection respects ${changed} navigation`);
+  }
+  console.log("PASS late settings loads preserve the selected activity and workspace tab");
+  const settingsView = ["SettingsPage.ts","ai-view.ts","AiProviderSettings.tsx","WorkspacePreferences.tsx"].map(file=>fs.readFileSync(path.join(root,"frontend/src/features/settings",file),"utf8")).join('\n');
   for (const controlId of [
     "toolbarPlacementUnsplitTerminal",
     "toolbarPlacementUnsplitSftp",
@@ -109,8 +163,8 @@ async function main() {
     ,"terminalAiEndpoint"
     ,"terminalAiModel"
     ,"terminalAiSaveBtn"
-  ]) assert.equal(settingsFrontend.includes(`id=\"${controlId}\"`), true, `${controlId} setting is missing`);
-  assert.equal(settingsFrontend.includes("syncWorkspaceToolbarPlacements()"), true);
+  ]) assert.equal(settingsView.includes(`"${controlId}"`) || settingsView.includes(`'${controlId}'`), true, `${controlId} setting is missing`);
+  assert.equal(settingsView.includes("workspaceServices.termaWorkspaceToolbar?.sync()"), true);
   assert.equal(DEFAULT_TERMINAL_SETTINGS.url_links_enabled, true);
   assert.equal(DEFAULT_TERMINAL_SETTINGS.auto_copy_selection, false);
   assert.equal(DEFAULT_TERMINAL_SETTINGS.copy_include_trailing_newline, false);
@@ -284,7 +338,7 @@ async function main() {
   let startupBlocker = null;
   let checkBlocker = null;
   try {
-    const occupied = await listen("127.0.0.1");
+    const occupied = await listenWithAvailableFallback(startupHosts);
     startupBlocker = occupied.server;
     fs.writeFileSync(runtimeFile, JSON.stringify({
       listen_hosts: startupHosts,
@@ -311,7 +365,9 @@ async function main() {
     child.stdout.on("data", chunk => { childOutput += chunk; });
     child.stderr.on("data", chunk => { childOutput += chunk; });
 
-    const info = await waitForFile(path.join(dataDir, "web.json"));
+    const info = await waitForFile(path.join(dataDir, "web.json")).catch(error => {
+      throw new Error(`${error.message}\nRuntime child exit: ${child.exitCode}\n${childOutput.slice(-6000)}`);
+    });
     assert.equal(info.requested_port, occupied.port);
     assert.ok(info.actual_port > occupied.port);
     assert.equal(info.fallback_count, info.actual_port - occupied.port);
@@ -556,7 +612,7 @@ async function main() {
     assert.equal(workspaceSaved.body.saved.sftp_floating_progress_enabled, false);
     console.log("PASS four workspace toolbar placements persist independently");
 
-    const blocked = await listen("127.0.0.1");
+    const blocked = await listenWithAvailableFallback(["127.0.0.1"]);
     checkBlocker = blocked.server;
     const unavailable = await request(base, "/api/runtime-settings/check", {
       method: "POST",

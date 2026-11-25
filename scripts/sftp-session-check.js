@@ -16,16 +16,43 @@ const { privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 }
 const hostKey = privateKey.export({ type:"pkcs1", format:"pem" });
 let connections = 0;
 let commands = 0;
+let subsystemMode = "reject";
+let rejectAuthentication = false;
 const largeOutput = Buffer.alloc(2 * 1024 * 1024 + 16004, 0x61);
 
 const server = new Server({hostKeys:[hostKey]}, client => {
   connections += 1;
-  client.on("authentication", context => context.accept());
+  client.on("authentication", context => rejectAuthentication ? context.reject() : context.accept());
   client.on("ready", () => client.on("session", accept => {
     const session = accept();
+    session.on("subsystem", (acceptSubsystem, rejectSubsystem) => {
+      if (subsystemMode === "reject") return rejectSubsystem();
+      const stream = acceptSubsystem();
+      if (subsystemMode === "exits") {
+        stream.stderr.write("fixture diagnostic that must not be sent to the browser");
+        stream.exit(127);
+      }
+      stream.close();
+    });
     session.on("exec", (acceptExec, _rejectExec, info) => {
       commands += 1;
       const stream = acceptExec();
+      const encoded = info.command.match(/terma_payload=([A-Za-z0-9+/=]+);/)?.[1];
+      const script = encoded ? Buffer.from(encoded, "base64").toString("utf8") : "";
+      if (script.includes("__TERMA_DIRECTORY_V1__")) {
+        const targets = ["/missing", "/denied", "/compatible"].find(target => script.includes(Buffer.from(target).toString("base64")) || script.includes(target));
+        if (targets === "/missing") stream.stderr.write("__TERMA_DIRECTORY_NOT_FOUND__");
+        else if (targets === "/denied") stream.stderr.write("__TERMA_DIRECTORY_PERMISSION_DENIED__");
+        else if (targets === "/compatible") {
+          stream.write("__TERMA_DIRECTORY_V1__\n/compatible\n");
+          stream.exit(0);
+          stream.end();
+          return;
+        }
+        stream.exit(1);
+        stream.end();
+        return;
+      }
       stream.write(info.command === "large" ? largeOutput : `command-${commands}`);
       stream.exit(0);
       stream.end();
@@ -95,12 +122,31 @@ async function main() {
     assert.ok(burstOutputs.every(value => /^command-\d+$/.test(value)), "parallel SFTP commands must keep their output intact");
     assert.equal(connections, 1, "commands in one SFTP workspace should reuse the SSH2 transport");
     assert.equal(session.sftpSessionStatus(connection.id).connected, true);
+    const failure = error => error.publicCode === "sftp_subsystem_unavailable" && error.statusCode === 502
+      && !error.message.includes("fixture diagnostic");
+    await assert.rejects(session.readSftpDirectory(connection.id), failure);
+    subsystemMode = "exits";
+    await assert.rejects(session.readSftpDirectory(connection.id), failure);
+    const { listRemoteDir } = require("../dist/sftp");
+    await assert.rejects(listRemoteDir(connection.id), failure);
+    await assert.rejects(listRemoteDir(connection.id, "/missing"), error => error.code === "SFTP_DIRECTORY_NOT_FOUND");
+    await assert.rejects(listRemoteDir(connection.id, "/denied"), error => error.code === "SFTP_DIRECTORY_PERMISSION_DENIED");
+    assert.equal((await listRemoteDir(connection.id, "/compatible")).path, "/compatible", "a compatible shell still lists directories when the native read fails");
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(listRemoteDir(connection.id, ".", {signal:controller.signal}), error => error.name === "AbortError");
+    subsystemMode = "close";
+    await assert.rejects(session.readSftpDirectory(connection.id), error => error.code === "SSH_TRANSPORT_FAILED"
+      && /unexpected SFTP session termination/.test(error.cause?.message));
 
     session.disconnectSftpSession(connection.id, {remember:true});
     assert.equal(session.sftpSessionStatus(connection.id).connected, false);
     assert.match(await runCommand(session.spawnSftpSessionCommand, connection, "after-drop"), /^command-\d+$/);
     assert.equal(connections, 2, "the next SFTP operation should transparently reconnect after a manual disconnect");
     assert.equal(session.sftpSessionStatus(connection.id).connected, true);
+    session.disconnectSftpSession(connection.id, {remember:true});
+    rejectAuthentication = true;
+    await assert.rejects(session.readSftpDirectory(connection.id), {code:"SSH_AUTHENTICATION_FAILED"});
     console.log("Persistent SFTP session check passed.");
   } finally {
     session.closeAllSftpSessions();

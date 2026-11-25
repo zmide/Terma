@@ -13,7 +13,7 @@
 .terma-terminal-dialog .terminal-startup-modal .terminal-session-component-status.installed { color:var(--tile-text-success); }
 .terma-terminal-dialog .terminal-startup-modal .terma-button { font-weight: 400; }
 .terma-terminal-dialog .terminal-startup-modal .terma-button.primary { color:#fff; background:var(--terminal-startup-accent); border-color:var(--terminal-startup-accent); }
-.terma-terminal-dialog .terminal-startup-modal .terminal-startup-scroll { overflow:auto; max-height:min(70vh, 720px); padding:0 2px; }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-scroll { overflow-x:hidden; overflow-y:auto; max-height:min(70vh, 720px); margin-right:0; padding:0 2px; }
 .terma-terminal-dialog .terminal-startup-modal .terminal-startup-capability-control { align-items:stretch; }
 .terma-terminal-dialog .terminal-startup-modal .terminal-startup-capability-control > .terma-button { min-width:112px; }
 .terma-terminal-dialog .terminal-startup-modal .terminal-startup-actions { flex-wrap:wrap; }

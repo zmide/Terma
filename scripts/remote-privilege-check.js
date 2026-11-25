@@ -17,7 +17,10 @@ const serverSource = readSources(root, [
   "src/services/vnc-management-service.ts",
   "src/services/linux-desktop-service.ts"
 ]);
-const remoteFrontend = readFrontendDomain(root, "remote");
+const protocolPolicy=fs.readFileSync(path.join(root,'frontend/src/features/remote/protocol-policy.ts'),'utf8');
+const vncManagement=fs.readFileSync(path.join(root,'frontend/src/features/remote/vnc-management-service.ts'),'utf8');
+const vncClipboardHelper=fs.readFileSync(path.join(root,'frontend/src/features/remote/vnc-clipboard-helper.ts'),'utf8');
+const remoteFrontend = readFrontendDomain(root, "remote")+fs.readFileSync(path.join(root,"frontend/src/features/remote/desktop-service.ts"),"utf8")+fs.readFileSync(path.join(root,"frontend/src/features/remote/admin-service.ts"),"utf8");
 assert.doesNotMatch(source, /localStorage|sessionStorage/);
 assert.doesNotMatch(source, /INSERT\s+INTO|UPDATE\s+|DELETE\s+FROM/);
 assert.match(source, /sudo -S -k -p '' -- \/bin\/sh -s/);
@@ -32,14 +35,15 @@ assert.match(serverSource, /x11\.sshd-config/);
 assert.match(serverSource, /xdmcp\.configure/);
 assert.match(serverSource, /x11\.remote-install/);
 assert.match(serverSource, /vnc\.server\.\$\{action\}/);
-assert.match(remoteFrontend, /requestRemoteAdminAuthorization/);
-assert.match(remoteFrontend, /vnc\.clipboard-helper\.\$\{action\}/);
-assert.match(remoteFrontend, /vnc\.server\.\$\{action\}/);
-assert.match(remoteFrontend, /rdp\.server\.\$\{action\}/);
+assert.match(fs.readFileSync(path.join(root, 'frontend/src/features/remote/management-runtime.ts'), 'utf8'), /connectionId: management\.connectionId, authorize: admin\.request/);
+assert.match(vncClipboardHelper, /port\.authorize\(source, label, `vnc\.clipboard-helper\.\$\{action\}`, valid\)/);
+assert.match(vncManagement, /vnc\.server\.\$\{action\}/);
+assert.match(protocolPolicy, /rdp\.server\.\$\{requestAction\}/);
+assert.match(protocolPolicy, /xdmcp\.configure/);
 assert.match(remoteFrontend, /linux-desktop\.install-local-offline/);
 assert.match(remoteFrontend, /linux-desktop\.uninstall/);
-assert.match(remoteFrontend, /临时授权后/);
-assert.match(remoteFrontend, /installVncServer/);
+assert.match(fs.readFileSync(path.join(root,'frontend/src/features/remote/management-diagnostics.ts'),'utf8'), /remote:xdmcp_status\.after_temporary_authorization/);
+assert.match(fs.readFileSync(path.join(root,'frontend/src/features/remote/management-runtime.ts'),'utf8'), /vncInstallServer:.*remoteServices\.termaVncRuntime\.management\.install/);
 
 const privilege = require(path.join(root, "dist", "remote-privilege.js"));
 const base = Object.freeze({

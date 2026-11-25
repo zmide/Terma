@@ -97,10 +97,12 @@ async function main() {
   assert.match(serverSource, /localDirectDesktopIntegrationStatus\(req, "xserver"\)\.authorized[\s\S]*grant = nativeDesktop \|\| localDirectAuthorized \? null/, "自动授权的 X11 终端不能继续绑定旧临时 grant");
   assert.match(terminalRoutesSource, /DESKTOP_INTEGRATION_AUTH_REQUIRED/);
   assert.match(desktopMainSource, /desktopBrowserAuthorizationPromptGate\.request\(/, "Electron 桌面授权确认必须使用独占门控");
-  assert.match(terminalUiSource, /\["trusted", "untrusted"\]\.includes\(effectiveX11Mode\)/, "默认启用 X11 的连接必须在 WebSocket 前申请启动票据");
-  assert.match(terminalUiSource, /startup:\{\.\.\.\(startupOverride \|\| \{\}\), x11_mode:"off"\}/, "默认 X11 未授权时必须通过一次性启动票据降级为普通 SSH");
-  assert.match(terminalUiSource, /已自动降级为普通 SSH 终端/, "默认 X11 降级必须在终端中明确提示");
-  assert.match(terminalUiSource, /error\.code === "DESKTOP_INTEGRATION_AUTH_REQUIRED"[\s\S]*openXServerManager\(c\.id, key\)/, "X11 授权失败必须显示原因，并把当前连接上下文传给可选择时长的授权界面");
+  const connectionSource = fs.readFileSync(path.join(__dirname, "..", "frontend/src/features/terminal/terminal-connection-service.ts"), "utf8");
+  assert.match(terminalUiSource, /termaTerminalConnection\.connect/, "旧连接入口必须委托实际 TS 所有者");
+  assert.match(connectionSource, /!\['trusted', 'untrusted'\]\.includes\(x11Mode\)/, "默认启用 X11 的连接必须在 WebSocket 前申请启动票据");
+  assert.match(connectionSource, /ticket\(\{\.\.\.override, x11_mode: 'off'\}\)/, "默认 X11 未授权时必须通过一次性启动票据降级为普通 SSH");
+  assert.match(connectionSource, /port\.tr\('terminal:system.x11_fallback'\)/, "默认 X11 降级必须在终端中明确提示");
+  assert.match(connectionSource, /error\.code !== 'DESKTOP_INTEGRATION_AUTH_REQUIRED'[\s\S]*port\.openXServer\(connection\.id, key\)/, "X11 授权失败必须显示原因，并把当前连接上下文传给可选择时长的授权界面");
   security.resetWebAccessSecurity();
   const session = security.createSession();
   const sessionCookie = `td_session=${session}`;

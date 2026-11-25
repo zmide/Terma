@@ -1,0 +1,32 @@
+const assert=require('node:assert/strict');
+const {loadFrontendService}=require('./frontend-service-test-helper');
+const {sftpSelection}=loadFrontendService('frontend/src/features/files/sftp/selection.ts');
+const paths=['a','b','c','d','e'];
+const select=(selected,anchor,path,event={},checkbox=false)=>JSON.parse(JSON.stringify(sftpSelection(paths,selected,anchor,path,event,checkbox)));
+assert.deepEqual(select([], '', 'b'),{paths:['b'],anchor:'b'});
+assert.deepEqual(select(['b'], 'b', 'd'),{paths:['d'],anchor:'d'});
+assert.deepEqual(select(['b'], 'b', 'd',{ctrlKey:true}).paths,['b','d']);
+assert.deepEqual(select(['b','d'],'d','c').paths,['b','c','d']);
+assert.deepEqual(select(['b','c','d'],'c','c').paths,['b','d']);
+assert.deepEqual(select(['a','b','d'],'b','e',{shiftKey:true}).paths,['b','c','d','e']);
+assert.deepEqual(select(['a','b'],'b','d',{shiftKey:true,metaKey:true}).paths,['a','b','c','d']);
+assert.deepEqual(select(['a','d'],'d','a',{forceSingle:true}).paths,['a']);
+assert.deepEqual(select(['a','d'],'d','b',{preserveSelection:true}),{paths:['a','d'],anchor:'d'});
+assert.deepEqual(select(['a','c'],'a','c',{},true).paths,['a','c'],'Native checkbox already toggled');
+assert.deepEqual(select(['a','c','missing'],'a','missing').paths,['a','c']);
+class Element{closest(){return this.interactive;}}
+const {createSftpMenuActions}=loadFrontendService('frontend/src/features/files/sftp/menu-actions.ts',{Element});
+let valid=true,desktop=false,locale='zh',factory,called=[],clipboard='copy';
+const context={key:'original',connectionId:7,path:'/origin',valid:()=>valid};
+const port={context:(key,id)=>key==='original'&&(!id||id===7)?context:null,text:key=>locale+':'+key,desktop:()=>desktop,isImage:name=>/svg/.test(name),isArchive:name=>/zip/.test(name),clipboard:()=>clipboard,
+ select:c=>called.push(['select',c.key]),peers:()=>[{label:'peer',children:[{label:'nested',run:()=>called.push(['peer'])}]}],navigate:(c,path)=>called.push(['navigate',c.key,path]),entry:(a,c)=>called.push([a,c.key]),directory:(a,c)=>called.push([a,c.key,c.path]),show:(_,f)=>factory=f,close(){}};
+const menu=createSftpMenuActions(port);
+menu.entry({},'original',7,{path:'/origin/a.svgz',name:'a.svgz',type:'file'});
+let actions=factory();assert(actions.some(a=>a.label.endsWith('convert_svg_pdf')));assert(!actions.some(a=>a.label.endsWith('external_editor')));
+locale='en';actions=factory();assert(actions.filter(a=>a.label&&!a.children).every(a=>a.label.startsWith('en:')),'Open menu rebuilds translated actions');
+const download=actions.find(a=>a.label.endsWith('.download')),peer=actions.find(a=>a.children).children[0].children[0];download.run();assert.deepEqual(called.at(-1),['download','original']);
+valid=false;download.run();peer.run();assert.equal(called.length,2,'Expired nested actions cannot target another tab');assert.equal(factory().length,0);
+valid=true;desktop=true;menu.entry({},'original',7,{path:'/origin/folder',name:'folder',type:'dir'});actions=factory();assert(actions.some(a=>a.label.endsWith('compare_local')));actions[0].run();assert.deepEqual(called.at(-1),['navigate','original','/origin/folder']);
+menu.directory({},'original');actions=factory();assert(actions.some(a=>a.label.endsWith('paste_here')));clipboard='move';assert(factory().some(a=>a.label.endsWith('move_here')));
+const old=factory;const target=new Element();target.interactive=true;menu.directory({target},'original');assert.equal(factory,old,'Interactive rows keep their own menu');
+console.log('SFTP selection and menu runtime passed: ranges, multi-select, native checkbox, pinned context, nested guards and language');

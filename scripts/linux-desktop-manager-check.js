@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { readFrontendDomain } = require("./frontend-source");
+const { loadFrontendService } = require('./frontend-service-test-helper');
 const {
   DESKTOP_IDS,
   DETECT_SCRIPT,
@@ -169,12 +170,20 @@ assert.match(decodedUninstall, /dpkg-query/);
 assert.doesNotMatch(decodedUninstall, /autoremove/);
 assert.match(decodedUninstall, /terma_emit STAGE "verify"/);
 const remoteUi = readFrontendDomain(path.join(__dirname, ".."), "remote");
-assert.match(remoteUi, /const badgeLabels = \{[\s\S]*?system_default:tr\("remote:linux_desktop\.usage\.system_default"/);
-assert.match(remoteUi, /const badgeHints = \{[\s\S]*?system_default:tr\("remote:linux_desktop\.usage_hints\.system_default"/);
-for (const key of ["system_default", "account_default", "xdmcp_configured", "rdp_active", "vnc_shared"]) {
-  assert.match(remoteUi, new RegExp(`badge\\("${key}"\\)`));
+const {linuxDesktopModel} = loadFrontendService('frontend/src/features/remote/linux-desktop-model.ts');
+const badges = ['system_default', 'account_default', 'xdmcp_configured', 'rdp_active', 'vnc_shared'];
+const diagnostics = {has_desktop:true, desktops:[{id:'xfce'}], desktop_usage:{xfce:Object.fromEntries(badges.map(key=>[key,true]))},
+  active_vnc_sessions:[{virtual:true}]};
+const port = {tr:key=>key, connections:()=>[], connection:()=>undefined, desktopActionKey:()=>'', actionInFlight:()=>false, action:()=>({})};
+const render = (extra = {}) => linuxDesktopModel(port, {state:{connectionId:1,diagnostics:{...diagnostics,...extra}},running:()=>false});
+const desktopModel = render();
+const xfce = desktopModel.cards.find(card=>card.id==='xfce');
+for (const key of badges) {
+  assert.ok(xfce.badges.some(badge=>badge.label===`remote:linux_desktop.usage.${key}`&&badge.title===`remote:linux_desktop.usage_hints.${key}`));
 }
-assert.match(remoteUi, /tr\("remote:linux_desktop\.virtual_session_configured"/);
-assert.match(remoteUi, /const managerHint = platformSupported[\s\S]*?tr\("remote:linux_desktop\.hint"[\s\S]*?tr\("remote:linux_desktop\.macos_hint"[\s\S]*?tr\("remote:linux_desktop\.unsupported_hint"/);
-assert.match(remoteUi, /remoteGraphicsRenderingMarkup/);
+assert.equal(desktopModel.summary.find(row=>row[1]==='VNC')[2], 'remote:linux_desktop.virtual_session_configured');
+assert.equal(desktopModel.hint, 'remote:linux_desktop.hint');
+assert.equal(render({platform_supported:false,os_id:'macos'}).hint, 'remote:linux_desktop.macos_hint');
+assert.equal(render({platform_supported:false}).hint, 'remote:linux_desktop.unsupported_hint');
+assert.doesNotMatch(remoteUi, /function remoteGraphicsRenderingMarkup/);
 console.log("Linux 桌面管理检查通过：Debian/Linux 识别、安装卸载方案、阶段标记和日志标记正常");

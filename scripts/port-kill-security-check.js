@@ -157,17 +157,17 @@ async function main() {
     assert.equal(childStopped(listenerChild), true, "The exact address and port owner should be terminated");
     listenerChild = null;
 
-    const frontend = fs.readFileSync(path.join(__dirname, "..", "public", "app-forwards.js"), "utf8");
-    const callIndex = frontend.indexOf('api("/api/ports/kill"');
-    assert.ok(callIndex >= 0, "The frontend should call the protected port-kill API");
-    const call = frontend.slice(callIndex, callIndex + 260);
-    assert.match(call, /pid\s*:\s*p\.pid/);
-    assert.match(call, /host\s*:\s*diagnosis\.host/);
-    assert.match(call, /port\s*:\s*diagnosis\.port/);
-    assert.match(frontend, /function forwardPortDiagnosisMessage\(diagnosis=\{\}\)/);
+    const frontend = fs.readFileSync(path.join(__dirname, "..", "frontend/src/features/forwards", "forward-runtime.ts"), "utf8");
+    const conflict = fs.readFileSync(path.join(__dirname, "..", "frontend", "src", "features", "forwards", "forward-conflict.ts"), "utf8");
+    const callIndex = conflict.indexOf("port.api('/api/ports/kill'");
+    assert.ok(callIndex >= 0, "The typed conflict service should call the protected port-kill API");
+    const call = conflict.slice(callIndex, callIndex + 260);
+    assert.match(call, /pid\s*:\s*process\.pid/);
+    assert.match(call, /\.\.\.endpoint/);
+    assert.match(frontend, /function diagnosisMessage\(diagnosis:ForwardDiagnosis=\{\}\)/);
     assert.match(frontend, /connections:forwards\.diagnosis_port_available/);
     assert.match(frontend, /connections:forwards\.diagnosis_port_occupied/);
-    assert.doesNotMatch(frontend, /\b(?:result|diagnosis|after)\.message\b/);
+    assert.doesNotMatch(`${frontend}\n${conflict}`, /\b(?:result|diagnosis|after)\.message\b/);
 
     console.log("Port kill security check passed: PID/port/host validation, listener-address owner binding, and frontend request binding");
   } finally {

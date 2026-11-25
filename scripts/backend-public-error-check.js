@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const ts = require("typescript-legacy");
 const vm = require("node:vm");
+const {loadFrontendService} = require("./frontend-service-test-helper");
 
 const root = path.resolve(__dirname, "..");
 const compiledModule = path.join(root, "dist", "public-error.js");
@@ -194,29 +195,31 @@ assert.deepEqual(
   `已迁移高风险后端文件不得绕过公开错误契约：\n${legacyPublicErrorLeaks.join("\n")}`
 );
 
-const frontendSource = read("public/app-api.js");
-const i18nSource = read("public/app-i18n.js");
+const frontendSource = require('./frontend-source').readFrontendDomain(process.cwd(),'utilities');
+const frontendErrorsSource = read("frontend/src/shared/api/public-errors.ts");
+const i18nSource = read("frontend/src/shared/i18n/workspace-bootstrap.ts");
+const phraseTranslation = read("frontend/src/shared/i18n/phrase-translation.ts");
 const serverSource = read("src/server.ts");
 assert.match(serverSource, /publicErrorDetails\(error, body\.code\)/, "统一异常出口必须生成公开错误详情");
 assert.match(serverSource, /body\.error_code\s*=\s*publicDetails\.code/, "统一异常出口必须返回 error_code");
 assert.match(serverSource, /body\.error_params\s*=\s*publicDetails\.params/, "统一异常出口必须返回经过清洗的 error_params");
 assert.match(serverSource, /body\.preserve_error_message\s*=\s*true/, "显式远端输出异常必须携带保留原文标记");
-assert.match(frontendSource, /`errors:backend\.\$\{code\}`/, "前端必须优先按公开错误码查询 errors:backend 资源");
-assert.match(frontendSource, /errors:backend\.request_failed/, "英文缺少具体错误资源时必须回退统一英文错误");
-assert.match(frontendSource, /exists\?\.\(key, \{lng:language, fallbackLng:false\}\)/, "具体错误资源查询不得回退到另一种语言");
+assert.match(frontendErrorsSource, /`errors:backend\.\$\{code\}`/, "TS 服务必须优先按公开错误码查询 errors:backend 资源");
+assert.match(frontendErrorsSource, /errors:backend\.request_failed/, "英文缺少具体错误资源时必须回退统一英文错误");
+assert.match(frontendSource, /exists\?\.\(key,\s*\{\s*lng: language, fallbackLng: false\s*\}\)/, "具体错误资源查询不得回退到另一种语言");
 assert.match(frontendSource, /rememberTermaRawUiPhrase\(source\)/, "显式远端输出必须登记为前端自动翻译豁免文本");
-assert.match(i18nSource, /function rememberTermaRawUiPhrase\(value\)/, "i18n 运行时必须提供远端原文登记入口");
-assert.match(i18nSource, /if \(isTermaRawUiPhrase\(source\)\) return ""/, "自动翻译必须跳过已登记的远端原文");
+assert.match(frontendSource, /termaPublicErrors\.fromResponse/, "直接 fetch 错误必须委派同一 TS 服务");
+assert.doesNotMatch(frontendSource, /JSON\.parse\(text\)[\s\S]*function localizedBackendPublicError/, "兼容入口不得保留重复错误解析");
+assert.match(i18nSource, /function rememberTermaRawUiPhrase\(value: unknown\)/, "i18n 运行时必须提供远端原文登记入口");
+assert.match(phraseTranslation, /if \(isTermaRawUiPhrase\(source\)\) return ""/, "自动翻译必须跳过已登记的远端原文");
 
 function rawPhraseRegistryContext() {
-  const initializationOffset = i18nSource.indexOf("window.termaI18nReady = (async () => {");
-  assert.ok(initializationOffset > 0, "无法定位 i18n 运行时初始化边界");
-  let now = 1_000_000;
-  const context = {console, window:{}, Date:{now:() => now}};
-  context.advanceTime = milliseconds => { now += milliseconds; };
-  vm.createContext(context);
-  vm.runInContext(i18nSource.slice(0, initializationOffset), context, {filename:"public/app-i18n.js"});
-  return context;
+
+  let now=1_000_000;
+  const factory=loadFrontendService('frontend/src/shared/i18n/phrase-translation.ts',{Date:{now:()=>now}}).createTermaPhraseTranslation;
+  const phrases=factory(()=>'en-US',key=>key,{lookup:()=>({kind:'miss'})});
+  return {advanceTime:milliseconds=>{now+=milliseconds;},rememberTermaRawUiPhrase:phrases.remember,isTermaRawUiPhrase:phrases.isRaw,translatedTermaPhrase:phrases.translate};
+
 }
 
 const rawRegistry = rawPhraseRegistryContext();
@@ -267,7 +270,11 @@ function frontendContext(language, resources) {
     }
   };
   vm.createContext(context);
-  vm.runInContext(frontendSource, context, {filename:"public/app-api.js"});
+
+  const module=loadFrontendService('frontend/src/shared/api/public-errors.ts',{window:context.window});
+  module.installPublicErrors({language:()=>context.document.documentElement.lang,hasTranslation:key=>context.window.i18next.exists(key),
+   translate:context.tr,preserve:context.rememberTermaRawUiPhrase,legacyMessage:context.localizedTermaUiPhrase});
+  Object.assign(context,module);
   context.preservedRawPhrases = preservedRawPhrases;
   return context;
 }
@@ -311,4 +318,49 @@ assert.equal(
   "中文模式在尚未迁移具体错误码时应保留诊断详情"
 );
 
-console.log("后端公开错误契约检查通过：稳定错误码、参数脱敏、中英文资源和英文安全回退均有效");
+async function checkFrontendErrorResponses() {
+  const errors = englishFrontend.window.termaPublicErrors;
+  for (const [input, expected] of [
+    ["SSH_AUTHENTICATION_FAILED", "ssh_authentication_failed"],
+    ["desktop.auth-expired", "desktop_auth_expired"], ["BadCode", "bad_code"],
+    ["../../backend.request_failed", ""], ["x".repeat(81), ""],
+    ["constructor", ""], ["prototype", ""], [null, ""], [{}, ""]
+  ]) assert.equal(errors.normalizeCode(input), expected);
+  const params = errors.params({
+    subject:"  item\nname  ", count:3, enabled:true, missing:null,
+    password:"hidden", api_token:"hidden", private_key:"hidden",
+    nested:{value:"hidden"}, invalid:Infinity, text:"x".repeat(300),
+    ...JSON.parse('{"__proto__":"hidden","constructor":"hidden","prototype":"hidden"}')
+  });
+  assert.equal(params.subject, "item name");
+  assert.equal(params.text.length, 256);
+  for (const key of ["password", "api_token", "private_key", "nested", "invalid", "__proto__", "constructor", "prototype"]) {
+    assert.equal(Object.hasOwn(params, key), false);
+  }
+  assert.equal(Object.keys(errors.params(Object.fromEntries(Array.from({length:30}, (_, i) => [`item_${i}`, i])))).length, 16);
+  const payload = {error:"raw", error_code:"CONTRACT_EXAMPLE", error_params:{subject:"response"}, code:"LEGACY",
+    connection_id:-42, connection_name:"fixture", remote_profile_id:7, remote_profile_name:"remote"};
+  const error = await errors.fromResponse(new Response(JSON.stringify(payload), {status:409}));
+  assert.equal(error.message, "Could not process response");
+  assert.equal(error.name, "Error");
+  assert.equal(error.code, "LEGACY");
+  assert.equal(error.publicCode, "contract_example");
+  assert.equal(error.status, 409);
+  assert.equal(error.connectionId, -42);
+  assert.equal(error.connectionName, "fixture");
+  assert.equal(error.remoteProfileId, 7);
+  assert.equal(error.remoteProfileName, "remote");
+  assert.equal(error.details.error, "raw");
+  assert.equal(errors.create({}, "fixture", 500, -8).connectionId, -8);
+  for (const text of ["null", "[]", '"plain"', "{broken", ""]) {
+    const parsed = await errors.fromResponse(new Response(text, {status:500, statusText:"Failed"}));
+    assert.equal(parsed.status, 500);
+    assert.equal(typeof parsed.message, "string");
+  }
+  const unreadable = await errors.fromResponse({text:async() => {throw new Error("unreadable");}, status:502, statusText:""}, "fallback");
+  assert.equal(unreadable.message, "fallback");
+  englishFrontend.document.documentElement.lang = "zh-CN";
+  assert.equal(errors.message({error_code:"UNMIGRATED"}, "中文诊断"), "中文诊断");
+  console.log("后端公开错误契约及 TS 服务检查通过，覆盖稳定错误码、参数脱敏、错误字段、异常响应和即时语言");
+}
+checkFrontendErrorResponses().catch(error => {console.error(error); process.exitCode = 1;});

@@ -4,4 +4,11 @@ function decodeRemotePosixCommand(command) {
   return match ? Buffer.from(match[1], "base64").toString("utf8") : source;
 }
 
-module.exports = { decodeRemotePosixCommand };
+function receiveRemotePosixCommand(command, input, receive) {
+  if (command !== "/bin/sh -s") return receive(decodeRemotePosixCommand(command));
+  const chunks = [];
+  input.on("data", chunk => chunks.push(chunk));
+  input.once("end", () => receive(Buffer.concat(chunks).toString("utf8").trimEnd()));
+}
+
+module.exports = { decodeRemotePosixCommand, receiveRemotePosixCommand };

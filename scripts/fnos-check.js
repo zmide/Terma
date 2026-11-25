@@ -217,8 +217,11 @@ async function main() {
   assert.equal(rejectedApi.status, 421);
   assert.equal(JSON.parse(rejectedApi.body).error_code, "host_not_allowed");
   const loginHtml = await (await fetch(`${base}/login`)).text();
-  assert.match(loginHtml, /data-login-i18n="fnos_setup_hint">/);
-  assert.match(loginHtml, /data-login-i18n="setup_hint" hidden>/);
+  assert.match(loginHtml, /data-terma-distribution="fnos"/);
+  assert.match(loginHtml, /<div id="app"><\/div>/);
+  const loginAssets = Array.from(loginHtml.matchAll(/(?:src|href)="(\/login-vue-assets\/[A-Za-z0-9._-]+\.(?:js|css))"/g), match => match[1]);
+  assert.ok(loginAssets.length >= 3, "Vue login assets are missing from fnOS login page");
+  for (const asset of loginAssets) assert.equal((await fetch(`${base}${asset}`)).status, 200);
   const login = await fetch(`${base}/api/auth/login`, {method:"POST", headers:{"content-type":"application/json", origin:base}, body:JSON.stringify({password})});
   assert.equal(login.status, 200);
   const cookie = login.headers.get("set-cookie").split(";")[0];
@@ -307,7 +310,10 @@ async function main() {
   const update = await (await request("/api/updates/download/status")).json();
   assert.equal(update.managed_by, "fnos");
   assert.equal((await request("/api/updates/download", "POST", {})).status, 409);
-  assert.equal((await request("/api/sftp/automations")).status, 403);
+  assert.equal((await request("/api/sftp/automations")).status, 200);
+  const automationContext = await request("/api/sftp/automations/context");
+  assert.equal(automationContext.status, 200);
+  assert.ok((await automationContext.json()).default_path);
   assert.equal((await request("/api/local-files")).status, 403);
   const secondEnv = environment("occupied");
   initialize(secondEnv);

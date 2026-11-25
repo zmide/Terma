@@ -15,6 +15,8 @@ const root = path.join(__dirname, "..");
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "terma-remote-client-"));
 const mainSource = fs.readFileSync(path.join(root, "desktop", "main.js"), "utf8");
 const remoteUiSource = readFrontendDomain(root, "remote");
+const remoteClientServiceSource = fs.readFileSync(path.join(root, "frontend/src/features/remote/client-service.ts"), "utf8");
+const remoteDesktopServiceSource = fs.readFileSync(path.join(root, "frontend/src/features/remote/remote-desktop-service.ts"), "utf8");
 const serverSource = readSources(root, [
   "src/server.ts",
   "src/routes/remote-profile-routes.ts",
@@ -357,7 +359,7 @@ async function main() {
   assert.match(mainSource, /getVncClientPath:[\s\S]*?readSettings\(\)\.vncClientPath/);
   assert.match(mainSource, /chooseVncClientExecutable[\s\S]*?dialog\.showOpenDialog[\s\S]*?validateVncClientPath[\s\S]*?vncClientPath:executable/);
   assert.match(serverSource, /if \(result\?\.canceled\)[\s\S]*?sendJson\(response, result\)[\s\S]*?return true/);
-  assert.match(remoteUiSource, /if \(result\?\.canceled\) return null/);
+  assert.match(fs.readFileSync(path.join(root, "frontend/src/features/remote/launch-service.ts"), "utf8"), /if \(result\?\.canceled\) return null/);
 
   const windowsRdpResult = await windows.open({id:1,protocol:"rdp",host:"rdp.example",port:3389,username:"alice",password:"must-not-leak",options:{fullscreen:false,width:1280,height:720,clipboard:true,allow_password_transfer:true}});
   const windowsCredentialLaunch = windowsCredentialLaunches.at(-1);
@@ -554,10 +556,16 @@ async function main() {
   assert.match(macFreeRdpWithoutXQuartz.reason, /安装 XQuartz.*Windows App/);
   assert.match(mainSource, /passwordTransferNeedsXServer/);
   assert.match(mainSource, /current\.mode === "freerdp" && !current\.available\) \|\| passwordTransferNeedsXServer/);
-  assert.match(remoteUiSource, /const clientLaunchable = Boolean\(item\.available \|\| item\.launchable\)/);
-  assert.match(remoteUiSource, /remoteDesktopXServerButton/);
-  assert.match(remoteUiSource, /item\.xserver_installed \? tr\("remote:auto\.start_xquartz"/);
-  assert.match(remoteUiSource, /: tr\("remote:auto\.install_xquartz"/);
+  assert.match(remoteClientServiceSource, /const clientLaunchable = Boolean\(item\.available \|\| item\.launchable\)/);
+  assert.match(remoteDesktopServiceSource, /clientAvailability\(protocol, options\.vncClientMode, item\)/, "desktop preparation uses the shared client availability owner");
+  const {clientAvailability} = require("./frontend-service-test-helper").loadFrontendService("frontend/src/features/remote/client-service.ts");
+  assert.deepEqual({...clientAvailability("rdp", "system", {available:false, launchable:true})}, {
+    clientLaunchable:true, launchAllowed:true, statusAvailable:false
+  }, "an installed RDP client can launch while its required X Server is stopped");
+  const workspaceSource = fs.readFileSync(path.join(root,'frontend/src/features/remote/remote-desktop-workspace.ts'),'utf8');
+  assert.match(workspaceSource, /id: 'remoteDesktopXServerButton'[^\n]+onClick: \(\) => x11Services\.termaX11\.openManager\(\)/);
+  const presentation = fs.readFileSync(path.join(root,'frontend/src/features/remote/remote-desktop-presentation.ts'),'utf8');
+  assert.match(presentation, /tr\(result\.item\.xserver_installed \? 'remote:auto\.start_xquartz' : 'remote:auto\.install_xquartz'\)/);
   assert.match(connectivitySource, /function probeTcpEndpoint\(host: unknown, port: unknown, timeoutMs = 2200\)/);
   assert.match(connectivitySource, /function probeXdmcpEndpoint\(host: unknown, port: unknown, timeoutMs = 2200\)/);
   assert.match(connectivitySource, /method:"xdmcp-query"/);
@@ -567,10 +575,10 @@ async function main() {
   assert.match(connectivitySource, /reason_params:reasonParams/);
   assert.match(connectivitySource, /raw_error:normalizedRawError/);
   assert.doesNotMatch(connectivitySource, /连接超时|连接失败|主机解析失败|未收到 XDMCP Query 响应|当前协议不支持端口探测/);
-  assert.match(remoteUiSource, /function remoteEndpointProbeReason\(probe=\{\}\)/);
-  assert.match(remoteUiSource, /probe\?\.reason_code/);
-  assert.match(remoteUiSource, /probe\?\.raw_error/);
-  assert.match(remoteUiSource, /remote:endpoint_probe\.reason_with_detail/);
+  const diagnosticsSource = fs.readFileSync(path.join(root,'frontend/src/features/remote/management-diagnostics.ts'),'utf8');
+  assert.doesNotMatch(remoteUiSource, /function remoteEndpointProbeReason\(/);
+  assert.match(diagnosticsSource, /function endpointProbeReason\(/);
+  assert.match(diagnosticsSource, /remote:endpoint_probe\.reason_with_detail/);
   assert.match(xserverSource, /family === 6 \? "udp6" : "udp4"/);
   assert.match(xserverSource, /dns\.lookup\(host/);
   assert.match(serverSource, /profile\.protocol === "rdp"[\s\S]*?await dependencies\.probeTcpEndpoint\(profile\.host, profile\.port \|\| 3389\)/, "RDP 启动前必须从保存的远程连接探测目标端口");
@@ -579,7 +587,8 @@ async function main() {
   assert.match(serverSource, /requestedClientMode[\s\S]*\["auto", "bundled", "embedded", "system"\]/, "VNC 临时回退只允许固定客户端模式");
   assert.match(serverSource, /hasRequestedVncPassword[\s\S]*临时 VNC 密码只能用于 VNC 连接/, "临时 VNC 密码必须限制在 VNC 启动请求");
   assert.match(serverSource, /temporary_password:Boolean\(requestedVncPassword\)/, "临时 VNC 密码必须只作为本次启动标记传递");
-  assert.match(remoteUiSource, /function launchVncWithTemporaryPassword[\s\S]*updateByDefault:false[\s\S]*saveVncCredential[\s\S]*vnc_password/, "VNC 界面必须支持不覆盖保存配置的临时密码");
+  const vncManagement=fs.readFileSync(path.join(root,'frontend/src/features/remote/vnc-management-service.ts'),'utf8');
+  assert.match(vncManagement, /function launchWithTemporaryPassword[\s\S]*?updateByDefault: false[\s\S]*?result\.update_saved_password[\s\S]*?await save\([\s\S]*?port\.launch\(/, "VNC 界面必须支持不覆盖保存配置的临时密码");
 
   const linux = createRemoteClientAdapter({
     platform:"linux",

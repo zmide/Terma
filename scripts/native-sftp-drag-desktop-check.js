@@ -650,19 +650,18 @@ async function checkEarlyNativeProgress() {
   await session.nativeJobStartPromise;
   assert.equal(events.length, 1);
 
-  const taskSource = fs.readFileSync(path.join(root, "public", "app-sftp-tasks.js"), "utf8");
   const scheduled = [];
   let listeners = 0;
-  const timerContext = vm.createContext({
-    sftpJobsTimer:0,
-    setTimeout:(_callback, delay) => { scheduled.push(delay); return scheduled.length; },
+  const {createSftpTransferLifecycle} = require('./frontend-service-test-helper').loadFrontendService('frontend/src/features/files/sftp/transfer-lifecycle.ts', {
+    window:{addEventListener() {}},
+    setTimeout:(_callback,delay) => {scheduled.push(delay);return scheduled.length;},
     clearTimeout() {},
-    document:{addEventListener:() => { listeners += 1; }}
+    document:{addEventListener() {listeners++;}}
   });
-  vm.runInContext(taskSource.slice(0, taskSource.indexOf("function sftpJobProgress(")), timerContext);
-  timerContext.startSftpJobsTimer();
+  const {polling} = createSftpTransferLifecycle({directories:{},polling:{timerChanged() {}}});
+  polling.start();
   assert.equal(scheduled.at(-1), 3000);
-  timerContext.startSftpJobsTimer(true);
+  polling.start(true);
   assert.equal(scheduled.at(-1), 0, "Native progress must wake an existing idle polling timer rather than waiting ten seconds");
   assert.equal(listeners, 1, "Waking the task poller must not register duplicate lifecycle handlers");
 }
@@ -754,19 +753,29 @@ function checkNativeSessionRaceGuards() {
   assert.match(adapterSource, /waitForActivation:true/);
   assert.match(adapterSource, /metadata_known === true/);
   assert.match(adapterSource, /module\.setInternalTarget\?\.\(nativeId, Boolean\(target\)\)/);
-  assert.match(rendererSource, /\{armed:true,\s*sourceTabKey:tabKey\}/);
-  assert.match(rendererSource, /activateSftpDrag\?\.\(pointer\.nativeRequestId\)/);
-  assert.match(rendererSource, /pointer\.activated && pointer\.nativeStarted/);
-  assert.doesNotMatch(rendererSource, /pointer\.activated && \(pointer\.nativeReady \|\| pointer\.nativeStarted\)/);
-  assert.match(rendererSource, /event\.type === "ready"[\s\S]*sftpNativeDragPointer\.nativeReady = true/);
-  assert.match(rendererSource, /event\.type === "ready"[\s\S]*request\.activated\) window\.termaDesktop\?\.activateSftpDrag/);
-  assert.match(rendererSource, /event\.type === "transferStarted"[\s\S]*refreshSftpJobs\(\)/);
-  assert.match(rendererSource, /reasonCode === "linux_helper_missing"/);
+  const pointerSource = fs.readFileSync(path.join(root,'frontend/src/features/files/sftp/native-drag-pointer.ts'),'utf8');
+  const dragSource = fs.readFileSync(path.join(root, "frontend/src/features/files/sftp/drag-runtime.ts"), "utf8");
+  assert.match(dragSource, /\{ armed: true, sourceTabKey \}/);
+  assert.match(pointerSource, /port\.activate\(current\.nativeRequestId\)/);
+  assert.match(pointerSource, /pointer\.activated&&pointer\.nativeStarted/);
+  assert.doesNotMatch(pointerSource, /pointer\.activated&&\(pointer\.nativeReady/);
+  const runtimeSource=fs.readFileSync(path.join(root,'frontend/src/features/files/sftp/native-drag-runtime.ts'),'utf8');
+  const dragWorkspace = fs.readFileSync(path.join(root, 'frontend/src/features/files/sftp/drag-workspace.ts'), 'utf8');
+  assert.match(dragWorkspace, /const drag = createSftpDragRuntime\(/);
+  assert.match(dragWorkspace, /onSftpDragResult\?\.\(result => \{ void drag\.native\.result\(result\)/);
+  assert.match(dragWorkspace, /onSftpDragEvent\?\.\(event => drag\.native\.event\(event\)/);
+  assert.match(dragSource, /createNativeDragRuntime\(/);
+  assert.match(runtimeSource, /value\.type==='ready'[\s\S]*port\.pointer\(\)\.ready\(id\)/);
+  assert.match(runtimeSource, /if\(request\.activated\)port\.adapter\(\)\.activate\(id\)/);
+  assert.match(runtimeSource, /value\.type==='transferStarted'[\s\S]*port\.refresh\(\)/);
   assert.doesNotMatch(rendererSource, /dataTransfer\.setData\("text\/plain"/);
   assert.doesNotMatch(rendererSource, /activateSftpNativeDragPointer\(pointer\);\s*if \(pointer\.row\)/);
-  assert.match(rendererSource, /setSftpDragTarget\?\.\(requestId, normalized, \{final:Boolean\(options\.final\)\}\)/);
-  assert.match(rendererSource, /sourceTabKey:request\.sourceTabKey/);
-  assert.match(rendererSource, /target\.kind === "terminal"/);
+  assert.match(dragSource, /send: \(id, hit, final\) => adapter\.target\(id, hit \? \{ \.\.\.hit \} : null, final\)/);
+  assert.match(runtimeSource, /port\.adapter\(\)\.start\(mode,id,request\.entries,request\.files,request\.sourceTabKey,requestId\)/);
+  const rendererAdapterSource = fs.readFileSync(path.join(root, 'frontend/src/features/files/sftp/native-drag-adapter.ts'), 'utf8');
+  assert.match(rendererAdapterSource, /code === 'linux_helper_missing'[\s\S]*?helper_reinstall_action/);
+  assert.match(rendererAdapterSource, /bridge\.startSftpDrag\(requested === 'streaming' \? \{ \.\.\.snapshot, sourceTabKey \} : \[\.\.\.files\], requestId\)/);
+  assert.match(fs.readFileSync(path.join(root,'frontend/src/features/files/sftp/native-drag-target.ts'),'utf8'), /target\.kind==='terminal'/);
   assert.match(jobsSource, /const topLevelSizeKnown = topLevel\.length > 0[\s\S]*entry\?\.metadata_known === true/);
   assert.match(jobsSource, /function recordNativeSftpDragBytes\([\s\S]*recordTransferred\(job, added\)/);
   assert.match(sessionSource, /input\.on\("data", \(chunk\) => \{[\s\S]*onProgress\(bytes\)/);

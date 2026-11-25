@@ -3,32 +3,23 @@ const fs = require("node:fs");
 const path = require("node:path");
 const nodeCrypto = require("node:crypto");
 const vm = require("node:vm");
-const { readFrontendDomain } = require("./frontend-source");
+const { loadFrontendService } = require("./frontend-service-test-helper");
 
 const root = path.resolve(__dirname, "..");
-const remoteSource = readFrontendDomain(root, "remote");
+const vncRuntime = fs.readFileSync(path.join(root, 'frontend/src/features/remote/vnc-runtime.ts'), 'utf8');
+const sessionOwner=fs.readFileSync(path.join(root,'frontend/src/features/remote/vnc-session-service.ts'),'utf8');
 const cssSource = fs.readFileSync(path.join(root, "public", "app.css"), "utf8");
 const mainSource = fs.readFileSync(path.join(root, "desktop", "main.js"), "utf8");
 const preloadSource = fs.readFileSync(path.join(root, "desktop", "preload.js"), "utf8");
 
-assert.match(remoteSource, /rfb\.addEventListener\("clipboard"/);
-assert.match(remoteSource, /event\.detail\?\.text/);
-assert.match(remoteSource, /requestVncClipboardText/);
-assert.match(remoteSource, /data-vnc-clipboard-sync/);
-assert.match(remoteSource, /data-vnc-clipboard-receive/);
-assert.match(remoteSource, /data-vnc-clipboard-send-image/);
-assert.match(remoteSource, /data-vnc-clipboard-receive-image/);
-assert.match(remoteSource, /sendVncClipboardImage/);
-assert.match(remoteSource, /receiveVncClipboardImage/);
-assert.match(remoteSource, /readVncLocalClipboardSnapshot/);
-assert.match(remoteSource, /pollVncRemoteClipboardImageBridge/);
-assert.match(remoteSource, /auto_sync_images/);
-assert.match(remoteSource, /data-vnc-clipboard-helper/);
-assert.match(remoteSource, /configureVncClipboardSsh/);
-assert.match(remoteSource, /vncClipboardMatchingConnections/);
-assert.match(remoteSource, /自动匹配同主机/);
-assert.match(remoteSource, /保存并检测/);
-assert.match(remoteSource, /session\.rfb !== rfb/);
+assert.match(sessionOwner, /on\('clipboard'/);
+assert.match(sessionOwner, /event.detail\?\.text/);
+const toolbarView = fs.readFileSync(path.join(root,'frontend/src/features/remote/RemoteDesktopViews.ts'),'utf8');
+for (const action of ['sync','receive','send-image','receive-image','helper']) assert.ok(toolbarView.includes(`data-vnc-clipboard-${action}`));
+assert.match(vncRuntime, /images\.send\(/);
+assert.match(vncRuntime, /images\.receive\(/);
+assert.match(sessionOwner, /auto_sync_images/);
+assert.match(vncRuntime, /helper\.configure/);
 assert.match(cssSource, /\.vnc-clipboard-status/);
 assert.match(cssSource, /\.vnc-toolbar-actions \.icon-button\.active/);
 assert.match(mainSource, /ipcMain\.handle\("terma:clipboard-read"/);
@@ -50,10 +41,9 @@ assert.match(mainSource, /typeof clipboard\.availableFormats === "function"/);
 assert.match(mainSource, /readClipboardPng:async \(\) =>/);
 assert.match(mainSource, /readClipboardFormats:async \(\) =>/);
 assert.match(mainSource, /async function readDesktopClipboardFormatsAsync\(\)/);
-assert.match(remoteSource, /session\.clipboardLastSeenLocal = undefined/);
-assert.match(remoteSource, /vnc-clipboard/);
-assert.match(remoteSource, /responseType:"arrayBuffer"/);
-assert.match(remoteSource, /已发送（服务端未确认）/);
+assert.match(sessionOwner, /session.clipboardLastSeenLocal=undefined/);
+assert.match(fs.readFileSync(path.join(root, "frontend/src/features/remote/vnc-clipboard-images.ts"), "utf8"), /responseType: 'arrayBuffer'/);
+const clipboardMessages = require("../public/locales/zh-CN/remote.json").clipboard;
 
 const clipboard = {read:"", browserWrites:[], desktopWrites:[], imageWrites:[]};
 const imagePng = Uint8Array.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1,2,3,4]);
@@ -103,7 +93,7 @@ const context = vm.createContext({
       writeText:async text => clipboard.browserWrites.push(String(text))
     }
   },
-  window:{termaDesktop:null},
+  window:{termaDesktop:null,termaVncRuntime:{session:{current:session=>{const rfb=session.rfb,revision=session.connectionRevision;return ()=>session.rfb===rfb&&session.connectionRevision===revision&&session.connected;}}}},
   crypto:nodeCrypto.webcrypto,
   document:{
     visibilityState:"visible",
@@ -120,31 +110,54 @@ const context = vm.createContext({
     }
     return {available:true, transport:bridgeTransport, text:bridgeRemoteText, truncated:false, max_bytes:32768};
   },
-  tr:(key, options={}) => options.defaultValue || key,
+  tr:(key, options={}) => options.defaultValue || clipboardMessages[key.split(".").at(-1)] || key,
   notify:(message, state) => notifications.push({message:String(message), state:String(state || "")}),
   writeClipboardText:async text => clipboard.browserWrites.push(String(text))
 });
 
-vm.runInContext(remoteSource, context, {filename:"public/app-remote.js"});
-vm.runInContext(`globalThis.__vncClipboard = {
-  readVncLocalClipboard,
-  writeVncLocalClipboard,
-  sendVncClipboardText,
-  syncVncClipboardFromLocal,
-  handleVncClipboardEvent,
-  handleVncRemoteClipboard,
-  ensureVncClipboardTransport,
-  pollVncRemoteClipboardBridge,
-  readVncLocalClipboardSnapshot,
-  sendVncClipboardImageBytes,
-  syncVncClipboardImageFromLocal,
-  pollVncRemoteClipboardImageBridge,
-  normalizeVncClipboardText,
-  startVncClipboardPolling,
-  stopVncClipboardPolling
-};`, context);
-
-const api = context.__vncClipboard;
+const remoteFolder = path.join(root, "frontend/src/features/remote");
+const { createVncLocalClipboard } = loadFrontendService(path.join(remoteFolder, "vnc-local-clipboard.ts"));
+const { createVncClipboardModel } = loadFrontendService(path.join(remoteFolder, "vnc-clipboard-model.ts"));
+const { createVncClipboardImages } = loadFrontendService(path.join(remoteFolder, "vnc-clipboard-images.ts"));
+const { createVncClipboardText } = loadFrontendService(path.join(remoteFolder, "vnc-clipboard-text.ts"));
+const { createVncClipboardHelper } = loadFrontendService(path.join(remoteFolder, "vnc-clipboard-helper.ts"));
+const { createVncClipboardPolling } = loadFrontendService(path.join(remoteFolder, "vnc-clipboard-polling.ts"),
+  {setInterval: context.setInterval, clearInterval: context.clearInterval, setTimeout: context.setTimeout, clearTimeout: context.clearTimeout});
+const localClipboard = createVncLocalClipboard({
+  tr: context.tr, desktop: () => context.window.termaDesktop, browser: () => context.navigator.clipboard,
+  writeManualText: context.writeClipboardText
+});
+const clipboardModel = createVncClipboardModel({tr: context.tr, localize: value => value, bridgeCandidate: () => false});
+Object.assign(context.window.termaVncRuntime, {localClipboard, clipboardModel});
+const host = {api:context.api, tr:context.tr, notify:context.notify,
+  candidate: session => Boolean(session.profile.options?.source_ssh_connection_id),
+  controls: () => {}, status: (session, message) => {session.clipboardStatusText = message;},
+  visible: session => !!context.document.hasFocus() && session.viewport?.isConnected !== false && !session.viewport?.closest?.('[hidden]')};
+const testSessions = new Map();
+let now = Date.now();
+const current = context.window.termaVncRuntime.session.current;
+const text = createVncClipboardText({...host, localize: value => value, current, local: localClipboard, now: () => now,
+  observe: (session, snapshot) => images.observe(session, snapshot), stop: session => pollingService.stop(session)});
+const images = createVncClipboardImages({...host, local: localClipboard, current, session: key => testSessions.get(key),
+  transport: text.transport, unavailable: text.unavailable});
+const pollingService = createVncClipboardPolling({text, images, sessions: () => testSessions.values(), interval: (_, fallback) => fallback, now: () => now});
+context.window.termaVncRuntime.images = images;
+const api = {
+  readVncLocalClipboard: localClipboard.readText,
+  writeVncLocalClipboard: localClipboard.writeText,
+  sendVncClipboardText: text.send,
+  syncVncClipboardFromLocal: text.fromLocal,
+  handleVncClipboardEvent: text.event,
+  handleVncRemoteClipboard: text.fromRemote,
+  ensureVncClipboardTransport: text.transport,
+  pollVncRemoteClipboardBridge: text.poll,
+  sendVncClipboardImageBytes: images.sendBytes,
+  syncVncClipboardImageFromLocal: images.fromLocal,
+  pollVncRemoteClipboardImageBridge: images.poll,
+  normalizeVncClipboardText: clipboardModel.normalizeText,
+  startVncClipboardPolling: pollingService.start,
+  stopVncClipboardPolling: pollingService.stop
+};
 const makeRfb = () => ({
   viewOnly:false,
   sent:[],
@@ -163,7 +176,108 @@ const makeSession = rfb => ({
   viewport:{isConnected:true, closest:() => null}
 });
 
+async function checkHelperTasks() {
+  const seed = () => ({
+    key:"helper", connected:true, clipboardAutoSync:true,
+    profile:{id:7, protocol:"vnc", host:"host.example.test", options:{source_ssh_connection_id:2}}
+  });
+  let session = seed(), confirm = false, lease = 1, pendingPrompt, guideRequested, finishTask, transportMode;
+  let inspectFinished, watching, configured;
+  const calls = [], starts = [], events = [];
+  const sameHost = {id:2, ssh_host:"host.example.test", ssh_user:"test"};
+  const otherHost = {id:3, ssh_host:"elsewhere.example.test", ssh_user:"test"};
+  const helper = createVncClipboardHelper({
+    current: () => {const opened=lease;return () => opened===lease;},
+    session: () => session, profile: () => session.profile, connections: () => [sameHost, otherHost],
+    normalizeHost: value => String(value || '').toLowerCase(),
+    tr: key => key, notify: (message, kind) => events.push([message,kind]), localize: () => '',
+    prompt(options) {
+      pendingPrompt=options;
+      configured=deferred();
+      return configured.promise;
+    },
+    refresh(options) { if(options.model().diagnostic.head)inspectFinished?.resolve(); },
+    finish(options, value) {options.dismissed();configured.resolve(value);}, commands: () => {},
+    guides: () => ({install: () => ({modes:[]}),manual: () => ({})}),
+    action: (id, label, icon, run) => ({id,label,icon,run}),
+    begin: () => true, end: () => {}, focus: () => {}, status: () => {}, revealManual: () => {},
+    confirm: async () => confirm, authorize: async () => ({admin_grant_id:'fixture-grant'}),
+    taskRequested: () => true, taskError: () => '', reset: () => {}, send: async () => true,
+    transport: async () => transportMode,
+    stop: () => {}, start: s => starts.push(s),
+    watch: async () => {watching.resolve();return finishTask.promise;},
+    api: async (_url, request) => {
+      const body = JSON.parse(request.body);
+      calls.push(body);
+      if (body.action === 'guide') {
+        guideRequested=body.connection_id;
+        return {platform:'linux', available:true, root:false, connection_id:body.connection_id,
+          uninstall_plan:{available:true, package_names:['xclip']}};
+      }
+      if (request.method === 'PUT') return {...session.profile, options:body.options};
+      return {task:{id:'fixture', action:'install', status:'pending', connection_id:2}};
+    }
+  });
+  const open = async () => {
+    inspectFinished=deferred();
+    const operation = helper.configure(session.key);
+    await inspectFinished.promise;
+    return {operation};
+  };
+  const cancel = await open();
+  assert.equal(guideRequested,2);
+  await helper.operate(session.key,'uninstall',{});
+  await cancel.operation;
+  assert.deepEqual(calls.filter(call=>call.action!=='guide'),[],'cancelling uninstall saves no profile and starts no task');
+  const preview = await open();
+  inspectFinished=deferred();
+  pendingPrompt.select(3);
+  await inspectFinished.promise;
+  assert.equal(guideRequested,3);
+  assert.equal(session.profile.options.source_ssh_connection_id,2,'preview does not change the selected helper');
+  helper.release(session);
+  await preview.operation;
+
+  confirm=true;transportMode='ssh-linux-x11';finishTask=deferred();watching=deferred();
+  const conflict = await open();
+  const result=helper.operate(session.key,'uninstall',{});
+  await watching.promise;
+  assert.equal(calls.at(-1).action,'uninstall');
+  assert.equal(calls.at(-1).connection_id,2);
+  assert.equal(calls.at(-1).admin_auth.admin_grant_id,'fixture-grant');
+  finishTask.resolve({status:'done'});
+  await result; await conflict.operation;
+  assert.ok(events.some(([message,kind])=>message.endsWith('.install_verified')&&kind==='success'),
+    'conflicting install is verified as an install');
+  assert.equal(starts.length,1);
+
+  finishTask=deferred();watching=deferred();
+  const closing = await open();
+  const obsolete = helper.operate(session.key,'uninstall',{});
+  await watching.promise;
+  lease++;session=seed();
+  const previousEvents=events.length;
+  finishTask.resolve({status:'done'});
+  await obsolete; await closing.operation;
+  assert.equal(starts.length,1,'late completion cannot start polling in a replacement session');
+  assert.equal(events.length,previousEvents,'late completion cannot repaint or report success in a replacement session');
+}
+
 (async () => {
+  await checkHelperTasks();
+  assert.throws(() => localClipboard.imageBytes(Uint8Array.of(0, 1, 2)), {message:clipboardMessages.image_not_png});
+  assert.throws(() => localClipboard.imageBytes(new Uint8Array(25 * 1024 * 1024 + 1)), {message:clipboardMessages.image_too_large});
+  assert.equal(await localClipboard.imageHash({data:imagePng}), nodeCrypto.createHash("sha256").update(imagePng).digest("hex"));
+  let blobReads = 0;
+  context.navigator.clipboard.read = async () => [{
+    types: ["image/png"],
+    getType: async () => { blobReads++; return new Blob([imagePng]); }
+  }];
+  assert.equal((await localClipboard.readSnapshot(false)).imageAvailable, true);
+  assert.equal(blobReads, 0, "metadata polls must skip PNG reads");
+  assert.deepEqual([...(await localClipboard.readSnapshot(true)).image], [...imagePng]);
+  delete context.navigator.clipboard.read;
+
   const rfb = makeRfb();
   const session = makeSession(rfb);
 
@@ -329,7 +443,7 @@ const makeSession = rfb => ({
   assert.equal(clipboard.desktopWrites.at(-1), "真正的远端新内容");
 
   await api.sendVncClipboardText(macBridge, "第二次本机写入", false);
-  macBridge.clipboardBridgeEchoGuard.expiresAt = Date.now() - 1;
+  now += 3001;
   bridgeRemoteText = "真正的远端新内容";
   assert.equal(await api.pollVncRemoteClipboardBridge(macBridge, true), true, "保护期结束后远端再次复制旧值应允许同步");
   assert.equal(macBridge.remoteClipboardText, "真正的远端新内容");
@@ -368,6 +482,68 @@ const makeSession = rfb => ({
   bridgeRemoteText = String.raw`\u554a\u554a\u554a`;
   await api.pollVncRemoteClipboardBridge(linuxBridge, true);
   assert.equal(linuxBridge.remoteClipboardText, "啊啊啊", "SSH 辅助返回的 Unicode 转义文本必须在写入本机剪贴板前解码");
+
+  const retryText = makeSession(makeRfb());
+  retryText.profile.id=71;retryText.clipboardTransport='ssh-linux-x11';retryText.clipboardTransportChecked=true;
+  desktopSnapshot={text_available:true,text:'retry synthetic text',image_available:false};let retryWrites=0;
+  bridgeApiOverride=async (_path,options={})=>{if(options.method==='POST'){retryWrites++;if(retryWrites===1)throw Error('temporary failure');return {ok:true};}return {available:true,transport:'ssh-linux-x11',text_available:false};};
+  assert.equal(await api.syncVncClipboardFromLocal(retryText),false);
+  assert.equal(await api.syncVncClipboardFromLocal(retryText),true);
+  assert.equal(retryWrites,2,'a failed text transfer must not mark the value delivered');
+  const retryImage=makeSession(makeRfb());retryImage.profile.id=71;retryImage.clipboardAutoSyncImages=true;retryImage.clipboardTransport='ssh-linux-x11';retryImage.clipboardTransportChecked=true;retryImage.clipboardBridgeTool='xclip';
+  const retryPng=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a1b8AAAAASUVORK5CYII=','base64');
+  context.window.termaDesktop={readClipboardSnapshot:async ({includeImage})=>({text_available:false,image_available:true,image_revision:'retry-1',image:includeImage?{ok:true,data:retryPng}:undefined})};let imageWrites=0;
+  bridgeApiOverride=async (_path,options={})=>{if(options.method==='POST'){imageWrites++;if(imageWrites===1)throw Error('temporary image failure');return {ok:true};}return {available:true,transport:'ssh-linux-x11'};};
+  assert.equal(await api.syncVncClipboardImageFromLocal(retryImage),false);
+  assert.equal(await api.syncVncClipboardImageFromLocal(retryImage),true);
+  assert.equal(imageWrites,2,'a failed image transfer must not mark its revision delivered');
+  const stale = makeSession(makeRfb());
+  Object.assign(stale.profile, {id:72});
+  Object.assign(stale, {key:"stale-image", clipboardTransport:"ssh-linux-x11", clipboardTransportChecked:true, clipboardBridgeTool:"xclip"});
+  testSessions.set(stale.key,stale);
+  let clipboardWrites = 0;
+  context.window.termaDesktop.writeClipboardImage = async () => { clipboardWrites++; };
+  const started = deferred(), response = deferred();
+  bridgeApiOverride = async () => { started.resolve(); return response.promise; };
+  const pending = context.window.termaVncRuntime.images.receive(stale.key,true);
+  await started.promise;
+  stale.connected = false;
+  context.window.termaVncRuntime.images.reset(stale);
+  stale.connected = true;
+  response.resolve({data:imagePng.buffer});
+  assert.equal(await pending,false);
+  assert.equal(clipboardWrites,0,"a replaced connection must not write an old PNG into the local clipboard");
+  context.window.termaDesktop=null;bridgeApiOverride=null;
+
+  const restarting = makeSession(makeRfb());
+  restarting.profile = {id:75, options:{source_ssh_connection_id:73}};
+  const startedProbe = deferred(), oldProbe = deferred();
+  let probes = 0;
+  bridgeApiOverride = async () => {
+    if (++probes === 1) {startedProbe.resolve();return oldProbe.promise;}
+    return {available:true,transport:"ssh-linux-x11",text:"Current profile"};
+  };
+  const oldSend = text.send(restarting,"Must never send");
+  await startedProbe.promise;
+  restarting.rfb = makeRfb();
+  text.reset(restarting);
+  assert.equal(await text.transport(restarting),"ssh-linux-x11");
+  oldProbe.resolve({available:true,transport:"ssh-macos",text:"Stale probe"});
+  assert.equal(await oldSend,false);
+  assert.equal(probes,2,"retired channel discovery cannot send to the replacement connection");
+  assert.equal(restarting.remoteClipboardText,"Current profile");
+  assert.equal(restarting.clipboardTransport,"ssh-linux-x11");
+  const startedText = deferred(), oldText = deferred();
+  bridgeApiOverride = async () => {startedText.resolve();return oldText.promise;};
+  const staleTextRead = text.poll(restarting,true);
+  await startedText.promise;
+  restarting.rfb = makeRfb();
+  text.reset(restarting);
+  oldText.resolve({available:true,transport:"ssh-macos",text:"Must never write"});
+  const writesBefore = clipboard.browserWrites.length;
+  assert.equal(await staleTextRead,false);
+  assert.equal(clipboard.browserWrites.length,writesBefore,"a retired text poll cannot write to the local clipboard");
+  bridgeApiOverride = null;
 
   const polling = makeSession(makeRfb());
   api.startVncClipboardPolling(polling);

@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const vm = require("node:vm");
+const { loadFrontendService } = require("./frontend-service-test-helper");
 
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-connection-health-"));
 process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
@@ -12,15 +12,13 @@ const { allConnectionsHealth, diagnoseSshError } = require("../dist/ssh");
 const { closeDatabase, insertConnection, run } = require("../dist/db");
 
 const englishErrors = JSON.parse(fs.readFileSync(path.join(__dirname, "../public/locales/en-US/errors.json"), "utf8"));
-const healthFrontendContext = vm.createContext({
-  tr(key, options={}) {
-    const [namespace, resourceKey] = String(key || "").split(":", 2);
-    if (namespace === "errors" && typeof englishErrors[resourceKey] === "string") return englishErrors[resourceKey];
-    return options.defaultValue || key;
-  }
+const { createConnectionHealthService } = loadFrontendService("frontend/src/features/connections/connection-health-service.ts");
+const { sshDiagnosis } = createConnectionHealthService();
+const localizedHealthSshDiagnosis = ssh => sshDiagnosis(ssh, (key, options={}) => {
+  const [namespace, resourceKey] = key.split(":", 2);
+  if (namespace === "errors" && typeof englishErrors[resourceKey] === "string") return englishErrors[resourceKey];
+  return options.defaultValue || key;
 });
-vm.runInContext(fs.readFileSync(path.join(__dirname, "../public/app-connection-health.js"), "utf8"), healthFrontendContext, {filename:"public/app-connection-health.js"});
-const localizedHealthSshDiagnosis = vm.runInContext("localizedHealthSshDiagnosis", healthFrontendContext);
 
 function connection(name, host, user, port) {
   return {

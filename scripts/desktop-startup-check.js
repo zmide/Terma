@@ -9,7 +9,7 @@ const root = path.resolve(__dirname, "..");
 const desktopMainPath = path.join(root, "desktop", "main.js");
 const desktopMainSource = fs.readFileSync(desktopMainPath, "utf8");
 const desktopPreloadSource = fs.readFileSync(path.join(root, "desktop", "preload.js"), "utf8");
-const appSource = fs.readFileSync(path.join(root, "public", "app.js"), "utf8");
+const workspaceBootstrap = fs.readFileSync(path.join(root, "frontend/src/shared/workspace-bootstrap.ts"), "utf8");
 const readyMarker = "app.whenReady().then";
 const readyIndex = desktopMainSource.indexOf(readyMarker);
 
@@ -22,7 +22,7 @@ assert.match(desktopPreloadSource, /onNotification\(callback\)/, "preload must e
 assert.match(desktopPreloadSource, /onNotificationAction\(callback\)/, "preload must expose notification actions without Node access");
 assert.match(desktopPreloadSource, /setWindowTitle\(title\)[\s\S]*?terma:set-window-title/, "preload must expose the current resource title to the desktop window");
 assert.match(desktopMainSource, /terma:set-window-title[\s\S]*?window !== mainWindow[\s\S]*?normalizeMainWindowTitle\(value\)[\s\S]*?window\.setTitle\(title\)/, "desktop window titles must stay scoped to the main renderer and normalize structural duplicates");
-assert.match(appSource, /if \(!window\.termaDesktop\) pollNotifications\(\)/, "desktop renderer must not duplicate the main-process notification poll");
+assert.match(workspaceBootstrap, /pollNotifications:\s*window\.termaDesktop\s*\?\s*undefined\s*:\s*\(\)\s*=>\s*pollNotifications\(\)/, "desktop startup must omit renderer notification polling from its TS background port");
 assert.match(desktopMainSource, /termaDisplaySession:\s*localLinuxDisplaySession/, "Linux second launches must report their graphical session with the Terma field");
 assert.match(desktopMainSource, /additionalData\?\.termaDisplaySession\s*\|\|\s*additionalData\?\.tunneldeskDisplaySession/, "Linux second launches must still accept the legacy TunnelDesk field");
 assert.match(desktopMainSource, /stdio:\s*\["ignore",\s*"ignore",\s*"ignore",\s*"ipc"\]/, "display clients must keep an IPC focus channel");
@@ -163,7 +163,9 @@ function createHarness({
       this.handlers = new Map();
       this.webContentsOnceHandlers = new Map();
       this.webContents = {
+        id: 1,
         session: {
+          on() {},
           cookies: {
             set: details => {
               state.desktopCookies.push(details);
@@ -390,6 +392,7 @@ function createHarness({
         }
       };
       if (id === "./storage-migration") return require(path.join(root, "desktop", "storage-migration.js"));
+      if (id === "./download-names") return require(path.join(root, "desktop", "download-names.js"));
       throw new Error(`unexpected require in desktop startup check: ${id}`);
     }
   });
@@ -397,6 +400,11 @@ function createHarness({
   vm.runInContext(testableSource, context, { filename: desktopMainPath });
   if (!context.__desktopStartupTestApi.displayClientMode) context.__desktopStartupTestApi.initializeDesktopSettingsFile();
   return { api: context.__desktopStartupTestApi, state };
+}
+
+if (require.main !== module) {
+  module.exports = { createHarness };
+  return;
 }
 
 function check(name, callback) {
