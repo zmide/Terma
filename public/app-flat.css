@@ -60,6 +60,14 @@ html.flat-ui .sftp-task-center .sftp-task-center-button[aria-expanded="true"] {
   border-radius:4px 4px 0 0;
 }
 
+/* The quick toolbar gives the expanded button an ID-based active surface.
+   Keep the trigger, connector and drawer on one flat surface when joined. */
+html.flat-ui .topbar #sftpTaskCenterButton[aria-expanded="true"] {
+  background:var(--task-center-join-surface);
+  border-color:var(--task-center-join-line);
+  border-bottom-color:transparent;
+}
+
 html.flat-ui .sftp-task-center .sftp-task-center-button.is-failed[aria-expanded="true"] { color:var(--danger); }
 
 html.flat-ui .sftp-task-center:has(.sftp-task-center-button[aria-expanded="true"])::after {
