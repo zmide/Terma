@@ -200,7 +200,8 @@ assert.match(byteSafeQueryCommand, /LC_ALL=C grep -a -F -i -- "\$TERMA_QUERY"/, 
 const byteSafeMetadataCommand = __buildRemotePagedDirectoryEntriesCommand({query:"艺", sort:"size"});
 assert.match(byteSafeMetadataCommand, /LC_ALL=C awk -F "\$TERMA_TAB"/, "元数据排序搜索必须在字节安全的区域设置下匹配文件名");
 assert.match(sftpFrontendSource, /jumpPage:\s*\(value: unknown\) => directory\.jump\(key, value\)/, "SFTP 页码跳转由目录导航按标签处理");
-assert.match(sftpFrontendSource, /class:\s*'sftp-page-jump'/, "SFTP 分页器必须渲染页码跳转控件");
+assert.doesNotMatch(sftpFrontendSource, /class:\s*'sftp-page-jump'/, "SFTP 连续滚动列表不再显示页码跳转控件");
+assert.match(sftpFrontendSource, /run\('scrollPage', window\.missingPage\)/, "SFTP 只为可视范围补取缺失的数据页");
 assert.match(sftpFrontendSource, /event\.ctrlKey.*event\.deltaY/s, "图片预览必须支持 Ctrl 加滚轮缩放");
 assert.match(sftpFrontendSource, /event\.key\.toLowerCase\(\) === "f"/, "SVG 预览必须支持 Ctrl+F 搜索");
 assert.match(sftpFrontendSource, /sanitizeSftpSvgDocument/, "SVG 预览必须在渲染前清理不安全内容");

@@ -7,6 +7,27 @@ const capabilities = Object.freeze(ipcRenderer.sendSync("terma:capabilities") ||
 
 contextBridge.exposeInMainWorld("termaDesktop", {
   capabilities,
+  localTerminalProfiles() {
+    return ipcRenderer.invoke("terma:local-terminal-profiles");
+  },
+  startLocalTerminal(options) {
+    return ipcRenderer.invoke("terma:local-terminal-start", options);
+  },
+  writeLocalTerminal(id, data) {
+    return ipcRenderer.invoke("terma:local-terminal-write", {id, data});
+  },
+  resizeLocalTerminal(id, cols, rows) {
+    return ipcRenderer.invoke("terma:local-terminal-resize", {id, cols, rows});
+  },
+  closeLocalTerminal(id) {
+    return ipcRenderer.invoke("terma:local-terminal-close", {id});
+  },
+  onLocalTerminal(callback) {
+    if (typeof callback !== "function") return () => {};
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("terma:local-terminal-event", handler);
+    return () => ipcRenderer.removeListener("terma:local-terminal-event", handler);
+  },
   setTheme(theme) {
     if (theme === "dark" || theme === "light") ipcRenderer.send("terma:set-theme", theme);
   },

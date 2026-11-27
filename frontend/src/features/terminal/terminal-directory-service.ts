@@ -1,10 +1,15 @@
 export interface TerminalDirectorySession {
+  id?: number;
   key?: string;
   connected?: boolean;
   socket?: unknown;
   connectionAttempt?: number;
   mount?: HTMLElement | null;
-  term?: {parser?: {registerOscHandler(code: number, callback: (value: string) => boolean): {dispose(): void}}};
+  term?: {
+    parser?: {registerOscHandler(code: number, callback: (value: string) => boolean): {dispose(): void}};
+    onWriteParsed?(callback: () => void): {dispose(): void};
+    buffer?: {active?: {type?: string; baseY: number; cursorY: number; getLine(row: number): {translateToString(trim?: boolean): string} | undefined}};
+  };
   currentDirectory?: string;
   currentDirectoryKnown?: boolean;
   currentDirectorySource?: string;
@@ -14,6 +19,7 @@ export interface TerminalDirectorySession {
   directoryInitializationTimer?: ReturnType<typeof setTimeout> | null;
   directoryInitializationPending?: Promise<string> | null;
   directoryOscDisposable?: {dispose(): void} | null;
+  directoryPromptDisposable?: {dispose(): void} | null;
 }
 
 export interface TerminalDirectoryConnection {id?: number}
@@ -64,7 +70,23 @@ export function terminalDirectoryFromOsc7(value: string) {
   return text ? normalizeTerminalDirectoryPath(text) : '';
 }
 
+/** Only an actual, empty shell prompt is evidence; typed cd text is never accepted. */
+export function terminalDirectoryFromPrompt(value: string) {
+  const text = value.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').trimEnd();
+  const path = text.match(/^[\w.+-]+@[\w.-]+:(~(?:\/[^#\r\n]*)?|\/[^#\r\n]*)[#$%]$/)?.[1]
+    || text.match(/^[\w.+-]+@[\w.-]+\s+(~(?:\/[^\r\n]*)?|\/[^\r\n]*)\s[#$%]$/)?.[1]
+    || text.match(/^\[[\w.+-]+@[\w.-]+\s+(~(?:\/[^#\r\n]*)?|\/[^#\r\n]*)\][#$%]$/)?.[1]
+    || text.match(/^PS\s+([A-Za-z]:\\[^>\r\n]*)>$/i)?.[1];
+  return path && !/[\x00-\x1f\x7f…]/.test(path) ? path : '';
+}
+
 export function createTerminalDirectoryService(port: TerminalDirectoryPort) {
+  const listeners = new Set<() => void>();
+  const confirmedPaths = new WeakMap<TerminalDirectorySession, {path: string; socket: unknown; attempt: number | undefined}>();
+  const confirmed = (session: TerminalDirectorySession) => {
+    const value = confirmedPaths.get(session);
+    return value && value.socket === session.socket && value.attempt === session.connectionAttempt ? value.path : '';
+  };
   const label = (session: TerminalDirectorySession) => session.currentDirectoryKnown
     ? String(session.currentDirectory || '.') : port.text('terminal:drop.current_directory');
 
@@ -83,8 +105,10 @@ export function createTerminalDirectoryService(port: TerminalDirectoryPort) {
     session.currentDirectory = normalized;
     session.currentDirectoryKnown = true;
     session.currentDirectorySource = source;
+    if (source === 'osc7' || source === 'prompt') confirmedPaths.set(session, {path: normalized, socket: session.socket, attempt: session.connectionAttempt});
     port.remember(session, normalized);
     refreshOverlay(session);
+    listeners.forEach(listener => listener());
     return true;
   }
 
@@ -101,7 +125,7 @@ export function createTerminalDirectoryService(port: TerminalDirectoryPort) {
         || session.socket !== socket || session.connectionAttempt !== attempt) return '';
       const resolved = String(result?.path || path);
       if (!options.preserveCurrent) set(session, resolved, source);
-      if (!session.homeDirectory && !options.preserveCurrent) session.homeDirectory = resolved;
+      if (!session.homeDirectory && path === '.' && !options.preserveCurrent) session.homeDirectory = resolved;
       return resolved;
     } catch { return ''; } // Unknown directory blocks upload; it never falls back to an unrelated target.
   }
@@ -141,7 +165,7 @@ export function createTerminalDirectoryService(port: TerminalDirectoryPort) {
     session.directoryInitializationTimer = setTimeout(() => {
       session.directoryInitializationTimer = null;
       if (!port.current(session) || session.socket !== socket
-        || Number(session.connectionAttempt || 0) !== attempt || !session.connected) return;
+        || Number(session.connectionAttempt || 0) !== attempt || !session.connected || session.currentDirectoryKnown) return;
       void initialize(session, connection, key);
     }, Math.max(0, Number(delay) || 0));
   }
@@ -171,7 +195,35 @@ export function createTerminalDirectoryService(port: TerminalDirectoryPort) {
 
   function register(session: TerminalDirectorySession) {
     session.directoryOscDisposable?.dispose();
+    session.directoryPromptDisposable?.dispose();
     session.directoryOscDisposable = null;
+    session.directoryPromptDisposable = null;
+    let lastPrompt = '', promptSerial = 0;
+    session.directoryPromptDisposable = session.term?.onWriteParsed?.(() => {
+      if (!session.connected || !session.id || !port.current(session)) return;
+      const buffer = session.term?.buffer?.active;
+      if (!buffer || buffer.type === 'alternate') return;
+      const value = terminalDirectoryFromPrompt(buffer.getLine(buffer.baseY + buffer.cursorY)?.translateToString(true) || '');
+      if (!value) {lastPrompt = ''; promptSerial++; return;}
+      cancel(session);
+      const stamp = `${session.connectionAttempt}:${value}`;
+      if (lastPrompt === stamp || confirmed(session) && session.currentDirectorySource === 'osc7') return;
+      lastPrompt = stamp;
+      const serial = ++promptSerial;
+      const socket = session.socket, attempt = session.connectionAttempt;
+      void (async () => {
+        if ((value === '~' || value.startsWith('~/')) && !session.homeDirectory) {
+          const home = await probe(session, {id: session.id}, '.', 'home', {preserveCurrent: true});
+          if (serial !== promptSerial) return;
+          if (home) session.homeDirectory = home;
+        }
+        if (serial !== promptSerial || socket !== session.socket || attempt !== session.connectionAttempt || !port.current(session)) return;
+        const path = value === '~' || value.startsWith('~/')
+          ? session.homeDirectory && joinTerminalDirectoryPath(session.homeDirectory, value.slice(2) || '.')
+          : value;
+        if (path) await probe(session, {id: session.id}, path, 'prompt');
+      })();
+    }) || null;
     try {
       session.directoryOscDisposable = session.term?.parser?.registerOscHandler(7, value => {
         const directory = terminalDirectoryFromOsc7(value);
@@ -181,5 +233,6 @@ export function createTerminalDirectoryService(port: TerminalDirectoryPort) {
     } catch { session.directoryOscDisposable = null; } // Terminals without OSC parsing retain command/probe tracking.
   }
 
-  return {label, refreshOverlay, set, probe, initialize, schedule, cancel, parse, track, register};
+  return {label, refreshOverlay, set, probe, initialize, schedule, cancel, parse, track, register, confirmed,
+    subscribe(listener: () => void) {listeners.add(listener); return () => {listeners.delete(listener);};}};
 }

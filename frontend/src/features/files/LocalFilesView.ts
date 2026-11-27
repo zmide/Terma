@@ -6,13 +6,15 @@ import type { LocalEntry, LocalFileService, LocalFileState } from './local-file-
 import { bindFileColumns } from './file-columns';
 import { bindFileScroll } from './file-scroll';
 import '@/styles/local-files.css';
+import '@/styles/file-list-window.css';
 
 interface Options {
   key: string; service: LocalFileService; state: LocalFileState; mobile: boolean; fnos: boolean;
   text(key: string, values?: Record<string, unknown>): string;
   bytes(size: number): string; time(value: number): string; displayName(entry: LocalEntry): string;
 }
-interface View { host: HTMLElement; options: Options; cleanup: () => void; editing: boolean; pathDraft: string; lastPath: string }
+interface View { host: HTMLElement; options: Options; cleanup: () => void; editing: boolean; pathDraft: string; lastPath: string; listIdentity?: string;
+  frame: number; pendingPage: number; blockedPage: number }
 const views = new Map<string, View>();
 function paint(view: View) {
   const o = view.options, s = o.state, key = o.key, web = !!s.fileSource, browser = s.fileSource === 'browser';
@@ -21,7 +23,13 @@ function paint(view: View) {
   const roots = wt(browser ? 'selected_root' : o.fnos ? 'authorized_roots' : 'device_roots');
   const choosing = browser && !s.browserDirectory?.name, writable = !browser || !!s.browserDirectory?.writable;
   const canWrite = writable && s.location !== 'computer' && !!s.path;
-  const history = o.service.history(s), entries = o.service.visible(s), selected = o.service.selected(key);
+  const history = o.service.history(s), window = o.service.window(key), entries = o.service.listed(key), selected = o.service.selected(key);
+  const identity = `${s.fileSource || 'native'}\0${s.path}\0${s.query}\0${s.sort}\0${s.dir}`;
+  const list = view.host.querySelector<HTMLElement>('.local-files-list');
+  const scroll = view.listIdentity === identity ? list?.scrollTop ?? s.scrollTop : 0;
+  if (view.listIdentity !== identity) {s.scrollTop = 0; view.blockedPage = 0; view.listIdentity = identity;}
+  const rowHeight = list ? Number.parseFloat(getComputedStyle(list).getPropertyValue('--file-row-height')) || 36 : 36;
+  const range = window.range(scroll, list?.clientHeight || 400, rowHeight);
   const attrs = (action: string, data: Record<string, unknown> = {}, event = 'action') => ({ [`data-${event}`]: `${web ? 'web-files' : 'local-files'}-${action}`, 'data-tab-key': key, ...data });
   const button = (action: string, icon: string, label: string, data: Record<string, unknown> = {}, text = false) => h(TermaButton, {
     type: 'button', class: text ? '' : 'icon-button', title: label, 'aria-label': label, ...attrs(action), ...data
@@ -87,12 +95,13 @@ function paint(view: View) {
   const head = h('div', { class: 'local-files-head' }, [h('label', null, h('input', {
     type: 'checkbox', checked: entries.some(item => item.type !== 'drive') && entries.filter(item => item.type !== 'drive').every(item => s.selected.has(item.path)),
     indeterminate: entries.some(item => s.selected.has(item.path)) && !entries.filter(item => item.type !== 'drive').every(item => s.selected.has(item.path)),
-    disabled: !entries.some(item => item.type !== 'drive'), 'aria-label': t('sftp:auto.select_page'), ...attrs('select-all', {}, 'change-action')
+    disabled: !entries.some(item => item.type !== 'drive'), 'aria-label': t('sftp:auto.select_loaded'), ...attrs('select-all', {}, 'change-action')
   })), ...['name', 'size', 'mtime'].map((column, index) => h('div', { class: `local-files-head-cell local-files-column-${column}`, 'data-local-files-column': column }, [
     button('sort', '', `${t(`sftp:auto.${column === 'mtime' ? 'modified' : column}`)}${s.sort === column ? s.dir === 'desc' ? ' ↓' : ' ↑' : ''}`, { 'data-sort': column }, true),
     index < 2 ? h('i', { class: 'local-files-column-resize', 'data-local-files-column-resize': column, role: 'separator', 'aria-orientation': 'vertical', 'aria-label': t('sftp:auto.resize_columns', { column: t(`sftp:auto.${column}`) }), tabindex: 0 }) : null
   ]))]);
-  const rows = entries.map(entry => {
+  const rows = range.items.map(({index, value: entry}) => {
+    if (!entry) return h('div', {key: `pending-${index}`, class: 'file-list-pending', 'aria-hidden': true});
     const drive = entry.type === 'drive', dir = entry.type !== 'file', name = web && entry.root_kind === 'workspace' ? wt('workspace_folder') : o.displayName(entry);
     const size = drive && entry.size ? t('common:local_files.available_space', { free: o.bytes(entry.free || 0), total: o.bytes(entry.size) }) : dir ? '--' : o.bytes(entry.size);
     const meta = drive ? entry.display_path || size : [dir ? t('sftp:auto.directory') : size, entry.mtime ? o.time(entry.mtime) : ''].filter(Boolean).join(' · ');
@@ -110,15 +119,12 @@ function paint(view: View) {
   const listState = (kind: string, label: string, detail = '') => h('div', { class: `ui-state ${kind}`, role: kind === 'error' ? 'alert' : 'status' }, [h('span', { class: 'ui-state-icon' }), h('strong', null, label), h('span', null, detail),
     kind === 'error' ? native('refresh', 'refresh-cw', 'common:actions.retry', {}, true) : null,
     s.loginRequired ? h('a', { href: '/login' }, wt('sign_in')) : null]);
-  const first = s.total ? (s.page - 1) * s.pageSize + 1 : 0;
-  const pager = h('div', { class: 'sftp-pager-dock' }, h('div', { class: 'pager sftp-pager' }, [
-    native('page', 'chevron-left', 'sftp:auto.previous_page', { 'data-page': s.page - 1, disabled: s.page <= 1 }, true),
-    h('span', { class: 'pager-count' }, [h('span', { class: 'sftp-scroll-cue', 'aria-hidden': 'true' }, settingsIcon('chevron-down')),
-      t('sftp:auto.page_summary', { page: s.page, pages: s.totalPages, first, last: s.total ? Math.min(first + entries.length - 1, s.total) : 0, total: s.total }),
-      h('select', { value: s.pageSize, 'aria-label': t('sftp:auto.page_size'), ...attrs(web ? 'page-limit' : 'page-limit', {}, 'change-action') }, [25, 50, 100, 200].map(count => h('option', { value: count }, t('sftp:auto.item_count', { count }))))]),
-    native('page', 'chevron-right', 'sftp:auto.next_page', { 'data-page': s.page + 1, disabled: s.page >= s.totalPages }, true)
-  ]));
-  const list = view.host.querySelector<HTMLElement>('.local-files-list'), scroll = view.lastPath === s.path ? list?.scrollTop ?? s.scrollTop : s.scrollTop;
+  const status = h('div', {class: 'file-list-status', role: 'status'}, [
+    s.error && s.loaded ? h('span', {class: 'file-list-error', role: 'alert', title: s.error}, s.error) : null,
+    h('span', null, t('sftp:auto.continuous_count', {first: s.total ? range.first + 1 : 0, last: range.last, total: s.total})),
+    view.blockedPage ? h(TermaButton, {class: 'icon-button', title: t('common:actions.retry'), 'aria-label': t('common:actions.retry'),
+      onClick: () => {view.blockedPage = 0; schedule(view);}}, () => settingsIcon('refresh-cw')) : null
+  ]);
   view.lastPath = s.path;
   render(h('div', { class: ['local-files-shell terma-vue-root terma-local-files-root', web ? 'web-files-shell' : ''], 'data-theme': document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
     'data-source': s.fileSource, 'data-i18n-skip': '', 'data-local-files-tab-key': key,
@@ -127,19 +133,42 @@ function paint(view: View) {
     web ? h('div', { class: 'web-files-header' }, [h('div', { class: 'web-files-origin' }, [h('span', { class: 'web-files-source-icon' }, settingsIcon(browser ? 'laptop' : 'server')), h('div', null, [h('div', { class: 'web-files-source-line' }, [h('strong', null, source), h('span', { class: 'web-files-mode', 'data-writable': writable }, wt(choosing ? 'not_selected' : writable ? 'read_write' : 'read_only'))]), h('span', { class: 'muted web-files-hint' }, wt(!browser ? o.fnos ? 'server_hint' : 'server_standard_hint' : choosing ? 'choose_hint' : writable ? 'browser_hint' : 'readonly_hint'))])]), h('div', { class: 'local-files-toolbar' }, h('div', { class: 'local-files-toolbar-actions' }, toolbar))]) : h('div', { class: 'local-files-toolbar' }, h('div', { class: 'local-files-toolbar-actions' }, toolbar)),
     !web ? h('div', { class: 'local-files-search-wrap' }, search()) : null, nav,
     h('div', { class: ['local-files-selection', web ? 'web-files-selection' : ''], hidden: selected.length < (web ? 1 : 2) }, [h('strong', null, [web ? wt('selected', { count: selected.length }) : t('sftp:local_files.selected_prefix'), h('span', null, web ? '' : String(selected.length)), web ? '' : t('sftp:local_files.selected_suffix')]), h('div', { class: 'local-files-selection-actions' }, actions)])]),
-    h('div', { class: 'local-files-list', role: 'region', 'aria-label': web ? source : t('sftp:local_files.title'), 'aria-busy': String(s.loading), ...attrs('directory-menu', {}, 'contextmenu-action'), onScroll: (event: Event) => { s.scrollTop = (event.target as HTMLElement).scrollTop; } },
-      s.error ? listState('error', s.error) : s.loading && !s.loaded ? listState('loading', t('sftp:local_files.loading_directory'), s.displayPath) : [head, rows.length ? rows : listState('empty', empty, choosing ? wt('browser_hint') : ''), pager]),
+    h('div', { class: 'local-files-list', role: 'region', 'aria-label': web ? source : t('sftp:local_files.title'), 'aria-busy': String(s.loading), ...attrs('directory-menu', {}, 'contextmenu-action'), onScroll: (event: Event) => {
+      s.scrollTop = (event.target as HTMLElement).scrollTop; view.blockedPage = 0; schedule(view);
+    } },
+      s.error && !s.loaded ? listState('error', s.error) : s.loading && !s.loaded ? listState('loading', t('sftp:local_files.loading_directory'), s.displayPath) : [
+        head, h('div', {class: 'file-list-spacer', style: {height: `${range.top}px`}, 'aria-hidden': true}),
+        rows.length ? rows : listState('empty', empty, choosing ? wt('browser_hint') : ''),
+        h('div', {class: 'file-list-spacer', style: {height: `${range.bottom}px`}, 'aria-hidden': true}), status
+      ]),
     web ? h('div', { class: 'web-files-status', role: 'status' }, s.status) : h('div', { class: 'local-files-drop-overlay', hidden: true }, [settingsIcon('download'), h('strong', null, t('sftp:local_files.drop_save_current'))])
   ]), view.host);
   const next = view.host.querySelector<HTMLElement>('.local-files-list'); if (next) next.scrollTop = scroll;
+  if (range.missingPage && !s.loading && !view.pendingPage && view.blockedPage !== range.missingPage && next?.isConnected && next.getClientRects().length) {
+    view.pendingPage = range.missingPage;
+    queueMicrotask(() => {
+      if (!view.host.isConnected) {view.pendingPage = 0; return;}
+      void o.service.scrollPage(key, range.missingPage).then(success => {
+        if (!success) view.blockedPage = range.missingPage;
+      }).catch(() => {view.blockedPage = range.missingPage;}).finally(() => {view.pendingPage = 0; schedule(view);});
+    });
+  }
+}
+function schedule(view: View) {
+  if (view.frame || !view.host.isConnected) return;
+  view.frame = requestAnimationFrame(() => {view.frame = 0; if (view.host.isConnected) paint(view);});
 }
 export function installLocalFilesView() {
   filesServices.termaLocalFileViews = {
     mount(target, options) {
       for (const [key, existing] of views) if (target.contains(existing.host)) this.release(key);
       this.release(options.key); target.replaceChildren(); const host = document.createElement('div'); host.className = 'terma-local-files-mount'; target.append(host);
-      const view: View = { host, options, cleanup: () => {}, editing: false, pathDraft: options.state.path, lastPath: options.state.path }; views.set(options.key, view); paint(view);
-      const columns=bindFileColumns(host),scroll=bindFileScroll(host,()=>view.options.state);view.cleanup=()=>{columns();scroll();};return true;
+      const view: View = { host, options, cleanup: () => {}, editing: false, pathDraft: options.state.path, lastPath: options.state.path,
+        frame: 0, pendingPage: 0, blockedPage: 0 }; views.set(options.key, view); paint(view);
+      const observer = new ResizeObserver(() => schedule(view)), list = host.querySelector('.local-files-list');
+      if (list) observer.observe(list);
+      const columns=bindFileColumns(host),scroll=bindFileScroll(host,()=>view.options.state);
+      view.cleanup=()=>{columns();scroll();observer.disconnect();if(view.frame)cancelAnimationFrame(view.frame);};return true;
     },
     update(key, options) { const view = views.get(key); if (!view || !view.host.isConnected) return false; view.options = options; paint(view); return true; },
     pathEditor(key, editing) { const view = views.get(key); if (!view) return; view.editing = editing; if (editing) view.pathDraft = view.options.state.path; paint(view); if (editing) { const input = view.host.querySelector<HTMLInputElement>('.local-files-path-editor input'); input?.focus(); input?.select(); } },

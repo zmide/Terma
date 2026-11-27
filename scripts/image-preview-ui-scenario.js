@@ -10,6 +10,13 @@ async function runImagePreviewUiScenario(browser) {
   const shot=async name=>{await execute(frames);browser.webContents.invalidate();fs.writeFileSync(path.join(directory,name+'.png'),(await browser.webContents.capturePage()).toPNG());screenshots.push(name+'.png');};
   await execute(`window.__previewErrors=[];window.__previewErrorListener=event=>window.__previewErrors.push(event.message);window.addEventListener('error',window.__previewErrorListener);window.__previewSource='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 320"><rect width="640" height="320" fill="#1473e6"/><text x="32" y="72" fill="white" font-size="32">Preview fixture</text></svg>';`);
   try {
+    await execute(`const service=window.termaSftpPreviewRuntime.svgExport;
+      const source=new Blob(['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 100"><script>window.__unsafeSvgExecuted=true</script><rect width="240" height="100" fill="white"/><text x="10" y="40" onclick="window.__unsafeSvgExecuted=true">安全导出 PDF</text><foreignObject><div xmlns="http://www.w3.org/1999/xhtml">untrusted HTML</div></foreignObject></svg>'],{type:'image/svg+xml'});
+      const sanitized=await (await service.createSftpSvgDownloadBlob(source)).text();
+      if(/<script|foreignObject|onclick=/i.test(sanitized))throw Error('SVG export retained executable content');
+      const pdf=await service.createSftpSvgPdfBlob(source);
+      if(!pdf.size||!(await pdf.slice(0,5).text()).startsWith('%PDF-'))throw Error('SVG PDF export did not produce a PDF');
+      if(window.__unsafeSvgExecuted)throw Error('SVG export executed remote markup');`);
     for(const width of [1200,392])for(const language of ['zh-CN','en-US'])for(const theme of ['light','dark']) {
       browser.setSize(width,850);const prefix=width+'-'+language+'-'+theme;
       await execute(`closeModal();await setTermaLanguage(${JSON.stringify(language)});applyTheme(${JSON.stringify(theme)});await window.termaSftpPreviewRuntime.image(0,'preview.svg',{content:window.__previewSource});`);

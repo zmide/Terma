@@ -224,6 +224,8 @@ async function main() {
     assert.equal(unauthenticatedAboutPage.status, 302);
     assert.equal(unauthenticatedAboutPage.headers.get("location"), "/login");
     assert.equal((await fetch(`${url}/api/about`)).status, 401);
+      assert.equal((await fetch(`${url}/api/connections/1/host-performance`)).status, 401,
+        "read-only SSH sampling still requires Web authentication");
     for (let index = 0; index < 4; index += 1) {
       const response = await fetch(`${url}/api/auth/login`, {
         method: "POST",

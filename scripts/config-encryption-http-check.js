@@ -120,6 +120,8 @@ async function main() {
     assert.equal(lockedSettings.encryption_version, 2);
     assert.equal(lockedSettings.encryption_upgrade_required, true);
     assert.equal(lockedSettings.encryption_ready, false);
+    const performanceLocked = await fetch(`${url}/api/connections/1/host-performance`, {headers:{Cookie:cookie}});
+    assert.equal(performanceLocked.status, 423, "performance must not decrypt SSH credentials while locked");
     const beforeUnlock = new DatabaseSync(path.join(process.env.TERMA_DATA_DIR, "tunnels.db"), {readOnly:true});
     assert.equal(beforeUnlock.prepare("SELECT ssh_password FROM connections WHERE name=?").get("encrypted-http").ssh_password, v2Ciphertext, "server startup must not automatically reuse the v2 key");
     beforeUnlock.close();

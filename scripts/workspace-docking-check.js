@@ -106,6 +106,7 @@ function loadDockingModel() {
     Date,
     Math,
     JSON,
+    CustomEvent,
     setTimeout:() => 1,
     clearTimeout:noop,
     CSS:{escape:value => String(value)},
@@ -118,7 +119,7 @@ function loadDockingModel() {
     runtimeSettings:{saved:{restore_workspace_tabs:true}},
     terminalSessions:new Map(),
     sftpDisconnectedTabs:new Set(),
-    window:{restoringTabs:false, addEventListener:noop, removeEventListener:noop, termaSftpPage:{toolbar:noop}, termaWorkspaceViews:{tabs:(target, models) => {
+    window:{restoringTabs:false, addEventListener:noop, removeEventListener:noop, dispatchEvent:noop, termaSftpPage:{toolbar:noop}, termaWorkspaceViews:{tabs:(target, models) => {
       for (const model of models) {
         const button = target?.buttons?.find(item => item.dataset.tabKey === model.key);
         if (!button) continue;

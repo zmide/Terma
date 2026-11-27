@@ -6,6 +6,7 @@ import net from "node:net";
 const { DATA_DIR, RUNTIME_SETTINGS_FILE } = require("../config");
 const security = require("../security");
 const { normalizeListenHosts, readRuntimeSettings, writeRuntimeSettings } = require("../runtime-settings");
+const { validateFnosRelayOrigins } = require("./request-origin-policy");
 const rollbackFile = path.join(DATA_DIR, "fnos-config-rollback.json");
 
 function fields(value: unknown): string[] {
@@ -35,6 +36,9 @@ export function validateFnosConfiguration(input: Record<string, unknown>) {
   const allowedHosts = String(input.allowed_hosts ?? "").trim()
     ? security.validateAllowedHosts(input.allowed_hosts)
     : resetNetwork ? [] : existing.allowed_hosts;
+  const relayChoice = String(input.relay_origins ?? "").trim();
+  const relayOrigins = relayChoice === "-" ? [] : relayChoice ? validateFnosRelayOrigins(relayChoice)
+    : resetNetwork ? [] : existing.fnos_relay_origins;
   const trustedProxies: string[] = String(input.trusted_proxies ?? "").trim()
     ? [...new Set(fields(input.trusted_proxies))]
     : resetNetwork ? [] : existing.trusted_proxy_addresses;
@@ -44,7 +48,7 @@ export function validateFnosConfiguration(input: Record<string, unknown>) {
   return {
     password,
     runtime:{...current, listen_hosts:listenHosts, listen_port:8088},
-    security:{allowed_hosts:allowedHosts, trusted_proxy_addresses:trustedProxies, trusted_proxy_enabled:trustedProxies.length > 0,
+    security:{allowed_hosts:allowedHosts, fnos_relay_origins:relayOrigins, trusted_proxy_addresses:trustedProxies, trusted_proxy_enabled:trustedProxies.length > 0,
       origin_protocol_check_enabled:checkProtocol,
       auth_mode:"always", lan_auth_enabled:true, allow_disable_lan_auth:false,
       local_direct_desktop_integration_enabled:false, manage_user_ssh_keys_enabled:false}

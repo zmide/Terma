@@ -20,6 +20,7 @@ const featureChunks: Record<string, string> = {
   'data-exchange': 'operations',
   assistant: 'productivity',
   efficiency: 'productivity',
+  'terminal-panel': 'productivity',
   'session-efficiency': 'productivity',
   snippets: 'productivity'
 };

@@ -87,7 +87,7 @@ export function createWorkspaceToolbarPlacement(port: PlacementPort, doc: Docume
   function workspaceToolbarRecord(toolbar: HTMLElement | null): ToolbarOwner & {toolbar: HTMLElement} | null {
     if (!toolbar) return null;
     // Telnet/serial own their inline toolbar; SSH/SFTP placement must not adopt it.
-    if (toolbar.closest<HTMLElement>("#view-remote-terminal")) return null;
+    if (toolbar.closest<HTMLElement>("#view-remote-terminal, .sftp-embedded")) return null;
     const kind = toolbar.dataset.workspaceToolbarKind
       || (toolbar.classList.contains("terminal-toolbar") ? "terminal" : toolbar.classList.contains("sftp-toolbar") ? "sftp" : "");
     if (kind !== "terminal" && kind !== "sftp") return null;

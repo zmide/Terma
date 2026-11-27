@@ -1,6 +1,6 @@
 # 平台与兼容性
 
-![Terma Linux 桌面管理](/screenshots/desktop-linux-management.png)
+![Terma Linux 桌面管理](/screenshots/desktop-linux-management.png?v=20261127)
 
 ## 桌面端
 

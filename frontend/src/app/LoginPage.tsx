@@ -59,7 +59,14 @@ export const LoginPage = defineComponent({
       if (error.publicCode === 'auth_login_temporarily_locked') return tr('temporarilyLocked', { seconds });
       if (error.publicCode === 'auth_login_not_configured') return tr('notConfigured');
       if (error.publicCode === 'auth_login_invalid') return tr('invalid');
+      const params = error.details.error_params || {};
+      if (error.publicCode === 'host_not_allowed' && typeof params.host === 'string') return tr('hostNotAllowed', params);
       if (error.publicCode === 'request_origin_protocol_mismatch') return tr('protocolMismatch');
+      if (error.publicCode === 'request_origin_forbidden') {
+        if (params.reason === 'hostname_mismatch') return tr('originHostMismatch', params);
+        if (params.reason === 'port_mismatch') return tr('originPortMismatch', params);
+        if (params.reason === 'invalid_origin') return tr('originInvalid');
+      }
       if (error.publicCode === 'request_origin_forbidden' || error.message === 'Forbidden') return tr('originForbidden');
       return tr('failed');
     };

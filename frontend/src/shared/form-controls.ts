@@ -63,10 +63,16 @@ export function createFormControls(port: FormControlsPort) {
         let control = input.closest<HTMLElement>('.password-input-control');
         if (control?.querySelector('.password-visibility-toggle[data-terma-button]')) continue;
         if (!control) {
+          const focused = port.document.activeElement === input;
+          const selection = [input.selectionStart, input.selectionEnd, input.selectionDirection] as const;
           control = port.document.createElement('div');
           control.className = 'password-input-control';
           input.before(control);
           control.appendChild(input);
+          if (focused) {
+            input.focus({preventScroll:true});
+            if (selection[0] !== null && selection[1] !== null) input.setSelectionRange(selection[0], selection[1], selection[2] || undefined);
+          }
         }
         const host = port.document.createElement('span');
         host.className = 'terma-vue-root password-visibility-mount';

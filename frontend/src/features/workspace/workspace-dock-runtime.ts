@@ -70,6 +70,7 @@ export function syncFocusedWorkspaceClasses() {
   content?.classList.toggle("terminal-content", terminalLike);
   content?.classList.toggle("sftp-content", viewName === "sftp");
   document.body.classList.toggle("mobile-terminal-active", isMobileLayout() && terminalLike);
+  window.dispatchEvent(new CustomEvent('terma:workspace-target-changed'));
 }
 
 export function workspaceReplacePaneWithSplit(targetPaneId: string, splitNode: WorkspaceSplitNode, node = workspaceDockState.workspaceLayout) {

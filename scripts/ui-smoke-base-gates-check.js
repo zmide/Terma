@@ -72,7 +72,8 @@ async function run(scenario, failedScenario, baseOnly = true, group = "") {
   equal(complete.exitCode, 0);
   equal(complete.stopped, true);
   equal(complete.runs.map(item => item.name), smokeScenarios());
-  equal(new Set(complete.runs.map(item => item.name)).size, 39);
+  equal(new Set(complete.runs.map(item => item.name)).size, 41);
+  equal(complete.runs.filter(item => item.name === "terminal-panel").length, 1);
   for (const [group, expected] of Object.entries(groups)) {
     const result = await run("", undefined, false, group);
     equal(result.runs.map(item => item.name), expected);

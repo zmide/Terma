@@ -183,6 +183,7 @@ import { abortSftpUpload } from '@/features/files/sftp/sftp-upload-service';
 import { installSftpTaskService } from '@/features/files/sftp/sftp-task-service';
 import { createSftpDirectoryWorkspace } from '@/features/files/sftp/directory-workspace';
 import { createSftpTabRuntime, type SftpTabRuntime } from '@/features/files/sftp/tab-runtime';
+import {embeddedSftpViews, sftpWorkspaceTabs, sftpWorkspaceTab} from '@/features/files/sftp/embedded-views';
 import type { SftpScrollState } from '@/features/files/sftp/directory-state';
 import type { WorkspaceRequestOptions } from '@/shared/api/workspace-request';
 import { createSftpTransferLifecycle } from '@/features/files/sftp/transfer-lifecycle';
@@ -516,10 +517,10 @@ filesServices.termaSftpTransferLifecycle = sftpTransfers;
 const sftpTabs = createSftpTabRuntime({
   runtimes: sftpTabRuntimes,
   counts: sftpTabCounts,
-  tabs: () => applicationState.tabs,
+  tabs: sftpWorkspaceTabs,
   pageSize: () => Number(localStorage.getItem('sftpPageSize')),
   connectionName: id => applicationState.connections.find(connection => Number(connection.id) === id)?.name || '',
-  root: key => workspaceElementForTab(key, '#view-sftp'),
+  root: key => embeddedSftpViews.get(key)?.root || workspaceElementForTab(key, '#view-sftp'),
   releaseView: key => filesServices.termaSftpViews?.release(key),
   releaseState(key) {
     sftpDirectory.navigation.release(key);
@@ -543,18 +544,18 @@ const sftpViewState = createSftpViewState({
 filesServices.termaSftpTabs = { runtime: sftpTabs, view: sftpViewState };
 const sftpView = createSftpViewWorkspace({ tabs: sftpTabs, runtimes: sftpTabRuntimes, viewState: sftpViewState, text: fileText, bytes: formatBytes, clipboard: () => sftpFileActions.clipboard.value });
 const sftpFileTransfers = createSftpTransferWorkspace({
-  tabs: () => applicationState.tabs, runtimes: sftpTabRuntimes, view: sftpView, api: (url, options) => api(url, options),
+  tabs: sftpWorkspaceTabs, runtimes: sftpTabRuntimes, view: sftpView, api: (url, options) => api(url, options),
   text: fileText, notify: fileNotice, jobs: () => taskState.jobs, pendingDownloads: taskState.pendingDownloads, requests: taskState.uploads
 });
 filesServices.termaSftpTransfers = sftpFileTransfers;
 const sftpFileActions = createSftpFileOperationsWorkspace({
-  tabs: () => applicationState.tabs, runtimes: sftpTabRuntimes, view: sftpView, api: (url, options) => api(url, options), tr: fileText, notify: fileNotice
+  tabs: sftpWorkspaceTabs, runtimes: sftpTabRuntimes, view: sftpView, api: (url, options) => api(url, options), tr: fileText, notify: fileNotice
 });
 filesServices.termaSftpFileActions = sftpFileActions;
 const sftpWorkflow = createSftpWorkflow({
   api: (url, options) => api(url, options), name: id => currentConnection(id)?.name,
   target(id, key) {
-    const runtime = sftpTabRuntimes.get(key), tab = workspaceTabByKey(key);
+    const runtime = sftpTabRuntimes.get(key), tab = sftpWorkspaceTab(key);
     return sftpFileTransfers.target(key, id, String(runtime?.state.path || tab?.path || '.'));
   },
   tr: fileText, notify: fileNotice, bytes: formatBytes
@@ -566,8 +567,8 @@ const sftpDirectory = createSftpDirectoryWorkspace({
   cache: {
     state: key => (sftpTabRuntimes.get(key) || sftpTabs.restore(key))?.state ?? null,
     capture: key => sftpView.capture(key),
-    connection: key => Number(sftpTabRuntimes.get(key)?.connectionId || workspaceTabByKey(key)?.id || 0),
-    siblings: (key, id) => workspaceAllTabs().some(tab => tab.key !== key && tab.kind === 'sftp' && Number(tab.id) === id),
+    connection: key => Number(sftpTabRuntimes.get(key)?.connectionId || sftpWorkspaceTab(key)?.id || 0),
+    siblings: (key, id) => sftpWorkspaceTabs().some(tab => tab.key !== key && tab.kind === 'sftp' && Number(tab.id) === id),
     readSize: (id, path) => api(`/api/connections/${id}/sftp/directory-size`, {method:'POST', body:JSON.stringify({path})}),
     changed: id => sftpView.refreshSizes(id),
     tr: fileText,
@@ -578,7 +579,7 @@ const sftpDirectory = createSftpDirectoryWorkspace({
   http: { read: (url, signal) => api(url, {signal}) },
   loader: {
     active: () => applicationState.activeTabKey,
-    tab: key => applicationState.tabs.find((tab): tab is WorkspaceTab & {id:number} => tab.key === key && typeof tab.id === 'number') ?? null,
+    tab: key => sftpWorkspaceTabs().find((tab): tab is WorkspaceTab & {id:number} => tab.key === key && typeof tab.id === 'number') ?? null,
     runtime: key => sftpTabRuntimes.get(key) ?? null,
     ensure: sftpTabs.ensure,
     capture: key => sftpView.capture(key),
@@ -602,7 +603,7 @@ const sftpDirectory = createSftpDirectoryWorkspace({
     restore: sftpTabs.restore,
     runtime: key => sftpTabRuntimes.get(key) ?? null,
     tab: key => {
-      const tab = applicationState.tabs.find(item => item.key === key && item.kind === 'sftp');
+      const tab = sftpWorkspaceTabs().find(item => item.key === key && item.kind === 'sftp');
       return tab && typeof tab.id === 'number' ? {id:tab.id, kind:tab.kind} : null;
     },
     pageSize: value => localStorage.setItem('sftpPageSize', String(value)),
@@ -624,14 +625,16 @@ installFileNavigation({
   error: error => fileNotice(errorMessage(error, String(error)), 'error')
 });
 const sftpTab = (key: string) => {
-  const tab = workspaceTabByKey(key);
+  const tab = sftpWorkspaceTab(key);
   return tab?.kind === 'sftp' && typeof tab.id === 'number' ? tab as WorkspaceTab & {id:number} : null;
 };
-const sftpTabKeys = (id: number) => workspaceAllTabs().filter(tab => tab.kind === 'sftp' && Number(tab.id) === id).map(tab => tab.key);
+const sftpTabKeys = (id: number) => sftpWorkspaceTabs().filter(tab => tab.kind === 'sftp' && Number(tab.id) === id).map(tab => tab.key);
 function paintSftpConnection(id: number, status = 'disconnected', error = '') {
   const state = status === 'connected' || status === 'connecting' ? status : 'disconnected';
   for (const key of sftpTabKeys(id)) {
-    setWorkspaceTabConnectionStatus(key, state);
+    const embedded = embeddedSftpViews.get(key);
+    if (embedded) embedded.tab.connectionStatus = state;
+    else setWorkspaceTabConnectionStatus(key, state);
     const runtime = sftpTabRuntimes.get(key);
     if (runtime) {
       runtime.vueStatus = state;
@@ -758,7 +761,7 @@ installTaskActions({
 });
 registerStaticActions(events, openNewConnectionForm, { runtime: taskWorkspace.runtime, view: () => taskState.view });
 const fileTransfers = createFileWorkspaceTransfers(filePages, {
-  tab: key => workspaceTabByKey(key) ?? undefined,
+  tab: key => sftpWorkspaceTab(key) ?? undefined,
   drag: () => sftpDragWorkspace.drag,
   track: job => sftpTransfers.completion.track(job),
   directoryError: error => fileNotice(errorMessage(error, fileText('sftp:auto.directory_sync_failed')), 'error'),
@@ -767,7 +770,7 @@ const fileTransfers = createFileWorkspaceTransfers(filePages, {
     target(target) {
       if (target.kind && target.kind !== 'sftp' && target.kind !== 'terminal') return null;
       const key = target.key || '', id = Number(target.id);
-      const tab = workspaceTabByKey(key), runtime = sftpTabRuntimes.get(key);
+      const tab = sftpWorkspaceTab(key), runtime = sftpTabRuntimes.get(key);
       const directory = runtime?.state.path || target.path || '.';
       return {id, directory, valid: () => !key || (!tab || applicationState.tabs.includes(tab) && Number(tab.id) === id)
         && (!runtime || sftpTabRuntimes.get(key) === runtime && runtime.state.path === directory)};

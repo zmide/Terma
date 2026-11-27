@@ -73,6 +73,8 @@ const purposeKeys: Record<string, AboutTranslation> = {
   builtin_vnc: 'purposeBuiltinVnc',
   zmodem_transfer: 'purposeZmodemTransfer',
   ssh_sftp_transport: 'purposeSshSftpTransport',
+  ftp_transport: 'purposeFtpTransport',
+  html_sanitization: 'purposeHtmlSanitization',
   x11_protocol_client: 'purposeX11ProtocolClient',
   interface_i18n: 'purposeInterfaceI18n',
   interface_icons: 'purposeInterfaceIcons',

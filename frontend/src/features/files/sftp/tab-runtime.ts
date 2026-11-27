@@ -16,7 +16,7 @@ export interface SftpTabRuntime {
   vueStatus?: string;
   vueError?: string;
 }
-interface SftpTab { key: string; kind?: string; id?: number; path?: string; title?: string }
+interface SftpTab { key: string; kind?: string; id?: number; path?: string; title?: string; embedded?: unknown }
 interface RuntimePort {
   runtimes: Map<string, SftpTabRuntime>;
   counts: Map<number, number>;
@@ -60,7 +60,7 @@ export function createSftpTabRuntime(port: RuntimePort) {
   function displayIndex(key: string, id = 0) {
     id = Number(id || port.tabs().find(tab => tab.key === key)?.id || 0);
     if (!id) return 1;
-    const siblings = port.tabs().filter(tab => tab.kind === 'sftp' && Number(tab.id) === id);
+    const siblings = port.tabs().filter(tab => tab.kind === 'sftp' && !tab.embedded && Number(tab.id) === id);
     const found = siblings.findIndex(tab => tab.key === key);
     return found >= 0 ? found + 1 : siblings.length + 1;
   }
@@ -68,7 +68,7 @@ export function createSftpTabRuntime(port: RuntimePort) {
     const groups = new Map<number, SftpTab[]>();
     for (const tab of port.tabs()) {
       const id = Number(tab.id || 0);
-      if (tab.kind !== 'sftp' || (requested && id !== requested)) continue;
+      if (tab.kind !== 'sftp' || tab.embedded || (requested && id !== requested)) continue;
       const siblings = groups.get(id) || [];
       siblings.push(tab); groups.set(id, siblings);
     }

@@ -21,6 +21,9 @@ Terma is a remote connection workspace for desktop and self-hosted Web environme
     <td colspan="2"><strong>SFTP file management</strong><br><img src=".github/assets/screenshots/en-US/desktop-sftp.png" alt="Terma SFTP file management"></td>
   </tr>
   <tr>
+    <td colspan="2"><strong>Multifunction panel</strong><br><img src=".github/assets/screenshots/en-US/desktop-terminal-panel.png" alt="Terma multifunction panel with a local desktop terminal"></td>
+  </tr>
+  <tr>
     <td colspan="2"><strong>Browser file sources</strong><br><img src=".github/assets/screenshots/en-US/browser-files.png" alt="Terma browser file source selection and authorized device directory"></td>
   </tr>
   <tr>
@@ -61,7 +64,8 @@ Terma is a remote connection workspace for desktop and self-hosted Web environme
 - Drag local files or folders into the terminal's current directory, or drag remote SFTP items to a terminal or another SFTP tab. Name conflicts offer overwrite, automatic `(1)`, `(2)` renaming, or cancel.
 - Switch between UTF-8, GB18030/GBK, Big5, Shift_JIS, EUC-KR, and ISO-8859-1.
 - Save font family, size, line height, and weight per connection; hold `Ctrl` while using the mouse wheel to adjust the font size.
-- Includes recent commands, shortcut keys, a quick-command bar, context actions, terminal logs, and interaction-latency display. The quick-command bar can collapse to a compact single row with independent scrolling and supports short text buttons, optional Chinese badges, immediate execution, or insertion only.
+- Includes recent commands, shortcut keys, context actions, terminal logs, and interaction-latency display. Quick commands support short text buttons, optional Chinese badges, immediate execution, or insertion only.
+- The multifunction panel provides flat, persistent tabs for quick commands, Terminal, SFTP and Linux/macOS performance, with controls on the same tab row. Drag tools between the bottom panel and right sidebar, reorder or split them, and save layouts without restarting sessions. Panel SFTP shares the main file manager, follows confirmed terminal directories and uses continuous scrolling with bounded rendering, as do main SFTP and local files. Terminal starts PowerShell on Windows or the system shell on Linux/macOS when shown, detects installed shell profiles, and supports multiple sessions, an instance list, splits and optional Windows administrator startup.
 - Select multiple terminals as a synchronized group so input in any member is broadcast to the entire group. Multi-line input, dangerous commands, and hidden-input prompts trigger additional confirmation or automatic suspension.
 - Tabs can indicate new output, command completion, and disconnection. Long background tasks can send notifications, with muting per connection or tab.
 - Open the selected terminal path or current directory in SFTP. `Ctrl+Shift+T` restores the most recently closed terminal or SFTP tab.

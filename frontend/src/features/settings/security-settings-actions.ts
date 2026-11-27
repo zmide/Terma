@@ -77,6 +77,7 @@ async function savePolicy(view: HTMLElement, tr: Translate) {
     origin_protocol_check_enabled:field('securityOriginProtocolCheck')?.checked !== false,
     trusted_proxy_enabled:checked('securityTrustedProxyEnabled'),trusted_proxy_addresses:words('securityTrustedProxyAddresses'),
     local_direct_desktop_integration_enabled:checked('securityLocalDirectDesktopIntegration'),allowed_hosts:words('securityAllowedHosts'),
+    ...(field('securityFnosRelayOrigins') ? {fnos_relay_origins:words('securityFnosRelayOrigins')} : {}),
     login_max_failures:integer('securityLoginMaxFailures'),login_window_seconds:integer('securityLoginWindowSeconds'),login_lock_seconds:integer('securityLoginLockSeconds'),
     global_login_protection_enabled:checked('securityGlobalLoginProtectionEnabled'),global_login_max_failures:integer('securityGlobalLoginMaxFailures'),
     global_login_window_seconds:integer('securityGlobalLoginWindowSeconds'),global_login_lock_seconds:integer('securityGlobalLoginLockSeconds')};

@@ -7,6 +7,8 @@ const { createDesktopBrowserAuthorizationPromptGate } = require("./browser-autho
 const { createNativeSftpDrag } = require("./native-sftp-drag");
 const { createRemoteClientAdapter } = require("./remote-clients");
 const { createXServerRuntime } = require("./xserver-runtime");
+const {createLocalTerminals} = require("./local-terminal");
+let localTerminals = null;
 const {
   runtimeRoot:desktopStorageRuntimeRoot,
   createDesktopStorageTransition,
@@ -111,6 +113,7 @@ let mainWindow = null;
 const auxiliaryDesktopWindows = new Set();
 const detachedVncWindows = new Map();
 let startupWindow = null;
+let startupWindowReady = Promise.resolve();
 const desktopBrowserAuthorizationPromptGate = createDesktopBrowserAuthorizationPromptGate();
 let tray = null;
 let webUrl = "";
@@ -860,19 +863,43 @@ function createStartupWindow(settings = readSettings()) {
     center:true,
     title:PRODUCT_NAME,
     icon:iconPath(),
-    backgroundColor:"#f4f6f8",
-    webPreferences:{contextIsolation:true, nodeIntegration:false}
+    backgroundColor:nativeTheme.shouldUseDarkColors ? "#17202a" : "#f4f6f8",
+    webPreferences:{contextIsolation:true, nodeIntegration:false, backgroundThrottling:false}
   });
   const html = `<!doctype html><meta charset="utf-8"><title>${PRODUCT_NAME}</title><style>html,body{width:100%;height:100%;margin:0}body{box-sizing:border-box;display:grid;grid-template-columns:48px minmax(0,1fr);align-items:center;gap:16px;padding:28px 30px;color:#18212b;background:#f4f6f8;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}.mark{width:44px;height:44px;display:grid;place-items:center;border-radius:8px;color:#fff;background:#111827;font-size:20px;font-weight:700}.copy{min-width:0;display:grid;gap:7px}.copy strong,.copy span{min-width:0;overflow-wrap:anywhere}.copy strong{font-size:18px;line-height:1.2;letter-spacing:0}.copy span{color:#5f6b78;font-size:12px;line-height:1.35;letter-spacing:0}.line{height:3px;overflow:hidden;border-radius:2px;background:#d8dee6}.line i{display:block;width:42%;height:100%;background:#16825f;animation:load 1.1s ease-in-out infinite}@keyframes load{from{transform:translateX(-110%)}to{transform:translateX(250%)}}@media(prefers-color-scheme:dark){body{color:#eef2f6;background:#17202a}.mark{background:#0b1016}.copy span{color:#a6b0bb}.line{background:#34404c}}</style><div class="mark">T</div><div class="copy"><strong>${startupTitle}</strong><span>${startupMessage}</span><div class="line"><i></i></div></div>`;
-  let revealed = false;
-  const reveal = () => {
-    if (revealed || startupWindow !== window || window.isDestroyed?.()) return;
-    revealed = true;
-    window.show();
-  };
-  window.once("ready-to-show", reveal);
-  window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-  window.once("closed", () => { if (startupWindow === window) startupWindow = null; });
+  startupWindowReady = new Promise(resolve => {
+    // Do not let a failed splash renderer prevent the actual application from starting.
+    let finished = false;
+    const timeout = setTimeout(() => { closeStartupWindow(); finish(); }, 3000);
+    const finish = () => { finished = true; clearTimeout(timeout); resolve(); };
+    const failed = error => {
+      if (finished) return;
+      console.warn(`Startup window could not load: ${error.message}`);
+      closeStartupWindow();
+      finish();
+    };
+    window.webContents.once("render-process-gone", () => { closeStartupWindow(); finish(); });
+    window.once("closed", () => {
+      if (startupWindow === window) startupWindow = null;
+      finish();
+    });
+    try {
+      Promise.resolve(window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)).then(async () => {
+        if (finished || window.isDestroyed()) return;
+        // ready-to-show can precede the document's completed frame. Verify the
+        // static content while hidden, then let the compositor present it before
+        // synchronous backend imports can block the main process again.
+        await window.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        await window.webContents.capturePage();
+        if (finished || startupWindow !== window || window.isDestroyed()) return;
+        window.show();
+        await window.webContents.capturePage();
+        finish();
+      }).catch(failed);
+    } catch (error) {
+      failed(error);
+    }
+  });
   return window;
 }
 
@@ -906,8 +933,8 @@ function createWindow(options = {}) {
       mainWindow.webContents.executeJavaScript('openSettingsSection("settings-runtime")').catch(() => {});
     });
   }
+  mainWindow.once("show", closeStartupWindow);
   mainWindow.once("ready-to-show", () => {
-    closeStartupWindow();
     if (options.displayClient) {
       pendingWindowReveal = false;
       startupRevealScheduled = false;
@@ -925,7 +952,6 @@ function createWindow(options = {}) {
     else bringMainWindowToFront();
   });
   mainWindow.webContents.once?.("did-finish-load", () => {
-    closeStartupWindow();
     if (options.displayClient) {
       if (startupRevealScheduled) return;
       startupRevealScheduled = true;
@@ -2891,6 +2917,9 @@ async function writeDesktopClipboardImageAsync(value) {
 }
 
 function registerDesktopClipboardHandlers() {
+  localTerminals ||= createLocalTerminals({ipcMain, allowed:event =>
+    !displayClientMode && desktopWindowForSender(event) === mainWindow && rendererBelongsToDesktop(event)
+    && event.senderFrame === event.sender.mainFrame});
   ipcMain.on("terma:set-window-title", (event, value) => {
     const window = desktopWindowForSender(event);
     if (!window || window !== mainWindow || window.isDestroyed()) return;
@@ -3033,12 +3062,16 @@ app.whenReady().then(async () => {
     return;
   }
   configureWindowsAppIdentity();
-  removeLegacyElectronShortcut();
   initializeDesktopSettingsFile();
-  const firstRun = ensureDesktopSettingsFile();
-  const startupDesktopSettings = prepareRuntimeSettings();
-  createStartupWindow(startupDesktopSettings);
+  createStartupWindow(readSettings());
+  let firstRun = false;
   try {
+    // Backend imports and storage migration are synchronous. Let the startup
+    // window paint before either can block the main process on a cold launch.
+    await startupWindowReady;
+    removeLegacyElectronShortcut();
+    firstRun = ensureDesktopSettingsFile();
+    const startupDesktopSettings = prepareRuntimeSettings();
     loadBackend(startupDesktopSettings);
     if (startupDesktopSettings.xServerAutoStart) {
       try { await xServerRuntime.start(); } catch (error) { console.warn(`X Server auto-start skipped: ${error.message}`); }
@@ -3172,6 +3205,7 @@ app.on("activate", showWindow);
 
 app.on("before-quit", () => {
   quitting = true;
+  localTerminals?.dispose();
   stopDesktopNotificationBridge();
   if (!displayClientMode) {
     for (const child of displayClientProcesses.values()) {

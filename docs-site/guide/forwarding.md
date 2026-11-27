@@ -1,6 +1,6 @@
 # 转发与批量运维
 
-![Terma 转发列表](/screenshots/desktop-forwarding.png)
+![Terma 转发列表](/screenshots/desktop-forwarding.png?v=20261127)
 
 ## SSH 转发
 

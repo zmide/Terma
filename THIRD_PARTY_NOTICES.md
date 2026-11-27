@@ -54,6 +54,15 @@ The original MIT license texts for Vue, i18next, Tile UI and the Kumo theme are 
 - Use: SSH and SFTP transport
 - Copyright: Copyright Brian White. All rights reserved.
 
+## basic-ftp
+
+- Project: https://github.com/patrickjuchli/basic-ftp
+- Version: 6.2.6
+- License: MIT License
+- Use: FTP and FTPS transport
+- Copyright: Copyright (c) 2019 Patrick Juchli
+- Full license text: bundled in `frontend/dist/THIRD_PARTY_NOTICES.txt` and `node_modules/basic-ftp/LICENSE.txt`
+
 ## node-x11 (npm package: x11)
 
 - Project: https://github.com/sidorares/node-x11
@@ -125,6 +134,15 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 - Version: 4.2.1
 - License: MIT License
 - Use: browser-side PDF generation for SVG export
+
+## DOMPurify
+
+- Project: https://github.com/cure53/DOMPurify
+- Version: 3.5.0
+- License: Mozilla Public License 2.0 OR Apache License 2.0
+- Use: sanitization of HTML content used by browser-side PDF export
+- Copyright: Copyright (c) 2015 Mario Heiderich
+- Full license text: bundled in `frontend/dist/THIRD_PARTY_NOTICES.txt` and `node_modules/dompurify/LICENSE`
 
 ## svg2pdf.js
 

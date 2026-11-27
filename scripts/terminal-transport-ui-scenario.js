@@ -120,8 +120,8 @@ async function runTerminalTransportUiScenario(browser) {
     await execute(`
       const f=window.__transport;f.composer.value='cached draft';f.composer.setSelectionRange(1,5);
       f.surface=f.session.term.element.closest('.terminal-tab-surface');f.parent=f.surface.parentNode;
-      f.quickBar=f.surface.querySelector('[data-terminal-quick-command-bar]');
-      f.quickResizer=f.quickBar.querySelector('[data-terminal-quick-command-resizer]');
+      f.quickBar=document.querySelector('#terminalPanel');
+      f.quickResizer=document.querySelector('[data-panel-resize]');
       f.surface.remove();
       await setTermaLanguage('${language}',{persist:false});`);
     await settle();
@@ -132,19 +132,23 @@ async function runTerminalTransportUiScenario(browser) {
     true, 'cached surface retains and translates the same composer');
     equal(await execute(`
       const f=window.__transport,bar=f.quickBar;
-      return !bar.isConnected&&bar.dataset.mounted==='1'&&bar.getAttribute('aria-label')===tr('terminal:quick_commands.bar')
-        &&bar.querySelector('[data-terminal-quick-command-resizer]')===f.quickResizer
-        &&f.quickResizer?.getAttribute('aria-label')===tr('terminal:quick_commands.resize');`),
-    true, 'cached surface retains and translates the same quick command controls');
+      return bar.isConnected&&bar===document.querySelector('#terminalPanel')
+        &&bar.getAttribute('aria-label')===tr('terminal:panel.title')
+        &&document.querySelector('[data-panel-resize]')===f.quickResizer
+        &&f.quickResizer?.getAttribute('aria-label')===tr('terminal:panel.resize');`),
+    true, 'caching a terminal retains and translates the shared panel independently');
     await execute(`const f=window.__transport;f.parent.append(f.surface);f.composer.value='';`);
     await settle();
     if (language==='en-US') equal((await inspect()).han, [], 'cached surface English scans hidden terminal UI and attributes');
     const wasVisible = await execute(`return window.termaEfficiency.quick.visible()`);
     if (!wasVisible) await execute(`window.termaEfficiency.quick.toggle()`);
     await settle();
-    equal(await execute(`return window.__transport.quickResizer.checkVisibility()`), true, 'quick command controls are visible when the cached terminal returns');
+    equal(await execute(`return window.__transport.quickResizer.checkVisibility()`), true, 'shared panel controls are visible when the cached terminal returns');
     await capture(prefix+'-quick-command-restored');
     if (!wasVisible) await execute(`window.termaEfficiency.quick.toggle()`);
+    await execute(`for(let attempt=0;attempt<50&&window.termaTerminalViewport.getSnapshot().timers;attempt++)
+      await new Promise(resolve=>setTimeout(resolve,20));`);
+    await settle();
   };
   const reviewStartup = async prefix => {
     const toolbar = '.terminal-toolbar[data-workspace-tab-key="transport-terminal"]';
@@ -362,7 +366,7 @@ async function runTerminalTransportUiScenario(browser) {
         const f=window.__transport;return {same:f.before.node===f.session.term.element.querySelector('textarea'),
           value:f.draft.value,start:f.draft.selectionStart,end:f.draft.selectionEnd,focus:document.activeElement===f.draft,
           scroll:f.session.term.buffer.active.viewportY,before:f.before.scroll};`);
-      equal(retained.same&&retained.value==='review draft'&&retained.start===2&&retained.end===7&&retained.focus&&retained.scroll===retained.before,true,'live language retains terminal draft focus selection and scroll');
+      equal(retained.same&&retained.value==='review draft'&&retained.start===2&&retained.end===7&&retained.focus&&retained.scroll===retained.before,true,'live language retains terminal draft focus selection and scroll '+JSON.stringify(retained));
       if(language==='zh-CN')equal((await inspect()).han,[],'live English scans hidden terminal UI and attributes');
       await capture(prefix+'-language');
       await execute(`await setTermaLanguage('${language}',{persist:false});window.__transport.session.term.scrollToBottom();`);
@@ -400,13 +404,16 @@ async function runTerminalTransportUiScenario(browser) {
     await capture('390-dark-en-US-preflight-close-confirmation');
     await pointer('#workspaceCloseTabsConfirm');
     await execute(`const f=window.__transport;f.resolveClosePreflight({});await f.pendingClose;f.socket.message('late after tab close');`);
+    await settle();
     equal(await execute('return !window.termaTerminalState.terminalSessions.has("transport-terminal")'),true,'normal tab close releases the transport');
     equal(await execute('return window.__transport.sockets.length===window.__transport.beforeCloseSockets'),true,
       'real tab close prevents a late preflight from opening a socket');
     equal(await execute(`return !window.__transport.surface.querySelector('#terminalMobileInput,.terminal-keys button')`),
       true, 'normal tab close releases composer and shortcut views');
-    equal(await execute(`const bar=window.__transport.quickBar;return !bar.dataset.mounted&&!bar.firstElementChild`),
-      true, 'normal tab close releases the quick command controls');
+    equal(await execute(`const bar=window.__transport.quickBar;return {shared:bar.isConnected,
+      released:!bar.querySelector('option[value="session:transport-terminal"]'),
+      independent:!window.__transport.surface.querySelector('[data-terminal-quick-command-bar]')}`),
+      {shared:true,released:true,independent:true}, 'normal tab close retains the shared panel and releases the closed session target');
     return {groups:groups.length,checks,screenshots:screenshots.length};
   } catch(error) {
     await capture('failure');throw error;

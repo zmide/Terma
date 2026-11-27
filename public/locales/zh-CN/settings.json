@@ -325,6 +325,8 @@
     "local_desktop_integration_hint": "默认关闭。启用后，只在 Terma 实际仅监听本机回环地址、当前浏览器直连本机且已通过当前 Web 访问策略时，自动开放 X Server 和系统远程客户端。",
     "allowed_hosts": "允许的 Host / 反代域名",
     "allowed_hosts_hint": "直接访问本机、当前机器名或监听 IP 无需填写；使用自定义反代域名时，请填写浏览器实际使用的精确 Host，不支持通配符。",
+    "fnos_relay_origins": "允许的中继域名或 IP",
+    "fnos_relay_origins_hint": "填写你信任的中继域名或 IP，不用填写协议和端口；自动允许该主机变化的 HTTPS 端口，不允许 HTTP 或子域名通配。多个用逗号分隔，目标域名也必须在上方允许。旧完整 HTTPS 地址仍精确匹配原端口。留空保存可撤销授权，登录仍然必需。此处显示当前生效值。",
     "login_rate_limit": "登录限速",
     "source_failures": "单来源失败次数",
     "source_window": "单来源统计窗口（秒）",

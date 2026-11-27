@@ -4491,9 +4491,10 @@ details.advanced-settings > :not(summary) { margin-left:12px; margin-right:12px;
   border-bottom:1px solid var(--line);
   background:var(--panel);
 }
-.modal-card:not(.terminal-settings-modal,.terminal-startup-modal,.terminal-paste-modal,.terminal-session-text-modal,.sftp-editor-modal,.sftp-image-modal,.xserver-manager) > .actions:last-child {
+.modal-card:not(.terminal-settings-modal,.terminal-startup-modal,.terminal-paste-modal,.terminal-session-text-modal,.sftp-editor-modal,.sftp-image-modal,.xserver-manager) > .actions:not(:has(~ :not(.dialog-window-resize))) {
   position:sticky;
   bottom:calc(-1 * var(--modal-card-padding));
+  flex:0 0 auto;
   z-index:4;
   margin-right:calc(-1 * var(--modal-card-padding));
   margin-bottom:calc(-1 * var(--modal-card-padding));
@@ -4534,9 +4535,15 @@ details.advanced-settings > :not(summary) { margin-left:12px; margin-right:12px;
 .vnc-connection-help-panel > .actions,
 .vnc-connection-help-panel > .remote-service-actions { justify-content:flex-start; align-items:stretch; }
 @media (max-width:760px), (hover:none) and (pointer:coarse) {
+  .modal {
+    inset:var(--visible-viewport-top,0px) 0 auto;
+    height:var(--visible-viewport-height,100dvh);
+    box-sizing:border-box;
+    padding:max(6px,env(safe-area-inset-top)) 6px max(6px,env(safe-area-inset-bottom));
+  }
   .modal-card {
     --modal-card-padding:16px;
-    max-height:calc(100dvh - max(12px,env(safe-area-inset-top)) - max(12px,env(safe-area-inset-bottom)));
+    max-height:calc(var(--visible-viewport-height,100dvh) - max(6px,env(safe-area-inset-top)) - max(6px,env(safe-area-inset-bottom))) !important;
     scrollbar-gutter:auto;
   }
   .remote-diagnostic-status { grid-template-columns:30px minmax(0,1fr); align-items:center; }

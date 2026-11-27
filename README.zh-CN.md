@@ -21,6 +21,9 @@ Terma 是一个面向桌面端和自托管 Web 的远程连接工作台，用于
     <td colspan="2"><strong>SFTP 文件管理</strong><br><img src=".github/assets/screenshots/zh-CN/desktop-sftp.png" alt="Terma SFTP 文件管理"></td>
   </tr>
   <tr>
+    <td colspan="2"><strong>多功能面板</strong><br><img src=".github/assets/screenshots/zh-CN/desktop-terminal-panel.png" alt="Terma 多功能面板与本机桌面终端"></td>
+  </tr>
+  <tr>
     <td colspan="2"><strong>浏览器文件来源</strong><br><img src=".github/assets/screenshots/zh-CN/browser-files.png" alt="Terma 浏览器文件来源选择与设备授权目录"></td>
   </tr>
   <tr>
@@ -61,7 +64,8 @@ Terma 是一个面向桌面端和自托管 Web 的远程连接工作台，用于
 - 可将本机文件或文件夹直接拖入终端当前目录，也可把 SFTP 远端项目拖到终端或另一个 SFTP 标签；遇到同名项目可选择覆盖、按 `(1)`、`(2)` 自动改名或取消。
 - UTF-8、GB18030/GBK、Big5、Shift_JIS、EUC-KR、ISO-8859-1 编码切换。
 - 字体、字号、行距和字重可按连接保存，支持按住 `Ctrl` 使用鼠标滚轮调整字号。
-- 最近命令、快捷键栏、终端快速命令栏、右键操作、终端日志和交互延迟显示；快速命令栏可收为紧凑单行、独立滚动，默认使用无图标短按钮，也可选中文徽标并单击执行或仅插入终端。
+- 提供最近命令、快捷键栏、右键操作、终端日志和交互延迟显示。快速命令支持短文字按钮、可选中文徽标、单击执行或仅插入终端。
+- 多功能面板默认提供快捷命令、终端、SFTP 和 Linux／macOS 性能的扁平常驻标签，控件合并到同一标签栏。工具可在底部和右侧栏间拖动、排序、分屏和保存布局，会话持续保留。面板 SFTP 复用主文件管理器并跟随终端确认的目录；它与主 SFTP、本地文件均采用连续滚动和有界渲染。终端显示时，Windows 默认启动 PowerShell，Linux／macOS 使用系统 Shell；按本机已安装的 Shell 提供新建入口，支持多会话、实例列表、拆分及可选的 Windows 管理员启动。
 - 可选择多个终端组成同步组，在其中任意终端输入都会同步到整组；多行、危险命令和隐藏输入会额外确认或自动暂停。
 - 标签可提示新输出、命令完成和连接断开；长任务在后台结束后可发送通知，并支持按连接或标签静音。
 - 可将终端选中路径或当前目录直接在 SFTP 中打开，`Ctrl+Shift+T` 可恢复最近关闭的终端或 SFTP 标签。

@@ -15,6 +15,7 @@ const { assertAllowedIdentityPath } = require("./identity-path");
 const { localX11Authorization } = require("./x11");
 const { buildRemotePosixCommand } = require("./remote-posix");
 const { remoteProbeValue } = require("./remote-probe-protocol");
+const { detectMacShellIntegration } = require("./terminal-shell-integration");
 
 const keyCompatibilityCache = new Map();
 const jumpConnectionPool = new Map();
@@ -358,11 +359,13 @@ function spawnPasswordCommand(connection, command, options: any = {}) {
 }
 
 function runPasswordCommand(connection, command, input = null, timeoutMs = 60000, onChunk = null, options: any = {}) {
+  const {createSshCommandLimits} = require("./infrastructure/ssh-command-limits");
   return new Promise((resolve) => {
     const child: any = spawnPasswordCommand(connection, command, options);
     const stdout: any[] = [];
     const stderr: any[] = [];
     let settled = false;
+    let limits = null;
     const timer = setTimeout(() => {
       finish(null, new Error("SSH 命令执行超时"));
       try { child.kill("SIGKILL"); } catch {}
@@ -371,6 +374,7 @@ function runPasswordCommand(connection, command, input = null, timeoutMs = 60000
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      limits?.dispose();
       const encoding = connection?.terminal_encoding || "utf8";
       resolve({
         status,
@@ -379,8 +383,12 @@ function runPasswordCommand(connection, command, input = null, timeoutMs = 60000
         error
       });
     };
-    child.stdout.on("data", (chunk) => { stdout.push(chunk); onChunk?.(chunk, "stdout"); });
-    child.stderr.on("data", (chunk) => { stderr.push(chunk); onChunk?.(chunk, "stderr"); });
+    limits = createSshCommandLimits(options, error => {
+      finish(null, error);
+      try {child.kill("SIGKILL");} catch {}
+    });
+    child.stdout.on("data", (chunk) => { if(limits.accept(chunk)){stdout.push(chunk); onChunk?.(chunk, "stdout");} });
+    child.stderr.on("data", (chunk) => { if(limits.accept(chunk)){stderr.push(chunk); onChunk?.(chunk, "stderr");} });
     child.on("error", (error) => finish(null, error));
     child.once("close", (code) => finish(code));
     if (input) child.stdin.end(input);
@@ -446,6 +454,9 @@ function shouldFallbackFromX11(diagnostics) {
 
 async function openPasswordShell(connection, options: any = {}) {
   const client: any = await connectSsh(connection);
+  const requestedStartup = buildRemoteStartupCommand(connection);
+  const shellStartup = requestedStartup || (connection.terminal_startup_mode !== "program"
+    ? await detectMacShellIntegration(client) : "");
   return new Promise((resolve, reject) => {
     const pty = {
       term: options.term || "xterm-256color",
@@ -463,7 +474,7 @@ async function openPasswordShell(connection, options: any = {}) {
       }
       resolve({ client, stream, x11Diagnostics });
     };
-    const startupCommand = buildTerminalSessionCommand(connection, buildRemoteStartupCommand(connection));
+    const startupCommand = buildTerminalSessionCommand(connection, shellStartup);
     const x11Mode = ["untrusted", "trusted"].includes(String(connection?.x11_mode || "off")) ? connection.x11_mode : "";
     let x11Options = null;
     if (x11Mode) {

@@ -1,6 +1,7 @@
 import { BrowserFileDirectory } from './browser-directory';
 import type {FileScrollPosition} from './file-scroll';
 import { deliveryPathKey } from './file-delivery-refresh';
+import {createFileListWindow} from './file-list-window';
 
 export interface LocalEntry {
   name: string; path: string; type: 'file' | 'dir' | 'drive'; size: number; mtime?: number;
@@ -14,14 +15,14 @@ export interface LocalFileState {
   scrollTop: number; scrollAtBottom: boolean; navigation: FileHistory;
   selected: Set<string>; fileSource?: 'browser' | 'server'; browserDirectory?: BrowserFileDirectory;
   platform?: string; loading: boolean; error: string; loginRequired: boolean; status: string;
-  webLoading?: boolean; webRequestedPath?: string; webHistory?: FileHistory;
+  webLoading?: boolean; webRequestedPath?: string; webHistory?: FileHistory; listRevision?: number;
 }
 export interface LocalListing {
   path?: string; display_path?: string; kind?: string; entries: LocalEntry[];
   parent?: string; parent_kind?: string; page?: number; page_size?: number;
   total?: number; total_pages?: number; platform?: string;
 }
-export interface LoadOptions { path?: string; location?: string; page?: number; refresh?: boolean; historyNavigation?: boolean; preserveScroll?: boolean;scrollPosition?:FileScrollPosition }
+export interface LoadOptions { path?: string; location?: string; page?: number; refresh?: boolean; historyNavigation?: boolean; preserveScroll?: boolean;scrollPosition?:FileScrollPosition;continuous?:boolean }
 export interface LocalFilePorts {
   list(source: 'native' | 'server', query: URLSearchParams, signal: AbortSignal): Promise<LocalListing>;
   changed(key: string, state: LocalFileState): void;
@@ -34,6 +35,8 @@ const integer = (value: unknown, fallback: number, max = Number.MAX_SAFE_INTEGER
 export class LocalFileService {
   private loads = new Map<string, AbortController>();
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private windows = new Map<string, ReturnType<typeof createFileListWindow<LocalEntry>>>();
+  private selections = new Map<string, Map<string, LocalEntry>>();
   constructor(readonly states: Map<string, LocalFileState>, private ports: LocalFilePorts) {}
   state(key: string): LocalFileState {
     let state = this.states.get(key);
@@ -65,13 +68,29 @@ export class LocalFileService {
     state.page = Math.max(1, Math.min(state.page, state.totalPages));
     return entries.slice((state.page - 1) * state.pageSize, state.page * state.pageSize);
   }
-  selected(key: string) { const state = this.state(key); return state.entries.filter(item => item.type !== 'drive' && state.selected.has(item.path)); }
+  window(key: string) {
+    const state = this.state(key), entries = this.visible(state);
+    let window = this.windows.get(key);
+    if (!window) {window = createFileListWindow<LocalEntry>(); this.windows.set(key, window);}
+    window.sync(`${state.fileSource || 'native'}\0${state.path}\0${state.query}\0${state.sort}\0${state.dir}\0${state.listRevision || 0}`,
+      state.page, state.pageSize, state.total, entries);
+    return window;
+  }
+  listed(key: string) {return this.window(key).loaded();}
+  selected(key: string) {
+    const state = this.state(key);
+    let records = this.selections.get(key);
+    if (!records) {records = new Map(); this.selections.set(key, records);}
+    for (const item of this.listed(key)) if (item.type !== 'drive' && state.selected.has(item.path)) records.set(item.path, item);
+    for (const path of records.keys()) if (!state.selected.has(path)) records.delete(path);
+    return [...records.values()];
+  }
   payload(key: string) {
-    const state = this.states.get(key), entries = state?.fileSource ? state.entries.filter(item => item.type !== 'drive' && state.selected?.has(item.path)) : [];
+    const state = this.states.get(key), entries = state?.fileSource ? this.selected(key) : [];
     return { sourceTabKey: key, paths: entries.map(item => item.path), entries };
   }
   openEntry(key:string,path:string,openFile:(key:string,path:string)=>unknown){
-    const state=this.states.get(key),entry=state?.fileSource?state.entries.find(item=>item.path===path):null;
+    const state=this.states.get(key),entry=state?.fileSource?this.listed(key).find(item=>item.path===path):null;
     if(!entry)return false;
     return entry.type==='file'?openFile(key,entry.path):this.load(key,{path:entry.path,location:'directory'});
   }
@@ -81,7 +100,7 @@ export class LocalFileService {
     const system=raw.match(/^文件系统\s*(\([^)]*\))$/);return system?this.ports.text('sftp:local_files.file_system',{root:system[1]}):raw;
   }
   select(key: string, path: string, event: { shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; forceSingle?: boolean; toggleOnly?: boolean } = {}, checked?: boolean) {
-    const state = this.state(key), entries = this.visible(state).filter(item => item.type !== 'drive');
+    const state = this.state(key), entries = this.listed(key).filter(item => item.type !== 'drive');
     if (!entries.some(item => item.path === path)) return;
     const anchor = entries.findIndex(item => item.path === state.anchorPath), index = entries.findIndex(item => item.path === path);
     if (event.shiftKey && anchor >= 0) {
@@ -91,12 +110,12 @@ export class LocalFileService {
       if (checked ?? !state.selected.has(path)) state.selected.add(path); else state.selected.delete(path);
       state.anchorPath = path;
     } else { state.selected.clear(); state.selected.add(path); state.anchorPath = path; }
-    state.activePath = state.selected.has(path) ? path : ''; this.ports.changed(key, state);
+    state.activePath = state.selected.has(path) ? path : ''; this.selected(key); this.ports.changed(key, state);
   }
   selectAll(key: string, checked: boolean) {
     const state = this.state(key);
-    for (const item of this.visible(state)) if (item.type !== 'drive') { if (checked) state.selected.add(item.path); else state.selected.delete(item.path); }
-    state.anchorPath = this.visible(state).find(item => item.type !== 'drive')?.path || ''; this.ports.changed(key, state);
+    for (const item of this.listed(key)) if (item.type !== 'drive') { if (checked) state.selected.add(item.path); else state.selected.delete(item.path); }
+    state.anchorPath = this.listed(key).find(item => item.type !== 'drive')?.path || ''; this.selected(key); this.ports.changed(key, state);
   }
   clear(key: string) { const state = this.state(key); state.selected.clear(); state.activePath = ''; this.ports.changed(key, state); }
   reload(key: string, options: LoadOptions = {}) {
@@ -137,8 +156,8 @@ export class LocalFileService {
         entries: data.entries, parent: data.parent || '', parentKind: data.parent_kind || 'none', location: data.kind === 'computer' ? 'computer' : 'directory', platform: data.platform,
         page: source ? (options.page || (same ? state.page : 1)) : Math.max(1, integer(data.page, 1)), pageSize: source ? state.pageSize : Math.max(25, integer(data.page_size, 50, 200)),
         total: integer(data.total, data.entries.length), totalPages: Math.max(1, integer(data.total_pages, 1)), loaded: true });
-      if (!same) { state.selected.clear(); state.activePath = ''; state.scrollTop = 0; }
-      else for (const path of state.selected) if (!state.entries.some(item => item.path === path)) state.selected.delete(path);
+      state.listRevision = (state.listRevision || 0) + (options.continuous ? 0 : 1);
+      if (!same) { state.selected.clear(); this.selections.delete(key); state.activePath = ''; state.scrollTop = 0; }
       if (!options.historyNavigation) this.remember(state);
       this.ports.committed(key, state);
     } catch (error) {
@@ -171,5 +190,12 @@ export class LocalFileService {
   pageSize(key:string,value:number,position?:FileScrollPosition){if(![25,50,100,200].includes(value))return;const state=this.state(key),first=(state.page-1)*state.pageSize;state.pageSize=value;if(state.fileSource){state.page=Math.floor(first/value)+1;this.ports.changed(key,state);if(position)this.ports.restore?.(key,position);return;}return this.load(key,{page:Math.floor(first/value)+1,preserveScroll:true,scrollPosition:position});}
   sort(key:string,column:string){if(!['name','size','mtime'].includes(column))return;const state=this.state(key);state.dir=state.sort===column&&state.dir==='asc'?'desc':'asc';state.sort=column;return state.fileSource?this.ports.changed(key,state):this.load(key,{page:1});}
   page(key:string,value:number){if(!Number.isInteger(value))return;const state=this.state(key),page=Math.max(1,Math.min(state.totalPages,value));if(state.fileSource){state.page=page;this.ports.changed(key,state);return;}return this.load(key,{page});}
-  dispose(key: string) { this.loads.get(key)?.abort(); this.loads.delete(key); clearTimeout(this.timers.get(key)); this.timers.delete(key); this.states.delete(key); }
+  async scrollPage(key: string, value: number) {
+    const state = this.states.get(key);
+    if (!state || !Number.isInteger(value) || value < 1 || value > state.totalPages || state.loading) return false;
+    if (state.fileSource) {state.page = value; this.ports.changed(key, state); return true;}
+    await this.load(key, {page: value, continuous: true});
+    return this.states.get(key) === state && state.page === value && !state.error;
+  }
+  dispose(key: string) { this.loads.get(key)?.abort(); this.loads.delete(key); clearTimeout(this.timers.get(key)); this.timers.delete(key); this.windows.delete(key); this.selections.delete(key); this.states.delete(key); }
 }

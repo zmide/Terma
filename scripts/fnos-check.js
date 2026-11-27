@@ -113,7 +113,9 @@ async function main() {
     {wizard_new_web_password:password, wizard_new_web_password_confirm:"different"},
     {wizard_listen_hosts:"192.0.2.200"}, {wizard_listen_hosts:"192.168.31.0/24"},
     {wizard_allowed_hosts:"https://terma.example.com/path"}, {wizard_allowed_hosts:"*.example.com"},
-    {wizard_trusted_proxies:"0.0.0.0"}, {wizard_trusted_proxies:"192.0.2.0/24"}, {wizard_origin_protocol_check:"invalid"}
+    {wizard_trusted_proxies:"0.0.0.0"}, {wizard_trusted_proxies:"192.0.2.0/24"}, {wizard_origin_protocol_check:"invalid"},
+    ...["http://relay.example.test:39381","https://*.example.test","https://user:secret@relay.example.test","https://relay.example.test/private","https://relay.example.test?token=secret",
+      "relay.example.test:38247","*.example.test","relay.example.test/path"].map(wizard_relay_origins=>({wizard_relay_origins}))
   ]) configure(env, "apply", fields, false);
   assert.equal(fs.readFileSync(settingsFile, "utf8"), before, "Invalid settings changed authentication");
   configure(env, "apply", {wizard_listen_hosts:"127.0.0.1", wizard_allowed_hosts:"terma.example.com", wizard_trusted_proxies:"127.0.0.1"});
@@ -132,6 +134,31 @@ async function main() {
   assert.equal(JSON.parse(fs.readFileSync(settingsFile)).password_hash, settings.password_hash);
   configure(env, "apply", {wizard_reset_network:"true"});
   configure(env, "commit");
+  configure(env, "apply", {wizard_relay_origins:"https://relay.example.test:39381"});
+  assert.deepEqual(JSON.parse(fs.readFileSync(settingsFile)).fnos_relay_origins,["https://relay.example.test:39381"]);
+  configure(env, "commit");
+  configure(env, "apply", {wizard_relay_origins:"Relay.Example.Test,192.0.2.10"});
+  assert.deepEqual(JSON.parse(fs.readFileSync(settingsFile)).fnos_relay_origins,["relay.example.test","192.0.2.10"]);
+  configure(env, "commit");
+  initialize(env, "upgrade");
+  assert.deepEqual(JSON.parse(fs.readFileSync(settingsFile)).fnos_relay_origins,["relay.example.test","192.0.2.10"],"Upgrade retains random-port HTTPS relay hosts");
+  configure(env, "apply", {wizard_relay_origins:"-"});
+  configure(env, "rollback");
+  assert.deepEqual(JSON.parse(fs.readFileSync(settingsFile)).fnos_relay_origins,["relay.example.test","192.0.2.10"],"Rollback restores hostname grants");
+  configure(env, "apply", {wizard_relay_origins:"https://relay.example.test:39381"});
+  configure(env, "commit");
+  configure(env, "apply", {});
+  assert.deepEqual(JSON.parse(fs.readFileSync(settingsFile)).fnos_relay_origins,["https://relay.example.test:39381"],"Blank retains the explicit relay list");
+  configure(env, "commit");
+  initialize(env, "upgrade");
+  assert.deepEqual(JSON.parse(fs.readFileSync(settingsFile)).fnos_relay_origins,["https://relay.example.test:39381"],"Upgrade retains the explicit relay list");
+  configure(env, "apply", {wizard_relay_origins:"-"});
+  assert.deepEqual(JSON.parse(fs.readFileSync(settingsFile)).fnos_relay_origins,[]);
+  configure(env, "rollback");
+  assert.deepEqual(JSON.parse(fs.readFileSync(settingsFile)).fnos_relay_origins,["https://relay.example.test:39381"]);
+  configure(env, "apply", {wizard_reset_network:"true"});
+  configure(env, "commit");
+  assert.deepEqual(JSON.parse(fs.readFileSync(settingsFile)).fnos_relay_origins,[],"Reset revokes relay access");
   configure(env, "apply", {wizard_origin_protocol_check:"false"});
   assert.equal(JSON.parse(fs.readFileSync(settingsFile)).origin_protocol_check_enabled, false);
   assert.equal(JSON.parse(fs.readFileSync(settingsFile)).trusted_proxy_enabled, false, "Protocol compatibility must not require proxy trust");

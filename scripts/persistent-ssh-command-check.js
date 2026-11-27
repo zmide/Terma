@@ -14,6 +14,7 @@ const ssh2ClientPath = require.resolve(path.join(root, "dist", "ssh2-client"));
 let connectCount = 0;
 let execCount = 0;
 let endCount = 0;
+let channelCloseCount = 0;
 
 class FakeChannel extends EventEmitter {
   constructor(command) {
@@ -23,14 +24,16 @@ class FakeChannel extends EventEmitter {
   }
 
   end(input) {
+    if (this.command === "pending") return;
     queueMicrotask(() => {
-      this.emit("data", Buffer.from(`ok:${this.command}`));
+      this.emit("data", Buffer.from(this.command === "overflow" ? "x".repeat(2048) : `ok:${this.command}`));
       if (input) this.emit("data", Buffer.from(`:${Buffer.from(input).toString("utf8")}`));
       this.emit("close", 0);
     });
   }
 
   close() {
+    channelCloseCount++;
     this.emit("close", null);
   }
 }
@@ -92,6 +95,18 @@ const db = require(path.join(root, "dist", "db"));
     assert.equal(second.stdout, "ok:second:payload");
     assert.equal(connectCount, 1, "commands for one connection must reuse one SSH client");
     assert.equal(execCount, 2, "each operation must use a separate exec channel");
+
+    const controller = new AbortController();
+    const canceled = ssh.runPersistentSshCommandForConnectionStreaming(connection, "pending", 1000, null, {signal:controller.signal});
+    await new Promise(resolve => setImmediate(resolve));
+    controller.abort();
+    assert.equal((await canceled).error.name, "AbortError");
+    const overflow = await ssh.runPersistentSshCommandForConnectionStreaming(connection, "overflow", 1000, null, {maxOutputBytes:1024});
+    assert.equal(overflow.error.code, "SSH_OUTPUT_LIMIT");
+    assert.equal(overflow.stdout, "");
+    assert.equal(channelCloseCount, 2, "cancel and overflow close only their own exec channels");
+    assert.equal(connectCount, 1);
+    assert.equal(endCount, 0, "aborting a sampler must not disconnect another terminal or command");
 
     await ssh.runPersistentSshCommandForConnection({...connection, ssh_port:2222}, "changed", 1000);
     assert.equal(connectCount, 2, "connection-setting changes must rebuild the persistent SSH client");

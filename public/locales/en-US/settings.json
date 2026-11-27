@@ -325,6 +325,8 @@
     "local_desktop_integration_hint": "Disabled by default. When enabled, X Server and system remote clients are exposed only if Terma listens exclusively on loopback, the browser connects directly from this computer, and the current Web access policy is satisfied.",
     "allowed_hosts": "Allowed Hosts / reverse-proxy domains",
     "allowed_hosts_hint": "Nothing is required for direct access through localhost, the current machine name, or a listen IP. For a custom reverse-proxy domain, enter the exact Host used by the browser; wildcards are not supported.",
+    "fnos_relay_origins": "Allowed relay domains or IPs",
+    "fnos_relay_origins_hint": "Enter trusted relay domains or IPs without a scheme or port. All HTTPS ports on that exact host are allowed; HTTP and subdomain wildcards are not. Separate with commas and allow the target host above. Legacy HTTPS origins keep exact port matching. Save an empty list to revoke access. Login remains required. These are the active values.",
     "login_rate_limit": "Login rate limiting",
     "source_failures": "Failures per source",
     "source_window": "Per-source window (seconds)",

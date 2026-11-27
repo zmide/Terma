@@ -107,6 +107,23 @@ directoryTrackingHarness.track(
   trackedDirectoryCommands[0]
 );
 assert.deepEqual(probedDirectories, ["/Users/tester/Downloads"]);
+const shellSession = {socket:{},connectionAttempt:1};
+let confirmedNotifications = 0;
+const stopConfirmed = directoryTrackingHarness.subscribe(() => confirmedNotifications++);
+assert.equal(directoryTrackingHarness.confirmed(shellSession), '');
+directoryTrackingHarness.set(shellSession, '/typed-only', 'cd');
+assert.equal(directoryTrackingHarness.confirmed(shellSession), '', 'typed cd is not shell confirmation');
+directoryTrackingHarness.set(shellSession, '/shell-confirmed', 'osc7');
+assert.equal(directoryTrackingHarness.confirmed(shellSession), '/shell-confirmed');
+directoryTrackingHarness.set(shellSession, '/another-guess', 'cd');
+assert.equal(directoryTrackingHarness.confirmed(shellSession), '/shell-confirmed', 'guesses cannot overwrite last confirmed directory');
+shellSession.socket = {};
+assert.equal(directoryTrackingHarness.confirmed(shellSession), '', 'new transport invalidates previous confirmation');
+directoryTrackingHarness.set(shellSession, '/reconnected', 'osc7');
+shellSession.connectionAttempt++;
+assert.equal(directoryTrackingHarness.confirmed(shellSession), '', 'new attempt invalidates previous confirmation');
+assert.equal(confirmedNotifications, 4);
+stopConfirmed();
 
 assert.match(fs.readFileSync("frontend/src/features/terminal/terminal-directory-service.ts", "utf8"), /registerOscHandler\(7/);
 const directoryWorkspace = fs.readFileSync(path.join(root,'frontend/src/features/terminal/terminal-directory-workspace.ts'),'utf8');

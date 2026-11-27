@@ -90,7 +90,7 @@ assert.match(read("frontend/src/features/workspace/workspace-dock-state.ts"), /f
 assert.match(terminal, /workspaceHasTabKey\(key\)/);
 assert.match(read("frontend/src/features/terminal/terminal-transport-service.ts"), /const terminalOutput = data instanceof ArrayBuffer[\s\S]{0,240}port\.updateSmartState\(key, terminalOutput\)[\s\S]{0,240}port\.consumeZmodem/);
 assert.match(activity, /workspaceTabByKey\(key\)/);
-assert.match(sftpWorkspace, /workspaceAllTabs\(\)\.some\(tab => tab\.key !== key && tab\.kind === 'sftp'/);
+assert.match(sftpWorkspace, /sftpWorkspaceTabs\(\)\.some\(tab => tab\.key !== key && tab\.kind === 'sftp'/);
 assert.match(dockTabs, /if \(pane\.activeTabKey\) revealWorkspaceTab\(pane\.activeTabKey\)/);
 assert.match(styles, /\.tab\.broadcast-selected/);
 assert.match(styles, /\.workspace-group-bar/);

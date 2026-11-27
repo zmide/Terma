@@ -61,7 +61,8 @@ export function createFileWorkspaceActions(page: FilePageRuntime, transfers: Ret
       if (source === 'native' && !desktop()) return null;
       const writable = Boolean(path) && location !== 'computer' && (source !== 'browser' || Boolean(browserDirectory?.writable));
       return {
-        path, source, writable, windows: source === 'native' && host.windows(), entries: current.entries.map(item => ({...item})),
+        path, source, writable, windows: source === 'native' && host.windows(),
+        entries: [...new Map([...files.listed(key), ...files.selected(key)].map(item => [item.path, {...item}])).values()],
         valid: () => state(key) === current && current.fileSource === fileSource && current.path === path && current.location === location
           && (source !== 'browser' || current.browserDirectory === browserDirectory && Boolean(browserDirectory?.writable) === writable),
         async write({action, ...body}) {
@@ -79,7 +80,7 @@ export function createFileWorkspaceActions(page: FilePageRuntime, transfers: Ret
   });
 
   const native = createFileNativeActions({
-    states: files.states, desktop, selected: key => files.selected(key),
+    states: files.states, desktop, selected: key => files.selected(key), listed: key => files.listed(key),
     load: (key, options) => files.load(key, options), hidePath: key => host.editPath(key, false),
     select: focusEntry, open: openSystem, locations: () => request('/api/local-files/locations'),
     mutate: mutations.run, copy, text, notify
@@ -154,14 +155,14 @@ export function createFileWorkspaceActions(page: FilePageRuntime, transfers: Ret
       const current = state(key), scope = transfers.context(key);
       return current && scope ? {state: current, valid: scope.valid} : null;
     },
-    selected: key => files.selected(key), select: (key, path) => files.select(key, path, {forceSingle:true}),
+    selected: key => files.selected(key), listed: key => files.listed(key), select: (key, path) => files.select(key, path, {forceSingle:true}),
     desktop, text,
     run(action, key, paths) {
       const current = state(key);
       if (!current) return;
       if (action === 'open') return current.fileSource ? openWeb(key, paths[0] ?? '') : native.activate(key, paths[0] ?? '');
       if (action === 'system') {
-        const entry = current.entries.find(item => item.path === paths[0]);
+        const entry = files.listed(key).find(item => item.path === paths[0]);
         return openSystem(entry && entry.type !== 'file' ? entry.path : current.path)
           .catch(error => notify(errorMessage(error, text('sftp:local_files.open_path_failed')), 'error'));
       }

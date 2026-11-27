@@ -52,6 +52,7 @@
     "ssh_key_public_mismatch": "The public key does not match the private key. Import the correct key again.",
     "host_not_allowed": "This address has not been allowed to access Terma.",
     "fnos_security_managed": "The fnOS app requires authentication for every request. Host desktop permissions cannot be enabled.",
+    "fnos_relay_origins_invalid": "Enter up to 16 relay domains or IPs without schemes, ports, paths, credentials or wildcards. Legacy complete HTTPS origins retain exact port grants. This option requires the fnOS distribution.",
     "fnos_listen_managed": "The fnOS package manages the listening address and port.",
     "fnos_storage_managed": "The fnOS app center manages the application data directory.",
     "fnos_update_managed": "Upgrade Terma through fnOS App Center or install a newer FPK package.",

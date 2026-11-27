@@ -304,7 +304,6 @@ async function checkSsh2Requests() {
         connection.on("session", acceptSession => {
           const session = acceptSession();
           const request = { type: "", command: "", pty: null, env: {}, data: Buffer.alloc(0) };
-          requests.push(request);
           session.on("env", (acceptEnv, _rejectEnv, info) => {
             request.env[info.key] = info.val;
             acceptEnv?.();
@@ -314,6 +313,7 @@ async function checkSsh2Requests() {
             acceptPty?.();
           });
           session.on("shell", acceptShell => {
+            requests.push(request);
             request.type = "shell";
             const channel = acceptShell();
             channel.on("data", chunk => {
@@ -322,6 +322,12 @@ async function checkSsh2Requests() {
             });
           });
           session.on("exec", (acceptExec, _rejectExec, info) => {
+            if (info.command === "uname -s") {
+              const channel = acceptExec();
+              channel.exit(0); channel.end("Linux\n");
+              return;
+            }
+            requests.push(request);
             request.type = "exec";
             request.command = info.command;
             const channel = acceptExec();

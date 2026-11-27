@@ -28,11 +28,12 @@ assert.match(desktopMainSource, /additionalData\?\.termaDisplaySession\s*\|\|\s*
 assert.match(desktopMainSource, /stdio:\s*\["ignore",\s*"ignore",\s*"ignore",\s*"ipc"\]/, "display clients must keep an IPC focus channel");
 assert.match(desktopMainSource, /function createStartupWindow\(/, "packaged startup must provide an immediate startup window");
 assert.match(desktopMainSource, /if \(!app\.isPackaged \|\| shouldStartInTray\(settings\)/, "the startup window must stay limited to packaged foreground launches");
-assert.match(desktopMainSource, /show:false,[\s\S]*?window\.once\("ready-to-show", reveal\)/, "the packaged startup window must stay hidden until its content is ready");
+assert.match(desktopMainSource, /await window\.webContents\.capturePage\(\);[\s\S]*?window\.show\(\);\s*await window\.webContents\.capturePage\(\);/, "the startup window must confirm hidden and visible frames before backend loading");
+assert.match(desktopMainSource, /mainWindow\.once\("show", closeStartupWindow\)/, "the splash must remain until the main window is shown");
 assert.match(
   desktopMainSource.slice(readyIndex),
-  /createStartupWindow\(startupDesktopSettings\);\s*try\s*\{[\s\S]*?loadBackend\(startupDesktopSettings\);[\s\S]*?\}\s*catch\s*\(error\)/,
-  "desktop startup must catch backend-load failures and present them instead of leaving a hidden stalled process"
+  /createStartupWindow\(readSettings\(\)\);[\s\S]*?try\s*\{\s*[\s\S]*?await startupWindowReady;[\s\S]*?ensureDesktopSettingsFile\(\);[\s\S]*?prepareRuntimeSettings\(\);[\s\S]*?loadBackend\(startupDesktopSettings\);[\s\S]*?\}\s*catch\s*\(error\)/,
+  "desktop startup must paint the splash before storage preparation and backend imports, and catch failures"
 );
 
 const testableSource = `${desktopMainSource.slice(0, readyIndex)}
@@ -50,6 +51,7 @@ globalThis.__desktopStartupTestApi = {
   shouldStartInTray,
   relaunchInForeground,
   createStartupWindow,
+  getStartupWindowReady: () => startupWindowReady,
   closeStartupWindow,
   createWindow,
   bringMainWindowToFront,
@@ -64,6 +66,7 @@ globalThis.__desktopStartupTestApi = {
   handleDisplayClientControlMessage,
   startDisplayClient,
   buildAppMenu,
+  registerDesktopClipboardHandlers,
   initializeDesktopSettingsFile,
   ensureDesktopSettingsFile,
   setDesktopInterfaceLanguage,
@@ -106,7 +109,12 @@ function createHarness({
   env = {},
   persistSettings = true,
   singleInstanceLock = true,
-  prepareFilesystem = null
+  prepareFilesystem = null,
+  startupLoadError = null,
+  manualStartupPaint = false,
+  startupFrameError = null,
+  darkTheme = false,
+  browserWindowClass = null
 } = {}) {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-desktop-check-"));
   temporaryRoots.push(temporaryRoot);
@@ -125,6 +133,7 @@ function createHarness({
     appFocusCalls: [],
     applicationMenus: [],
     ipcListeners: new Map(),
+    ipcHandlers: new Map(),
     singleInstanceRequests: [],
     appExitCalls: [],
     appQuitCount: 0,
@@ -133,11 +142,20 @@ function createHarness({
     spawnCalls: [],
     scheduledTimeouts: [],
     desktopCookies: [],
+    startupPaintSteps: [],
+    startupPaintWaiters: [],
     xServerRuntimeCreateCount: 0,
     temporaryRoot,
     userData,
     execPath: processArgv[0],
     settingsFile: path.join(userData, "desktop-settings.json")
+  };
+  state.startupLoadError = startupLoadError;
+  const startupPaintStep = step => {
+    state.startupPaintSteps.push(step);
+    if (startupFrameError === step) return Promise.reject(new Error(`fixture ${step} failure`));
+    if (manualStartupPaint) return new Promise(resolve => state.startupPaintWaiters.push(resolve));
+    return Promise.resolve();
   };
   if (typeof prepareFilesystem === "function") prepareFilesystem(state);
   if (persistSettings) {
@@ -158,6 +176,7 @@ function createHarness({
       this.alwaysOnTopCalls = [];
       this.visibleOnAllWorkspacesCalls = [];
       this.minimized = false;
+      this.destroyed = false;
       this.loadedUrl = "";
       this.onceHandlers = new Map();
       this.handlers = new Map();
@@ -178,6 +197,8 @@ function createHarness({
         },
         on() {},
         getURL: () => this.loadedUrl || "",
+        executeJavaScript: () => startupPaintStep("prepare-frame"),
+        capturePage: () => startupPaintStep(this.visible ? "visible-frame" : "hidden-frame"),
         setWindowOpenHandler: handler => {
           this.windowOpenHandler = handler;
         }
@@ -191,6 +212,9 @@ function createHarness({
 
     loadURL(url) {
       this.loadedUrl = url;
+      if (state.startupLoadError === "sync") throw new Error("fixture synchronous startup load failure");
+      if (state.startupLoadError === "async") return Promise.reject(new Error("fixture asynchronous startup load failure"));
+      if (String(url).startsWith("data:text/html")) return startupPaintStep("load");
     }
 
     once(event, handler) {
@@ -218,6 +242,7 @@ function createHarness({
     show() {
       this.visible = true;
       this.showCount += 1;
+      if (this.onceHandlers.has("show")) this.emitOnce("show");
     }
 
     hide() {
@@ -256,7 +281,13 @@ function createHarness({
     }
 
     isDestroyed() {
-      return false;
+      return this.destroyed;
+    }
+
+    destroy() {
+      this.destroyed = true;
+      this.visible = false;
+      if (this.onceHandlers.has("closed")) this.emitOnce("closed");
     }
   }
 
@@ -286,7 +317,7 @@ function createHarness({
 
   const electron = {
     app,
-    BrowserWindow: FakeBrowserWindow,
+    BrowserWindow: browserWindowClass || FakeBrowserWindow,
     Menu: {
       buildFromTemplate: template => template,
       setApplicationMenu: menu => state.applicationMenus.push(menu)
@@ -297,11 +328,11 @@ function createHarness({
       showErrorBox: (title, message) => state.errorBoxes.push({title, message})
     },
     ipcMain: {
-      handle() {},
+      handle: (event, handler) => state.ipcHandlers.set(event, handler),
       on: (event, handler) => state.ipcListeners.set(event, handler)
     },
     nativeImage: {},
-    nativeTheme: {},
+    nativeTheme: {shouldUseDarkColors:darkTheme},
     screen: {},
     shell: { openExternal() {} }
   };
@@ -316,6 +347,7 @@ function createHarness({
       if (timer) timer.cancelled = true;
     },
     setInterval,
+    setImmediate,
     setTimeout: (handler, delay) => {
       state.scheduledTimeouts.push({handler, delay, cancelled:false});
       return state.scheduledTimeouts.length;
@@ -364,6 +396,7 @@ function createHarness({
         }
       };
       if (id === "./browser-authorization-prompt") return require(path.join(root, "desktop", "browser-authorization-prompt.js"));
+      if (id === "./local-terminal") return require(path.join(root, "desktop", "local-terminal.js"));
       if (id === "./native-sftp-drag") return {
         createNativeSftpDrag: () => ({
           probe: {available:false},
@@ -412,6 +445,30 @@ function check(name, callback) {
   console.log(`PASS ${name}`);
 }
 
+check("Local terminal IPC accepts only the trusted desktop main frame", () => {
+  const {api, state} = createHarness();
+  api.setWebUrl("http://127.0.0.1:8099");
+  api.createWindow();
+  api.registerDesktopClipboardHandlers();
+  const sender = state.windows[0].webContents;
+  sender.mainFrame = {url:"http://127.0.0.1:8099/"};
+  const start = state.ipcHandlers.get("terma:local-terminal-start");
+  assert.throws(() => start({sender,senderFrame:sender.mainFrame}, {}), /LOCAL_TERMINAL_INVALID/);
+  assert.throws(() => start({sender,senderFrame:{url:sender.mainFrame.url}}, {}), /SOURCE_DENIED/,
+    "same-origin iframes do not inherit the main frame's execution capability");
+  assert.throws(() => start({sender,senderFrame:{url:"https://untrusted.invalid/"}}, {}), /SOURCE_DENIED/);
+  const other = {mainFrame:sender.mainFrame};
+  assert.throws(() => start({sender:other,senderFrame:other.mainFrame}, {}), /SOURCE_DENIED/);
+  const display = createHarness({platform:"linux",argv:["terma","--terma-display-client"]});
+  display.api.setWebUrl("http://127.0.0.1:8099");
+  display.api.createWindow({displayClient:true});
+  display.api.registerDesktopClipboardHandlers();
+  const displaySender = display.state.windows[0].webContents;
+  displaySender.mainFrame = {url:"http://127.0.0.1:8099/"};
+  assert.throws(() => display.state.ipcHandlers.get("terma:local-terminal-start")(
+    {sender:displaySender,senderFrame:displaySender.mainFrame}, {}), /SOURCE_DENIED/);
+});
+
 check("Windows login startup receives the tray-only argument", () => {
   const { api, state } = createHarness();
   api.applyLoginSetting({ openAtLogin: true, startMinimizedToTray: true });
@@ -445,9 +502,8 @@ check("Packaged startup window waits for rendered content before becoming visibl
   assert.equal(window.visible, false);
   assert.equal(window.showCount, 0);
   assert.match(window.loadedUrl, /^data:text\/html/);
-  window.emitOnce("ready-to-show");
-  assert.equal(window.visible, true);
-  assert.equal(window.showCount, 1);
+  assert.equal(window.onceHandlers.has("ready-to-show"), false, "an early ready-to-show must not reveal a blank frame");
+  assert.equal(window.options.webPreferences.backgroundThrottling, false);
   assert.equal(state.windows.length, 1);
 });
 
@@ -1021,4 +1077,105 @@ check("Desktop resource titles remove only structural endpoint and protocol dupl
   );
 });
 
-console.log("Desktop startup semantics passed.");
+async function checkStartupPaintGate() {
+  const foreground = createHarness({settings:{startMinimizedToTray:false}, manualStartupPaint:true});
+  const window = foreground.api.createStartupWindow({startMinimizedToTray:false});
+  let ready = false;
+  const painted = foreground.api.getStartupWindowReady().then(() => { ready = true; });
+  await Promise.resolve();
+  assert.equal(ready, false, "backend startup must wait while the splash has not painted");
+  for (const step of ["load", "prepare-frame", "hidden-frame"]) {
+    assert.equal(window.visible, false, `the splash must remain hidden during ${step}`);
+    assert.equal(foreground.state.startupPaintSteps.at(-1), step);
+    foreground.state.startupPaintWaiters.shift()();
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(window.visible, true);
+  assert.equal(ready, false, "the native window must be shown before backend startup resumes");
+  assert.equal(foreground.state.startupPaintSteps.at(-1), "visible-frame");
+  foreground.state.startupPaintWaiters.shift()();
+  await painted;
+  assert.equal(ready, true);
+  assert.equal(foreground.state.scheduledTimeouts.find(timer => timer.delay === 3000).cancelled, true);
+  console.log("PASS Packaged startup yields until the splash has painted and been shown");
+
+  const handoff = createHarness();
+  const splash = handoff.api.createStartupWindow();
+  await handoff.api.getStartupWindowReady();
+  handoff.api.setWebUrl("http://127.0.0.1:8088");
+  handoff.api.createWindow();
+  const main = handoff.state.windows[1];
+  main.emitWebContentsOnce("did-finish-load");
+  assert.equal(splash.isDestroyed(), false, "page load must not remove the splash before the main window appears");
+  main.emitOnce("ready-to-show");
+  assert.equal(main.visible, true);
+  assert.equal(splash.isDestroyed(), true);
+  console.log("PASS The main window replaces the splash only when it is visible");
+
+  for (const failure of ["closed", "render-process-gone", "timeout"]) {
+    const {api, state} = createHarness();
+    const splash = api.createStartupWindow();
+    const completed = api.getStartupWindowReady();
+    if (failure === "closed") splash.emitOnce("closed");
+    else if (failure === "render-process-gone") splash.emitWebContentsOnce("render-process-gone");
+    else state.scheduledTimeouts.find(timer => timer.delay === 3000).handler();
+    await completed;
+    assert.equal(splash.visible, false);
+    console.log(`PASS Startup continues when the splash cannot paint: ${failure}`);
+  }
+
+  for (const mode of ["sync", "async"]) {
+    const {api, state} = createHarness({startupLoadError:mode});
+    const splash = api.createStartupWindow();
+    await api.getStartupWindowReady();
+    assert.equal(splash.visible, false);
+    assert.equal(state.scheduledTimeouts.find(timer => timer.delay === 3000).cancelled, true);
+    console.log(`PASS Startup continues after ${mode} splash load failure`);
+  }
+
+  for (const step of ["prepare-frame", "hidden-frame", "visible-frame"]) {
+    const {api, state} = createHarness({startupFrameError:step});
+    const splash = api.createStartupWindow();
+    await api.getStartupWindowReady();
+    assert.equal(splash.isDestroyed(), true);
+    assert.equal(state.scheduledTimeouts.find(timer => timer.delay === 3000).cancelled, true);
+    console.log(`PASS Startup continues after ${step} failure`);
+  }
+
+  for (const platform of ["win32", "darwin", "linux"]) {
+    const {api} = createHarness({platform, darkTheme:true});
+    const splash = api.createStartupWindow();
+    assert.equal(splash.options.backgroundColor, "#17202a");
+    await api.getStartupWindowReady();
+    assert.equal(splash.visible, true);
+  }
+  console.log("PASS Desktop platforms use the dark startup background before the page renders");
+
+  const stalled = createHarness({manualStartupPaint:true});
+  const stalledSplash = stalled.api.createStartupWindow();
+  stalled.state.scheduledTimeouts.find(timer => timer.delay === 3000).handler();
+  await stalled.api.getStartupWindowReady();
+  stalled.state.startupPaintWaiters.shift()();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(stalledSplash.showCount, 0, "late frames must not reopen a timed-out splash");
+  assert.equal(stalledSplash.isDestroyed(), true);
+
+  for (const options of [
+    {isPackaged:false},
+    {argv:["terma.exe", "--start-in-tray"], settings:{startMinimizedToTray:true}},
+    {platform:"darwin", wasOpenedAtLogin:true, settings:{startMinimizedToTray:true}}
+  ]) {
+    const {api, state} = createHarness(options);
+    assert.equal(api.createStartupWindow(), null);
+    await api.getStartupWindowReady();
+    assert.equal(state.windows.length, 0);
+  }
+  console.log("PASS Source and tray-only launches skip the splash without a startup delay");
+}
+
+checkStartupPaintGate().then(() => {
+  console.log("Desktop startup semantics passed.");
+}).catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});
