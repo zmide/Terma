@@ -2968,7 +2968,7 @@ body.sftp-editor-split-resizing, body.sftp-editor-split-resizing * { cursor:ns-r
 .sftp-diff-cell.blank { background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--field) 64%,var(--panel)) 0 4px,var(--panel) 4px 8px); }
 .sftp-diff-collapsed { grid-column:1 / -1; padding:5px; border-bottom:1px solid var(--line); color:var(--muted); background:var(--field); text-align:center; font:10px/1.35 var(--font); }
 .sftp-diff-unavailable { min-height:72px; display:grid; place-items:center; padding:16px; color:var(--muted); background:var(--field); text-align:center; }
-.sftp-comparison-modal { width:min(1200px,100%); height:min(820px,calc(100vh - 28px)); max-height:none; display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; gap:0; overflow:hidden; padding:0; }
+.sftp-comparison-modal { width:min(1200px,100%); height:min(820px,calc(100dvh - 32px)); max-height:calc(100dvh - 32px); display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; gap:0; overflow:hidden; padding:0; }
 .sftp-comparison-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:17px 20px 12px; border-bottom:1px solid var(--line); }
 .sftp-comparison-head > div { min-width:0; }
 .sftp-comparison-head h2 { overflow:hidden; margin:0; font-size:18px; text-overflow:ellipsis; white-space:nowrap; }
@@ -4907,6 +4907,11 @@ html[data-theme="dark"] body button.primary:hover:not(:disabled) {
   bottom:auto !important;
   z-index:2;
   margin:0 !important;
+  padding-inline:18px !important;
+}
+.sftp-comparison-modal > .sftp-comparison-actions {
+  margin:0 !important;
+  padding-inline:18px !important;
 }
 .modal-card .terminal-settings-head h2 {
   margin:0 0 3px;
