@@ -8,20 +8,46 @@ const {createHarness} = require("./desktop-startup-check");
 
 async function inspectStartup(language, theme, directory) {
   const desktopSettings = {startMinimizedToTray:false, interfaceLanguage:language};
-  const {api} = createHarness({settings:desktopSettings});
-  const startup = api.createStartupWindow(desktopSettings);
-  assert.ok(startup?.loadedUrl.startsWith('data:text/html;charset=utf-8,'));
-  assert.equal(startup.options.width, 360);
-  assert.equal(startup.options.height, 156);
-  assert.equal(startup.options.show, false);
-  assert.equal(startup.options.webPreferences.contextIsolation, true);
-  assert.equal(startup.options.webPreferences.nodeIntegration, false);
-  const page = new BrowserWindow({
-    ...startup.options,
-    webPreferences:{...startup.options.webPreferences, offscreen:true, backgroundThrottling:false}
+  const frames = [];
+  let startupOptions;
+  class StartupWindow extends BrowserWindow {
+    constructor(options) {
+      startupOptions = options;
+      super(options);
+      const capture = this.webContents.capturePage.bind(this.webContents);
+      this.webContents.capturePage = async (...args) => {
+        const visible = this.isVisible();
+        const image = await capture(...args);
+        if (frames.length < 2) {
+          const bitmap = image.toBitmap();
+          let contentPixels = 0;
+          for (let offset = 0; offset < bitmap.length; offset += 4) {
+            if ([0,1,2].some(channel => Math.abs(bitmap[offset+channel]-bitmap[channel]) > 12)) contentPixels++;
+          }
+          assert.ok(contentPixels > 800, 'the startup frame must contain visible content, not just a blank background');
+          const name = visible ? 'first-visible' : 'hidden';
+          fs.writeFileSync(path.join(directory, `startup-${language}-${theme}-${name}.png`), image.toPNG());
+          frames.push({visible, empty:image.isEmpty(), contentPixels});
+        }
+        return image;
+      };
+    }
+  }
+  const {api} = createHarness({
+    settings:desktopSettings, darkTheme:theme === 'dark', browserWindowClass:StartupWindow
   });
+  const page = api.createStartupWindow(desktopSettings);
   try {
-    await page.loadURL(startup.loadedUrl);
+    await api.getStartupWindowReady();
+    assert.equal(page.isVisible(), true, `startup must be visible after frame preparation: ${JSON.stringify(frames)}; destroyed=${page.isDestroyed()}`);
+    assert.equal(startupOptions.width, 360);
+    assert.equal(startupOptions.height, 156);
+    assert.equal(startupOptions.show, false);
+    assert.equal(startupOptions.backgroundColor, theme === 'dark' ? '#17202a' : '#f4f6f8');
+    assert.equal(startupOptions.webPreferences.contextIsolation, true);
+    assert.equal(startupOptions.webPreferences.nodeIntegration, false);
+    assert.equal(startupOptions.webPreferences.backgroundThrottling, false);
+    assert.deepEqual(frames.map(({visible,empty}) => ({visible,empty})), [{visible:false, empty:false}, {visible:true, empty:false}]);
     const metrics = await page.webContents.executeJavaScript(`(() => {
       const content = [...document.querySelectorAll('.mark,.copy strong,.copy span,.line')];
       const body = document.body;
@@ -41,7 +67,7 @@ async function inspectStartup(language, theme, directory) {
     assert.equal(metrics.dark, theme === 'dark');
     assert.ok(metrics.fits && metrics.standalone);
     await captureBoundary(page, directory, `startup-${language}-${theme}`);
-    return {page:'startup', language, theme, ...metrics};
+    return {page:'startup', language, theme, frames:frames.slice(0,2), ...metrics};
   } finally {
     page.destroy();
   }
@@ -160,20 +186,25 @@ async function settingsScenario(options) {
   try {
     window.termaRuntimeSettingsModel.snapshot={...window.termaRuntimeSettingsModel.snapshot,distribution:options.distribution,saved:{...window.termaRuntimeSettingsModel.snapshot?.saved,language:options.language}};
     const initial=await api('/api/security');
-    securitySettings={...initial,auth_mode:options.distribution==='fnos'?'always':initial.auth_mode};
+    let fixtureSettings={...initial,auth_mode:options.distribution==='fnos'?'always':initial.auth_mode,fnos_relay_origins:['relay.example.test','https://legacy.example.test:39381']};
+    securitySettings=fixtureSettings;
     api=async(url,request={})=>{
       if(url==='/api/runtime-settings'&&!request.method)return window.termaRuntimeSettingsModel.snapshot;
+      if(url==='/api/security'&&!request.method)return fixtureSettings;
       if(url==='/api/security'&&request.method==='PUT') {
         const data=JSON.parse(request.body);
         if(typeof data.origin_protocol_check_enabled!=='boolean')throw new Error('Missing protocol choice in settings save');
-        saves++;
+        if(options.distribution==='fnos' && JSON.stringify(data.fnos_relay_origins)!==JSON.stringify(['relay.example.test','https://legacy.example.test:39381']))throw new Error('Relay readback missing from settings save');
+        if(options.distribution!=='fnos' && 'fnos_relay_origins' in data)throw new Error('Relay controls leaked into a standard distribution');
         await previous.api(url,{method:'PUT',body:JSON.stringify({origin_protocol_check_enabled:data.origin_protocol_check_enabled})});
-        return {...securitySettings,origin_protocol_check_enabled:data.origin_protocol_check_enabled};
+        fixtureSettings={...fixtureSettings,origin_protocol_check_enabled:data.origin_protocol_check_enabled};
+        saves++;
+        return fixtureSettings;
       }
       return previous.api(url,request);
     };
     await setTermaLanguage(options.language,{render:false,emit:false});applyTheme(options.theme);
-    await window.termaSettingsNavigation.open('settings-security');window.termaWorkspaceShell.showMobileWorkspace();
+    await window.termaSettingsNavigation.open('settings-basic');window.termaWorkspaceShell.showMobileWorkspace();
     const control=$('securityOriginProtocolCheck');
     if(!control)throw new Error('Protocol checkbox missing');
     const defaultEnabled=control.checked&&!control.disabled;
@@ -182,11 +213,14 @@ async function settingsScenario(options) {
       const expected=saves+1;
       button.click();
       for(let attempt=0;attempt<100&&(saves<expected||button.disabled);attempt++)await new Promise(resolve=>setTimeout(resolve,20));
-      if(saves!==expected||button.disabled)throw new Error('Security policy save did not complete');
+      if(saves!==expected||button.disabled)throw new Error(`Security policy save did not complete: ${JSON.stringify({options,saves,expected,toasts:[...document.querySelectorAll('[role="alert"],.toast')].map(node=>node.textContent)})}`);
+      for(let attempt=0;attempt<100&&securitySettings.origin_protocol_check_enabled!==fixtureSettings.origin_protocol_check_enabled;attempt++)
+        await new Promise(resolve=>setTimeout(resolve,20));
     };
     control.click();await savePolicy();
     const persistedOff=(await previous.api('/api/security')).origin_protocol_check_enabled===false;
-    window.termaSettingsViews.render();refreshIcons();
+    await window.termaSettingsViews.render();refreshIcons();
+    await new Promise(resolve=>setTimeout(resolve,50));
     const restoredChoice=$('securityOriginProtocolCheck').checked===false;
     $('securityOriginProtocolCheck').click();await savePolicy();
     const persistedOn=(await previous.api('/api/security')).origin_protocol_check_enabled===true;
@@ -194,14 +228,30 @@ async function settingsScenario(options) {
     const hint=label.nextElementSibling;
     const text=label.textContent+hint.textContent;
     const bounds=[label,hint].map(node=>node.getBoundingClientRect());
-    return {defaultEnabled,persistedOff,restoredChoice,persistedOn,savedTwice:saves===2,
+    let relay=$('securityFnosRelayOrigins');
+    const relayReadback=options.distribution==='fnos' ? relay?.value==='relay.example.test, https://legacy.example.test:39381' && relay.placeholder==='relay.example.com' : !relay;
+    let relayLanguageRetained=true;
+    if(relay) {
+      relay.focus();relay.setSelectionRange(2,7);
+      const value=relay.value, scroll=window.scrollY;
+      await setTermaLanguage(options.language==='en-US'?'zh-CN':'en-US');
+      const updated=$('securityFnosRelayOrigins');
+      relayLanguageRetained=updated.value===value&&updated.selectionStart===2&&updated.selectionEnd===7&&Math.abs(window.scrollY-scroll)<2;
+      await setTermaLanguage(options.language);
+      relay=$('securityFnosRelayOrigins');
+    }
+    if(relay) relay.scrollIntoView({block:'center'});
+    const relayVisible=!relay || (relay.getBoundingClientRect().width>0 && !relay.closest('[hidden]'));
+    return {defaultEnabled,persistedOff,restoredChoice,persistedOn,savedTwice:saves===2,relayReadback,relayVisible,relayLanguageRetained,
       translated:options.language!=='en-US'||!/[\u3400-\u9fff]/.test(text),
       correctCopy:label.textContent.includes(tr('settings:auto.origin_protocol_check'))&&hint.textContent.includes(tr('settings:auto.origin_protocol_check_hint')),
       fits:document.documentElement.scrollWidth<=innerWidth+1&&bounds.every(rect=>rect.left>=-1&&rect.right<=innerWidth+1),
       noOverlap:bounds[1].top>=bounds[0].bottom-1};
   } finally {
     await previous.api('/api/security',{method:'PUT',body:JSON.stringify({origin_protocol_check_enabled:true})});
-    api=previous.api;window.termaRuntimeSettingsModel.snapshot=previous.runtimeSettings;securitySettings=previous.securitySettings;dismissToast();
+    // This isolated window is destroyed after its screenshot. Keep its fixture
+    // visible until then, while restoring the shared server's protocol setting.
+    dismissToast();
   }
 }
 
@@ -262,6 +312,10 @@ async function runOriginProtocolUiScenario(window) {
           await page.loadURL(window.webContents.getURL());
           const metrics=await page.webContents.executeJavaScript(`(${settingsScenario.toString()})(${JSON.stringify(options)})`);
           for(const [name,value]of Object.entries(metrics))assert.equal(value,true,`${JSON.stringify(options)} ${name}: ${JSON.stringify(metrics)}`);
+          if(process.env.TERMA_UI_ORIGIN_PROOF_DIR && distribution==='fnos') {
+            fs.mkdirSync(process.env.TERMA_UI_ORIGIN_PROOF_DIR,{recursive:true});
+            await captureBoundary(page,process.env.TERMA_UI_ORIGIN_PROOF_DIR,`relay-settings-${width}-${language}-${theme}`);
+          }
           results.push({...options,...metrics});
         } finally {page.destroy();}
       }
@@ -282,7 +336,8 @@ async function runOriginProtocolUiScenario(window) {
         const metrics=await page.webContents.executeJavaScript(`(${loginScenario.toString()})(${JSON.stringify(options)})`);
         for(const [name,value]of Object.entries(metrics))assert.equal(value,true,`login ${width}/${language}/${theme} ${name}: ${JSON.stringify(metrics)}`);
         requestMode='origin';
-        const forbidden=await page.webContents.executeJavaScript(`(${loginScenario.toString()})(${JSON.stringify({...options,expected:copy.origin_forbidden})})`);
+        const expected=copy.origin_host_mismatch.replaceAll('{{source_origin}}','http://forbidden.invalid').replaceAll('{{request_host}}',new URL(window.webContents.getURL()).host);
+        const forbidden=await page.webContents.executeJavaScript(`(${loginScenario.toString()})(${JSON.stringify({...options,expected})})`);
         for(const [name,value]of Object.entries(forbidden))assert.equal(value,true,`login origin ${width}/${language}/${theme} ${name}: ${JSON.stringify(forbidden)}`);
         if(process.env.TERMA_UI_ORIGIN_PROOF_DIR){
           fs.mkdirSync(process.env.TERMA_UI_ORIGIN_PROOF_DIR,{recursive:true});

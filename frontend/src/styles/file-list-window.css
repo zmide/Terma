@@ -1,0 +1,17 @@
+.sftp-list,.local-files-list{--file-row-height:36px;overflow-anchor:none}
+.sftp-list.terma-vue-root .sftp-row,.terma-local-files-root .local-files-list .local-files-row{
+  height:var(--file-row-height);min-height:var(--file-row-height);max-height:var(--file-row-height);
+  flex-shrink:0;box-sizing:border-box
+}
+.sftp-list.terma-vue-root.sftp-actions-more-only{--file-row-height:48px}
+.file-list-spacer{flex:0 0 auto;width:1px;pointer-events:none}
+.file-list-pending{height:var(--file-row-height);min-height:var(--file-row-height);flex-shrink:0;border-bottom:1px solid var(--line);box-sizing:border-box}
+.file-list-status{position:sticky;z-index:5;bottom:0;display:flex;align-items:center;justify-content:flex-end;gap:6px;
+  flex:0 0 23px;min-height:23px;box-sizing:border-box;margin-top:auto;padding:1px 7px;border-top:1px solid var(--line);
+  background:var(--panel);color:var(--muted);font-size:11px;line-height:20px}
+.file-list-status .icon-button{width:21px;min-width:21px;height:21px;min-height:21px;padding:3px}
+.file-list-error{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--danger)}
+.sftp-list .sftp-head,.local-files-list .local-files-head{flex-shrink:0}
+.sftp-list.terma-vue-root .sftp-row.sftp-inline-renaming:has(.sftp-inline-rename-error:not([hidden])){padding-bottom:2px;z-index:6;overflow:visible}
+.sftp-list.terma-vue-root .sftp-inline-rename-error:not([hidden]){bottom:auto;top:100%;padding:4px;border:1px solid var(--danger);background:var(--panel)}
+@container local-files-view (max-width:520px){.local-files-list{--file-row-height:48px}}

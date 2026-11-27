@@ -107,7 +107,9 @@ export function renderSecuritySettings(scope: SettingsViewPort): VNodeChild {
                     "id": "securityAllowedHosts", "value": (s.allowed_hosts || []).join(", "), "placeholder": scope.tr("settings:auto.allowed_hosts_placeholder")
                 }, []), h("div", {
                     "class": "muted"
-                }, [scope.tr("settings:auto.allowed_hosts_hint")]), h("h3", {}, [scope.tr("settings:auto.login_rate_limit")]), h("label", {}, [scope.tr("settings:auto.source_failures")]), h("input", {
+                }, [scope.tr("settings:auto.allowed_hosts_hint")]), ...(scope.runtimeSettings?.distribution === 'fnos' ? [h("label", {"for":"securityFnosRelayOrigins"}, [scope.tr("settings:auto.fnos_relay_origins")]), h("input", {
+                    "id":"securityFnosRelayOrigins", "value":(s.fnos_relay_origins || []).join(", "), "placeholder":"relay.example.com"
+                }), h("div", {"class":"muted"}, [scope.tr("settings:auto.fnos_relay_origins_hint")])] : []), h("h3", {}, [scope.tr("settings:auto.login_rate_limit")]), h("label", {}, [scope.tr("settings:auto.source_failures")]), h("input", {
                     "id": "securityLoginMaxFailures", "type": "number", "min": Number(s.login_protection?.limits?.maxFailures?.min || 1), "max": Number(s.login_protection?.limits?.maxFailures?.max || 100), "value": Number(s.login_protection?.max_failures || 5)
                 }, []), h("label", {}, [scope.tr("settings:auto.source_window")]), h("input", {
                     "id": "securityLoginWindowSeconds", "type": "number", "min": Number(s.login_protection?.limits?.windowSeconds?.min || 30), "max": Number(s.login_protection?.limits?.windowSeconds?.max || 86400), "value": Number(s.login_protection?.window_seconds || 300)

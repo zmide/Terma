@@ -157,6 +157,7 @@ function loadDockingModel() {
     __dirname:path.dirname(filename),
     __filename:filename,
     console,
+    CustomEvent,
     process
   }, {filename, timeout:5000});
   return moduleBox.exports.loadDockingModel();

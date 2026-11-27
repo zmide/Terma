@@ -16,6 +16,7 @@ export function updateTerminalConnectionStatus(_connection:unknown,key:string,st
   terminalServices.termaTerminalToolbarService?.status.set(String(key),normalized);
   setWorkspaceTabConnectionStatus(key,connectionStatus);
   terminalServices.termaTerminalToolbar?.refresh(key);
+  window.dispatchEvent(new CustomEvent('terma:terminal-toolbar-ready'));
 }
 export function terminalSessionNeedsAutomaticConnection(session:Pick<TerminalSessionCoreSession,'socket'|'connectionAttempt'>|null|undefined) {
   return !!session&&!session.socket&&Number(session.connectionAttempt||0)===0;

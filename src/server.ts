@@ -166,7 +166,7 @@ const {
   requestAuthenticationBinding,
   readSecuritySettings,
   revokeDesktopBrowserGrant,
-  originRejectionCode,
+  originRejection,
   secureHeaders,
   securityDiagnostics,
   securitySettingsRevision,
@@ -220,6 +220,11 @@ const {
 } = require("./routes/desktop-integration-routes");
 const { handleSshRoutes } = require("./routes/ssh-routes");
 const { handleTerminalRoutes } = require("./routes/terminal-routes");
+const {handleHostPerformanceRoutes} = require("./routes/host-performance-routes");
+const {createHostPerformanceService} = require("./services/host-performance-service");
+const hostPerformance = createHostPerformanceService({
+  run:(connection, command, timeout, options) => runPersistentSshCommandForConnectionStreaming(connection, command, timeout, null, options)
+});
 const { handleRemoteCredentialRoutes } = require("./routes/remote-credential-routes");
 const { handleRemoteConnectivityRoutes } = require("./routes/remote-connectivity-routes");
 const { handleRemoteProfileRoutes } = require("./routes/remote-profile-routes");
@@ -350,9 +355,10 @@ function authorizedSftpConnectionId(req, value) {
 
 async function handleApi(req, res, pathname) {
   if (!hostAllowed(req)) return rejectHostRequest(req, res);
-  const originFailure = originRejectionCode(req);
-  if (originFailure) return sendJson(res, publicErrorBody(originFailure,
-    originFailure === "request_origin_protocol_mismatch" ? "HTTPS/HTTP origin protocol mismatch" : "Request origin is not allowed"), 403);
+  const originFailure = originRejection(req);
+  if (originFailure) return sendJson(res, publicErrorBody(originFailure.code,
+    originFailure.code === "request_origin_protocol_mismatch" ? "HTTPS/HTTP origin protocol mismatch" : "Request origin is not allowed",
+    pathname === "/api/auth/login" ? originFailure.params : undefined), 403);
   if (await handleLocalControlRoutes(req, res, pathname, {
     getDesktopIntegration, getNativeSftpDragTicket, hasShutdownToken,
     isAuthenticated, isDesktopRequest, isDirectLoopbackRequest, releaseNativeSftpDragTicket,
@@ -420,6 +426,10 @@ async function handleApi(req, res, pathname) {
     parseConfigText, projectSshDir:PROJECT_SSH_DIR, readBody, readJson, recommendPort,
     removeTrustedHost, repairIdentityFile, saveUploadedKey, sendJson, terminalCapabilitiesForConnection,
     testSsh, userSshDir:USER_SSH_DIR
+  })) return;
+  if (await handleHostPerformanceRoutes(req, res, pathname, {
+    authorizeConnection:authorizedConnectionForRequest, requireEncryptionUnlocked,
+    sample:hostPerformance.sample, sendJson
   })) return;
   if (await handleTerminalRoutes(req, res, pathname, {
     authorizeConnection:authorizedConnectionForRequest,

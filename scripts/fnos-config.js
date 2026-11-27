@@ -10,6 +10,7 @@ try {
   const config = require("../dist/infrastructure/fnos-configuration");
   const input = {password:process.env.wizard_new_web_password || "", confirmation:process.env.wizard_new_web_password_confirm || "",
     listen_hosts:process.env.wizard_listen_hosts || "", allowed_hosts:process.env.wizard_allowed_hosts || "",
+    relay_origins:process.env.wizard_relay_origins || "",
     trusted_proxies:process.env.wizard_trusted_proxies || "", reset_network:process.env.wizard_reset_network || "false",
     origin_protocol_check:process.env.wizard_origin_protocol_check || "keep"};
   switch (process.argv[2]) {

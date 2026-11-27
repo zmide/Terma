@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { app, BrowserWindow, session } = require("electron");
+const {attachWorkspaceBrowserFixture} = require("./workspace-browser-fixture");
 
 const url = process.env.TERMA_README_SCREENSHOT_URL || "http://127.0.0.1:8099";
 const outputDirectory = process.env.TERMA_README_SCREENSHOT_DIR || path.join(process.cwd(), ".github", "assets", "screenshots");
@@ -20,8 +21,8 @@ async function execute(window, callback, ...args) {
 async function waitForApp(window) {
   for (let attempt = 0; attempt < 80; attempt += 1) {
     const ready = await window.webContents.executeJavaScript(`Boolean(
-      typeof renderConnections === "function"
-      && typeof setWorkspace === "function"
+      window.termaBootstrapRuntime?.getSnapshot().phase === "ready"
+      && window.termaConnectionViews
       && document.querySelector("#workspaceDock .workspace-pane")
     )`).catch(() => false);
     if (ready) return;
@@ -31,6 +32,8 @@ async function waitForApp(window) {
 }
 
 async function loadCleanPage(window, language="zh-CN") {
+  // Finish the previous page's persistence before clearing its storage.
+  await window.loadURL("about:blank");
   try {
     await session.defaultSession.clearStorageData({origins:[url]});
   } catch {}
@@ -44,11 +47,38 @@ async function loadCleanPage(window, language="zh-CN") {
 }
 
 async function prepareBaseFixture(language="zh-CN") {
-  if (typeof setTermaLanguage === "function") await setTermaLanguage(language, {render:false, emit:false});
+  await window.termaWorkspaceLanguage.setTermaLanguage(language, {persist:false});
+  const state = window.termaApplicationState;
+  for (const name of Object.keys(state)) {
+    if (!Object.getOwnPropertyDescriptor(window, name)) Object.defineProperty(window, name, {
+      configurable:true, get:()=>state[name], set:value=>{state[name]=value;}
+    });
+  }
+  window.setTermaLanguage = window.termaWorkspaceLanguage.setTermaLanguage;
+  window.applyTheme = theme => {
+    if (document.documentElement.dataset.theme !== theme) document.getElementById("themeToggle").click();
+  };
+  window.renderConnections = () => window.termaConnectionViews.renderConnections();
+  window.renderExplorerTools = () => window.termaConnectionViews.renderExplorerTools();
+  window.refreshIcons = () => window.termaIcons.refresh();
+  window.openServerDashboard = id => window.termaConnectionMenu.actions(id).find(item=>item.key==="dashboard").run();
+  window.openSftp = (...args) => window.termaSftpPage.open(...args);
+  window.openRemoteDesktop = (...args) => window.termaRemoteDesktop.open(...args);
+  window.openLinuxDesktopManager = (...args) => window.termaRemoteManagement.desktop.open(...args);
+  window.ensureTerminalGlobalSettings = () => window.termaTerminalSettings.ensure();
+  window.ensureTerminalLibs = () => window.termaTerminalLibraries.ensure();
+  window.updateTerminalConnectionStatus = window.termaTerminalConnectionRuntime.updateTerminalConnectionStatus;
+  window.terminalSessions = window.termaTerminalState.terminalSessions;
+  window.setOperationPanePinned = value => window.termaWorkspaceShell.setPinned(value);
+  window.setOperationPaneCollapsed = value => window.termaWorkspaceShell.setCollapsed(value);
+  Object.defineProperty(window, "api", {configurable:true,
+    get:()=>window.termaWorkspaceRequest, set:value=>{window.termaWorkspaceRequest=value;}
+  });
+  window.termaWorkspaceRefresh.stop();
   const english = language === "en-US";
   window.__readmeScreenshotLanguage = language;
   const text = (zh, en) => english ? en : zh;
-  const fixedNow = Math.floor(new Date("2026-08-05T10:00:00+08:00").getTime() / 1000);
+  const fixedNow = Math.floor(Date.now() / 1000);
   const forwarded = (id, values) => ({
     id,
     connection_id:101,
@@ -65,8 +95,7 @@ async function prepareBaseFixture(language="zh-CN") {
     clearInterval(notificationPollTimer);
     notificationPollTimer = null;
   }
-  loadAll = async () => {};
-  renderWelcome = () => {};
+  window.termaWorkspaceRefresh.load = async () => {};
   const baseApi = async (pathname, options={}) => {
     const value = String(pathname);
     if (value === "/api/connections") return connections;
@@ -101,6 +130,10 @@ async function prepareBaseFixture(language="zh-CN") {
       sort_order:1,
       auth_type:"key",
       identity_file:"id_ed25519_ops",
+      terminal_font_size:15,
+      terminal_font_size_inherit:0,
+      terminal_mobile_font_size:15,
+      terminal_mobile_font_size_inherit:0,
       forwards:[
         forwarded(1001, {mode:"local", service_name:text("运营控制台", "Operations Console"), service_type:"web", service_note:text("仅本机访问", "Local access only"), url_scheme:"http", bind_host:"127.0.0.1", bind_port:18080, target_host:"127.0.0.1", target_port:8080, status:"running", pid:4201, started_at:fixedNow - 7260}),
         forwarded(1002, {mode:"local", service_name:text("数据分析库", "Analytics Database"), service_type:"mysql", service_note:text("只读维护通道", "Read-only maintenance channel"), bind_host:"127.0.0.1", bind_port:13306, target_host:"198.51.100.24", target_port:3306, status:"running", pid:4202, started_at:fixedNow - 3610}),
@@ -149,8 +182,6 @@ async function prepareBaseFixture(language="zh-CN") {
   remoteGroupOpen.clear();
   remoteGroupOpen.add(text("生产环境", "Production"));
   remoteGroupOpen.add(text("研发环境", "Development"));
-  remoteHostOpen.clear();
-  remoteProfiles.forEach(profile => remoteHostOpen.add(remoteHostKey(profile)));
   healthResults.clear();
   healthResults.set(101, {id:101, ok:true, status:text("正常", "Healthy")});
   healthResults.set(102, {id:102, ok:true, status:text("正常", "Healthy")});
@@ -223,11 +254,10 @@ async function buildOverviewFixture() {
 }
 
 async function buildTerminalFixture() {
-  const readmeText = (zh, en) => window.__readmeScreenshotLanguage === "en-US" ? en : zh;
   primaryView = "connections";
   renderExplorerTools();
   renderConnections();
-  connectTerminal = async () => {};
+  window.termaTerminalConnection.connect = async () => {};
   await ensureTerminalGlobalSettings();
   await ensureTerminalLibs();
   const key = openTerminal(101, true);
@@ -241,21 +271,14 @@ async function buildTerminalFixture() {
   terminal.connected = true;
   terminal.currentDirectory = "/srv/terma";
   terminal.currentDirectoryKnown = true;
-  updateTerminalConnectionStatus(connections[0], key, readmeText("已连接", "Connected"));
+  updateTerminalConnectionStatus(connections[0], key, "connected");
   terminal.term.clear();
   const lines = [
-    "\u001b[32mops@edge-gateway\u001b[0m:\u001b[34m/srv/terma\u001b[0m$ terma doctor",
+    "\u001b[32mops@edge-gateway\u001b[0m:\u001b[34m/srv/terma\u001b[0m$ ls",
+    "config  logs  releases  README.md  deploy.sh",
     "",
-    "  SSH connection       \u001b[32mready\u001b[0m    18 ms",
-    "  SFTP subsystem       \u001b[32mready\u001b[0m",
-    "  Port forwarding      \u001b[32m2 running\u001b[0m",
-    "  Linux desktop        \u001b[32mXFCE detected\u001b[0m",
-    "  Remote graphics      RDP / VNC / XDMCP available",
-    "",
-    "\u001b[32mops@edge-gateway\u001b[0m:\u001b[34m/srv/terma\u001b[0m$ systemctl --user status terma-agent",
-    "\u001b[32m●\u001b[0m terma-agent.service - Terma remote helper",
-    "     Loaded: loaded",
-    "     Active: \u001b[32mactive (running)\u001b[0m",
+    "\u001b[32mops@edge-gateway\u001b[0m:\u001b[34m/srv/terma\u001b[0m$ printf 'Ready for deployment\\n'",
+    "Ready for deployment",
     "",
     "\u001b[32mops@edge-gateway\u001b[0m:\u001b[34m/srv/terma\u001b[0m$ "
   ];
@@ -269,7 +292,7 @@ async function buildSftpFixture() {
   const stamp = value => Math.floor(new Date(value).getTime() / 1000);
   api = async (pathname, options={}) => {
     const value = String(pathname);
-    if (value.includes("/sftp/session") && options.method === "POST") return {connected:true, status:"connected"};
+    if (value.includes("/sftp/session")) return {connected:true, status:"connected"};
     if (value.startsWith("/api/connections/101/sftp?")) {
       return {
         path:"/srv/terma",
@@ -286,7 +309,7 @@ async function buildSftpFixture() {
           {name:"terma.yml", type:"file", size:3842, mtime:stamp("2026-08-05T09:43:00+08:00"), mode:"640", owner:"ops", group:"ops"},
           {name:"deploy.sh", type:"file", size:2176, mtime:stamp("2026-08-05T09:44:00+08:00"), mode:"750", owner:"deploy", group:"ops"},
           {name:"README.md", type:"file", size:9214, mtime:stamp("2026-08-05T08:16:00+08:00"), mode:"644", owner:"ops", group:"ops"},
-          {name:"terma-1.3.0-linux-x64.tar.gz", type:"file", size:128974336, mtime:stamp("2026-08-05T09:47:00+08:00"), mode:"644", owner:"deploy", group:"ops"},
+          {name:"release-linux-x64.tar.gz", type:"file", size:128974336, mtime:stamp("2026-08-05T09:47:00+08:00"), mode:"644", owner:"deploy", group:"ops"},
           {name:"health-check.log", type:"file", size:182144, mtime:stamp("2026-08-05T09:52:00+08:00"), mode:"640", owner:"ops", group:"ops"},
           {name:"inventory.json", type:"file", size:12618, mtime:stamp("2026-08-05T09:26:00+08:00"), mode:"640", owner:"ops", group:"ops"}
         ]
@@ -300,6 +323,7 @@ async function buildSftpFixture() {
   renderConnections();
   await openSftp(101, "/srv/terma", true, "sftp-readme");
   await new Promise(resolve => setTimeout(resolve, 160));
+  await window.termaSftpConnection.refresh();
   refreshIcons();
   return {rows:document.querySelectorAll("#view-sftp .sftp-row").length};
 }
@@ -375,7 +399,12 @@ async function buildRemoteFixture() {
   };
   api = async (pathname, options={}) => {
     const value = String(pathname);
-    if (value === "/api/remote-clients/diagnostics") return {vnc:{available:true, launchable:true, client:readmeText("系统 VNC 客户端", "System VNC client")}, rdp:{available:true}, xdmcp:{available:true}};
+    if (value === "/api/remote-clients/diagnostics") return {
+      vnc:{available:true, launchable:true, system_available:true,
+        client:readmeText("系统 VNC 客户端", "System VNC client"),
+        system:{available:true, client:readmeText("系统 VNC 客户端", "System VNC client")}},
+      rdp:{available:true}, xdmcp:{available:true}
+    };
     if (value === "/api/remote-profiles/202/vnc/server") return diagnostics;
     if (value === "/api/connections/101/linux-desktop") return {platform_supported:true, os_id:"ubuntu", has_desktop:true, desktops:[{id:"xfce", name:"XFCE"}]};
     return window.__readmeBaseApi(pathname, options);
@@ -457,14 +486,22 @@ async function buildForwardingFixture() {
   primaryView = "running";
   renderExplorerTools();
   renderConnections();
-  globalForwardManagerState.groupMode = "ssh";
-  globalForwardManagerState.query = "";
-  globalForwardManagerState.status = "all";
-  globalForwardManagerState.connectionId = 0;
-  openGlobalForwardManager(true);
-  renderGlobalForwardManager();
+  window.termaForwardWorkspace.openManager(true);
   refreshIcons();
-  return {cards:document.querySelectorAll(".global-forward-card").length, groups:document.querySelectorAll(".global-forward-group").length};
+  return {cards:document.querySelectorAll(".forward-rule-row").length};
+}
+
+async function buildSplitFixture(window) {
+  const terminal = await execute(window, buildTerminalFixture);
+  await execute(window, buildSftpFixture);
+  await execute(window, terminalKey => {
+    const pane = window.workspaceFindPaneForTab(terminalKey);
+    window.termaWorkspaceDrag.applyTabDrop(
+      {key:activeTabKey, sourceActiveTabKey:activeTabKey},
+      {paneId:pane.id, zone:"right"}
+    );
+    window.termaWorkspaceShell.setCollapsed(true);
+  }, terminal.key);
 }
 
 async function capture(window, filename, language) {
@@ -485,14 +522,14 @@ async function capture(window, filename, language) {
     ].filter(([, pattern]) => pattern.test(visibleText)).map(([label]) => label);
     const languageIssues = ${JSON.stringify(language)} === "en-US"
       ? [...document.querySelectorAll("body *")].filter(node => {
-          if (node.closest(".xterm-screen")) return false;
+          if (node.closest(".xterm-screen") || !node.checkVisibility()) return false;
           const text = node.textContent || "";
           return text && /[\u3400-\u9fff]/.test(text) && [...node.children].every(child => !child.textContent?.trim());
         }).slice(0, 12).map(node => node.textContent.trim().slice(0, 80))
       : [];
     const chineseLanguageIssues = ${JSON.stringify(language)} === "zh-CN"
       ? [...document.querySelectorAll("body *")].filter(node => {
-          if (node.closest(".xterm-screen")) return false;
+          if (node.closest(".xterm-screen") || !node.checkVisibility()) return false;
           const text = (node.textContent || "").trim();
           if (!text || [...node.children].some(child => child.textContent?.trim())) return false;
           return /\b(?:Workspace|Forwarding List|Manage all forwards|Refresh status|Restore tunnels|Add forwarding rule|Running|Reconnecting|Failed to start|Stopped|All statuses|All servers|Group by SSH connection|Search names|Server rules|Linux desktop management|Detect again|Remote desktop is ready|System VNC client|No active tasks|Clear history|Connected|Healthy|Previous|Next|Items per page)\b/i.test(text);
@@ -501,10 +538,14 @@ async function capture(window, filename, language) {
     const expected = {
       "desktop-overview.png":visibleView?.id === "view-dashboard" && visibleView.querySelectorAll(".dashboard-card").length >= 6,
       "desktop-terminal.png":visibleView?.id === "view-terminal" && Boolean(visibleView.querySelector(".xterm-screen")),
+      "mobile-terminal.jpg":visibleView?.id === "view-terminal" && Boolean(visibleView.querySelector(".xterm-screen")),
+      "desktop-terminal-sftp-split.png":document.querySelectorAll("#workspaceDock .workspace-pane").length === 2
+        && Boolean(document.querySelector("#workspaceDock .xterm-screen"))
+        && document.querySelectorAll("#workspaceDock .sftp-row").length >= 5,
       "desktop-remote.png":visibleView?.id === "view-remote-desktop" && Boolean(visibleView.querySelector(".vnc-connection-help-panel")),
       "desktop-sftp.png":visibleView?.id === "view-sftp" && visibleView.querySelectorAll(".sftp-row").length >= 5,
       "desktop-linux-management.png":visibleView?.id === "view-linux-desktop" && visibleView.querySelectorAll(".linux-desktop-card").length >= 6,
-      "desktop-forwarding.png":visibleView?.id === "view-forward-manager" && visibleView.querySelectorAll(".global-forward-card").length >= 3 && Boolean(visibleView.querySelector(".global-forward-grouped-list"))
+      "desktop-forwarding.png":visibleView?.id === "view-forward-manager" && visibleView.querySelectorAll(".forward-rule-row").length >= 3
     }[${JSON.stringify(filename)}];
     return {
       title:document.title,
@@ -513,6 +554,7 @@ async function capture(window, filename, language) {
       bodyWidth:document.body.scrollWidth,
       overflow:document.body.scrollWidth > innerWidth + 1,
       forbidden,
+      disconnected:!!document.querySelector('.sftp-shell.is-disconnected'),
       languageIssues,
       chineseLanguageIssues,
       expected,
@@ -524,11 +566,16 @@ async function capture(window, filename, language) {
       icon:document.querySelector('.brand-mark')?.getAttribute('src') || ''
     };
   })()`);
+  if (!audit.expected || audit.languageIssues.length) {
+    fs.mkdirSync(outputDirectory, {recursive:true});
+    fs.writeFileSync(path.join(outputDirectory, "capture-failure.png"), (await window.webContents.capturePage()).toPNG());
+  }
   if (!(audit.title === "Terma" || audit.title.endsWith(" · Terma")) || audit.brand !== "Terma" || !audit.icon.includes("terma-icon")) {
     throw new Error(`${filename} 品牌核对失败：${JSON.stringify(audit)}`);
   }
   if (audit.overflow) throw new Error(`${filename} 出现页面横向溢出：${JSON.stringify(audit)}`);
   if (audit.forbidden.length) throw new Error(`${filename} 含不应出现在截图中的内容：${audit.forbidden.join(", ")}`);
+  if (audit.disconnected) throw new Error(`${filename} 含断开的 SFTP 连接`);
   if (audit.languageIssues.length) throw new Error(`${filename} 英文界面含中文残留：${audit.languageIssues.join(" | ")}`);
   if (audit.chineseLanguageIssues.length) throw new Error(`${filename} 中文界面含英文残留：${audit.chineseLanguageIssues.join(" | ")}`);
   if (!audit.expected) throw new Error(`${filename} 未呈现预期功能界面：${JSON.stringify(audit)}`);
@@ -536,9 +583,12 @@ async function capture(window, filename, language) {
   await delay(100);
   const image = await window.webContents.capturePage();
   const size = image.getSize();
-  if (size.width < 1500 || size.height < 900) throw new Error(`${filename} 截图尺寸异常：${size.width}x${size.height}`);
+  const mobile = filename === "mobile-terminal.jpg";
+  if (mobile ? size.width !== 390 || size.height !== 844 : size.width < 1500 || size.height < 900) {
+    throw new Error(`${filename} 截图尺寸异常：${size.width}x${size.height}`);
+  }
   fs.mkdirSync(outputDirectory, {recursive:true});
-  fs.writeFileSync(path.join(outputDirectory, filename), image.toPNG());
+  fs.writeFileSync(path.join(outputDirectory, filename), mobile ? image.toJPEG(92) : image.toPNG());
   console.log(`[readme-screenshots] ${language}/${filename} ${size.width}x${size.height}`);
 }
 
@@ -552,6 +602,7 @@ app.whenReady().then(async () => {
     backgroundColor:"#ffffff",
     webPreferences:{contextIsolation:true, offscreen:true, backgroundThrottling:false}
   });
+  attachWorkspaceBrowserFixture(window);
   try {
     const language = process.env.TERMA_README_SCREENSHOT_LANGUAGE || "zh-CN";
     const states = [
@@ -562,11 +613,27 @@ app.whenReady().then(async () => {
       ["desktop-linux-management.png", buildLinuxManagementFixture],
       ["desktop-forwarding.png", buildForwardingFixture]
     ];
-    for (const [filename, builder] of states) {
+    const requested = new Set((process.env.TERMA_README_SCREENSHOT_FILES || "").split(",").filter(Boolean));
+    const allowed = new Set([...states.map(([name])=>name), "desktop-terminal-sftp-split.png", "mobile-terminal.jpg"]);
+    for (const name of requested) if (!allowed.has(name)) throw new Error(`未知截图：${name}`);
+    const selected = filename => !requested.size || requested.has(filename);
+    for (const [filename, builder] of states.filter(([name])=>selected(name))) {
       await loadCleanPage(window, language);
       const result = await execute(window, builder);
       console.log(`[readme-screenshots] rendered ${filename}: ${JSON.stringify(result)}`);
       await capture(window, filename, language);
+    }
+    if (selected("desktop-terminal-sftp-split.png")) {
+      await loadCleanPage(window, language);
+      await buildSplitFixture(window);
+      await capture(window, "desktop-terminal-sftp-split.png", language);
+    }
+    if (selected("mobile-terminal.jpg")) {
+      window.setContentSize(390, 844);
+      await loadCleanPage(window, language);
+      await execute(window, buildTerminalFixture);
+      await execute(window, () => window.termaWorkspaceShell.showMobileWorkspace());
+      await capture(window, "mobile-terminal.jpg", language);
     }
     window.destroy();
     app.exit(0);

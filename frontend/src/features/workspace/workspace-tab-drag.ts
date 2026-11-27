@@ -42,8 +42,8 @@ type TabDrag = {
 const DRAG_THRESHOLD = 5;
 const CLICK_SUPPRESSION_MS = 350;
 
-export function workspaceTabInsertion(tabs: Element, clientX: number) {
-  const candidates = [...tabs.querySelectorAll<HTMLElement>('.tab:not(.tab-dragging)')];
+export function workspaceTabInsertion(tabs: Element, clientX: number, selector = '.tab:not(.tab-dragging)') {
+  const candidates = [...tabs.querySelectorAll<HTMLElement>(selector)];
   const index = candidates.findIndex(tab => {
     const rect = tab.getBoundingClientRect();
     return clientX < rect.left + rect.width / 2;
@@ -119,7 +119,7 @@ export function createWorkspaceTabDrag(port: WorkspaceTabDragPort, dock: DockTab
     document.body.classList.remove('workspace-tab-drag-active');
     markDragging(drag.tab, false);
     drag.ghost?.remove();
-    suppressClickUntil = Date.now() + CLICK_SUPPRESSION_MS;
+    if (drag.dragging) suppressClickUntil = Date.now() + CLICK_SUPPRESSION_MS;
 
     const owned = drag.dragging && !exiting && stillOwnsSource(drag);
     let applied = false;
@@ -158,6 +158,7 @@ export function createWorkspaceTabDrag(port: WorkspaceTabDragPort, dock: DockTab
       if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
       if (dy > dx && port.mobile() && drag.pointerType === 'touch') return finish(true);
       drag.dragging = true;
+      try { drag.tab.setPointerCapture(drag.pointerId); } catch { /* Synthetic events cannot capture a native pointer. */ }
       markDragging(drag.tab, true);
       document.body.classList.add('workspace-tab-drag-active');
       createDragGhost(drag, port.presentation(drag.key));
@@ -183,7 +184,6 @@ export function createWorkspaceTabDrag(port: WorkspaceTabDragPort, dock: DockTab
       startX: event.clientX, startY: event.clientY, pointerX: event.clientX, pointerY: event.clientY,
       dragging: false, ghost: null, autoScrollFrame: 0, controller
     };
-    try { tab.setPointerCapture(event.pointerId); } catch { /* Synthetic events cannot capture a native pointer. */ }
     const { signal } = controller;
     window.addEventListener('pointermove', event => move(drag, event), { passive: false, signal });
     window.addEventListener('pointerup', event => finish(false, event), { signal });
@@ -192,5 +192,5 @@ export function createWorkspaceTabDrag(port: WorkspaceTabDragPort, dock: DockTab
     window.addEventListener('pagehide', () => finish(true, undefined, true), { signal });
   }
 
-  return { begin, suppressClick: () => Date.now() < suppressClickUntil };
+  return { begin, suppressClick: () => Date.now() < suppressClickUntil, dispose: () => finish(true, undefined, true) };
 }

@@ -49,12 +49,18 @@ export function createViewportService(port: ViewportPort) {
   }
 
   function sync(options: HeightOptions = {}) {
-    if (nativeFileDialogPending && options.force !== true) return;
     const visualHeight = Number(port.window.visualViewport?.height || 0);
     const layoutHeight = Number(port.window.innerHeight || 0);
+    const visibleHeight = visualHeight || layoutHeight;
+    const root = port.document.documentElement;
+    if (visibleHeight > 0) {
+      root.style.setProperty('--visible-viewport-height', `${Math.round(visibleHeight)}px`);
+      root.style.setProperty('--visible-viewport-top', `${Math.max(0, Math.round(port.window.visualViewport?.offsetTop || 0))}px`);
+    }
+    if (nativeFileDialogPending && options.force !== true) return;
     const height = options.preferLayout ? Math.max(visualHeight, layoutHeight) : visualHeight || layoutHeight;
     if (!(height > 0)) return;
-    port.document.documentElement.style.setProperty('--app-height', `${Math.round(height)}px`);
+    root.style.setProperty('--app-height', `${Math.round(height)}px`);
     port.fit();
   }
 

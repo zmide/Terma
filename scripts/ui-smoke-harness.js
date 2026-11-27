@@ -40,7 +40,9 @@ function runElectron(environment) {
       cwd: path.resolve(__dirname, ".."),
       env: environment,
       stdio: "inherit",
-      windowsHide: true
+      // SW_HIDE suppresses the first native ShowWindow on Windows. Startup
+      // frame checks need the same first-show behavior as a normal app launch.
+      windowsHide: environment.TERMA_UI_SCENARIO !== "origin-protocol"
     });
     let settled = false;
     const finish = callback => value => {

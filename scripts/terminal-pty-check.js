@@ -34,8 +34,10 @@ async function main() {
   server = new Server({ hostKeys: [privateKey] }, (connection) => {
     connection.on("authentication", context => context.accept());
     connection.on("ready", () => {
-      connection.once("session", accept => {
+      connection.on("session", accept => {
         const session = accept();
+        // The optional platform probe may be denied; the following PTY must still open.
+        session.once("exec", (_acceptExec, rejectExec) => rejectExec?.());
         session.once("pty", acceptPty => acceptPty?.());
         session.once("shell", acceptShell => {
           const channel = acceptShell();

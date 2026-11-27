@@ -13,10 +13,13 @@ const clamp = (value: number, min: number, max: number) => Math.max(min, Math.mi
 
 function bounds(card: HTMLElement): Box {
   const layer = card.parentElement?.closest(nestedSelector)?.getBoundingClientRect();
-  const left = Math.max(0, layer?.left ?? 0) + margin;
-  const top = Math.max(0, layer?.top ?? 0) + margin;
-  const right = Math.min(document.documentElement.clientWidth, layer?.right ?? Infinity) - margin;
-  const bottom = Math.min(document.documentElement.clientHeight, layer?.bottom ?? Infinity) - margin;
+  const viewport = window.visualViewport;
+  const viewportLeft = viewport?.offsetLeft || 0;
+  const viewportTop = viewport?.offsetTop || 0;
+  const left = Math.max(viewportLeft, layer?.left ?? 0) + margin;
+  const top = Math.max(viewportTop, layer?.top ?? 0) + margin;
+  const right = Math.min(viewportLeft + (viewport?.width || document.documentElement.clientWidth), layer?.right ?? Infinity) - margin;
+  const bottom = Math.min(viewportTop + (viewport?.height || document.documentElement.clientHeight), layer?.bottom ?? Infinity) - margin;
   return { left, top, width: right - left, height: bottom - top };
 }
 
@@ -147,13 +150,16 @@ export function installDialogWindows(modal: HTMLElement, options: { palette?: bo
     if (!control) return;
     control.grip.style.translate = `${control.card.scrollLeft}px ${control.card.scrollTop}px`;
   }, { capture: true, signal });
-  window.addEventListener('resize', () => {
+  const constrainWindows = () => {
     for (const control of controls.values()) {
       if (control.card.checkVisibility() && (control.x || control.y || 'dialogSized' in control.card.dataset)) {
         setGeometry(control, control.card.getBoundingClientRect(), 0, 0, false);
       }
     }
-  }, { signal });
+  };
+  window.addEventListener('resize', constrainWindows, { signal });
+  window.visualViewport?.addEventListener('resize', constrainWindows, { signal });
+  window.visualViewport?.addEventListener('scroll', constrainWindows, { signal });
   const updateLabels = () => controls.forEach(({ grip }) => localize(grip));
   window.addEventListener('terma:language-changed', updateLabels, { signal });
   const language = new MutationObserver(updateLabels);

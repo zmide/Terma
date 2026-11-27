@@ -43,7 +43,8 @@ export function createSftpFileOperationsWorkspace({ tabs, runtimes, view, tr, no
   const copy = createSftpCopyService();
   const clipboard = { value: null as SftpClipboard | null };
   const tab = (key: string) => tabs().find(item => item.key === key);
-  const listed = (key: string, path: string, target: string) => runtimes.get(key)?.state.entries.find(entry => joinRemotePath(path, entry.name) === target);
+  const listed = (key: string, path: string, target: string) => filesServices.termaSftpViews?.listedEntry?.(key, target)
+    || runtimes.get(key)?.state.entries.find(entry => joinRemotePath(path, entry.name) === target);
   const refreshViews = () => { for (const key of runtimes.keys()) view.refreshDirectoryActions(key); };
   const clearClipboard = () => { clipboard.value = null; };
   function validName(value: string, label: string) {

@@ -204,7 +204,7 @@ function createSplitterControls(port: WorkspaceDragPort) {
   return { begin, setRatio, keydown };
 }
 
-function applyTabDrop(port: WorkspaceDropMutationPort, drag: WorkspaceDropMutationDrag, target: WorkspaceDropTarget | null) {
+export function applyTabDrop(port: WorkspaceDropMutationPort, drag: WorkspaceDropMutationDrag, target: WorkspaceDropTarget | null) {
   const sourcePane = port.findPaneForTab(drag.key);
   const targetPane = target?.paneId ? port.findPane(target.paneId) : null;
   if (!sourcePane || !targetPane || !target) return false;

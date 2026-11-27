@@ -46,6 +46,7 @@ export function closeTerminalSession(key: string) {
   terminalServices.termaTerminalTransport?.release(session);
   try { session.resizeDisposable?.dispose(); } catch { /* Resize tracking may already have been released by the transport. */ }
   terminalServices.termaTerminalOutputFlow?.cancel(session);
+  session.directoryPromptDisposable?.dispose();
   try { session.term?.dispose(); } catch { /* An engine already disposed during a failed mount has no remaining DOM ownership. */ }
   surface?.remove();
   terminalSurfaceCache.delete(key);
@@ -53,5 +54,6 @@ export function closeTerminalSession(key: string) {
   efficiencyServices.termaTerminalActivity?.clear(key);
   quickTerminalConnections.delete(key);
   terminalStartupOverrides.delete(key);
+  efficiencyServices.termaEfficiency?.panel?.refresh();
   if (quickId < 0) queueMicrotask(() => releaseQuickConnectionIfUnused(quickId));
 }

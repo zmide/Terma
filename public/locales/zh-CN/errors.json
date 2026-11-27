@@ -52,6 +52,7 @@
     "ssh_key_public_mismatch": "公钥与私钥不匹配，请重新导入正确的密钥。",
     "host_not_allowed": "此访问地址尚未获得 Terma 的访问许可。",
     "fnos_security_managed": "飞牛应用必须保持所有访问经过登录验证，且不能启用宿主桌面权限。",
+    "fnos_relay_origins_invalid": "请填写最多 16 个中继域名或 IP，不填写协议、端口、路径、账号或通配符。兼容旧完整 HTTPS 来源的精确端口授权；此项仅用于飞牛发行版。",
     "fnos_listen_managed": "飞牛应用的监听地址和端口由应用包管理。",
     "fnos_storage_managed": "飞牛应用的数据目录由应用中心管理。",
     "fnos_update_managed": "请通过飞牛应用中心或安装新版 FPK 升级 Terma。",

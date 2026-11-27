@@ -15,6 +15,11 @@
 #quickPanel .quick-panel-dialog{box-shadow:none;border-radius:3px}
 @media(max-width:700px){#quickPanel[data-command-page]{padding:8px}#quickPanel[data-command-page] .quick-panel-dialog{width:100%;height:calc(100dvh - 16px);max-height:none}.command-page{height:100%}.command-page-toolbar{gap:8px;padding:8px}.command-page-content{flex:1;overflow:auto}}
 
+@media(max-width:760px){
+  #quickPanel{inset:var(--visible-viewport-top,0px) 0 auto;height:var(--visible-viewport-height,100dvh);box-sizing:border-box;padding:8px}
+  #quickPanel .quick-panel-dialog{height:calc(var(--visible-viewport-height,100dvh) - 16px);max-height:calc(var(--visible-viewport-height,100dvh) - 16px)!important;box-sizing:border-box}
+}
+
 .command-page-loading{margin:0;padding:18px 20px;color:var(--muted)}
 
 #quickPanel #modal .ssh-key-result-head h2,#quickPanel #modal .ssh-key-result-head>.icon-button{display:none}

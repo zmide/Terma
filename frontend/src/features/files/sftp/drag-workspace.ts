@@ -6,7 +6,7 @@ import {terminalSessions} from '@/features/terminal/terminal-session-state';
 import {setTerminalDropState,uploadLocalFilesToTerminalTab} from '../../terminal/terminal-drop-workspace';
 import { terminalDirectory } from '@/features/terminal/terminal-directory-workspace';
 import { activateTab } from '@/features/workspace/workspace-dock-runtime';
-import { workspaceAllTabs, workspaceDockState, workspaceFindPaneForTab, workspaceTabByKey } from '@/features/workspace/workspace-dock-state';
+import { workspaceDockState, workspaceFindPaneForTab } from '@/features/workspace/workspace-dock-state';
 import { workspacePaneElement } from '@/features/workspace/workspace-pane-scope';
 import type { WorkspaceRequestOptions } from '@/shared/api/workspace-request';
 import type { WorkspaceTab } from '@/features/workspace/workspace-tab-runtime';
@@ -18,6 +18,7 @@ import { collectDroppedFiles } from './dropped-files';
 import { INTERNAL_DRAG_MIME } from './drag-payload';
 import type { SftpPageConnection } from './page-lifecycle';
 import type { createSftpTabRuntime, SftpTabRuntime } from './tab-runtime';
+import {embeddedSftpViews, sftpWorkspaceTabs, sftpWorkspaceTab} from './embedded-views';
 
 interface TerminalDropSession {
   id: number; key: string; connected: boolean; mount?: HTMLElement;
@@ -52,7 +53,7 @@ export function createSftpDragWorkspace({ tabs: tabRuntime, runtimes, api, text,
   const active = () => applicationState.activeTabKey;
   const state = (key: string) => runtimes.get(key)?.state;
   const path = (tab: DragTab) => state(tab.key)?.path || tab.path || '.';
-  const tab = (key: string) => asDragTab(workspaceTabByKey(key));
+  const tab = (key: string) => asDragTab(sftpWorkspaceTab(key));
   const host = (key: string) => {
     const pane = workspaceFindPaneForTab(key), focused = workspacePaneElement(workspaceDockState.focusedPaneId);
     const selector = '#view-sftp:not([hidden]) #sftpList';
@@ -64,13 +65,15 @@ export function createSftpDragWorkspace({ tabs: tabRuntime, runtimes, api, text,
   const drag = createSftpDragRuntime({
     bridge: desktop,
     stage: (id, paths) => api(`/api/connections/${id}/sftp/stage-drag`, { method: 'POST', body: JSON.stringify({ paths }) }),
-    sourceKey: tabKeyFromNode, active, tabs: () => applicationState.tabs.flatMap(item => asDragTab(item) || []), tab: key => tab(key), activate: key => activateTab(key),
+    sourceKey: tabKeyFromNode, active, tabs: () => sftpWorkspaceTabs().flatMap(item => asDragTab(item) || []), tab: key => tab(key),
+    activate: key => {const embedded = embeddedSftpViews.get(key); if (embedded) embedded.focus(); else activateTab(key);},
     sourceState: key => tabRuntime.restore(key)?.state, state,
     selected: key => filesServices.termaSftpViews?.selectedEntries(key) || [],
     select: (key, id, filePath, name, type, preserve) => filesServices.termaSftpViews?.select(key, id,
       preserve ? { preserveSelection: true } : { forceSingle: true }, { path: filePath, name, type }),
     path, mobile: () => isMobileLayout(), text, notify, host,
     view(key) {
+      const embedded = embeddedSftpViews.get(key); if (embedded) return embedded.root;
       const pane = workspaceFindPaneForTab(key), kind = tab(key)?.kind;
       const selector = kind === 'sftp' ? '#view-sftp' : kind === 'terminal' || kind === 'quick-terminal' ? '#view-terminal' : kind === 'local-files' ? '#view-local-files' : '';
       return pane && selector ? workspacePaneElement(pane.id)?.querySelector<HTMLElement>(selector) || null : null;
@@ -104,7 +107,7 @@ export function createSftpDragWorkspace({ tabs: tabRuntime, runtimes, api, text,
         const session = terminalSessions.get(key);
         return session?.connected ? { key: session.key, id: Number(session.id), kind, path: session.currentDirectory } : undefined;
       }
-      const target = asDragTab(workspaceAllTabs().find(item => item.kind === kind && item.key === key));
+      const target = asDragTab(sftpWorkspaceTabs().find(item => item.kind === kind && item.key === key));
       const directory = kind === 'sftp' ? state(key) : filesServices.termaLocalFileRuntime.files.states.get(key);
       return target ? { ...target, path: directory?.path || target.path } : undefined;
     },

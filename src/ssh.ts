@@ -5,6 +5,7 @@ const net = require("node:net");
 const os = require("node:os");
 const dns = require("node:dns").promises;
 const { spawn, spawnSync } = require("node:child_process");
+const { createSshCommandLimits } = require("./infrastructure/ssh-command-limits");
 const { SSH_BIN, SSH_DIR, USER_SSH_DIR, LOG_DIR, DATA_DIR } = require("./config");
 const { all, getConnection, getForward, run, now, pidRunning } = require("./db");
 const { notifyIssue, notifyRecovery } = require("./notifications");
@@ -161,10 +162,12 @@ function runPersistentSshClientCommand(client, connection, command, timeoutMs, o
     let stderr = Buffer.alloc(0);
     let channel: any = null;
     let settled = false;
+    let limits = null;
     const finish = (status, error = null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      limits?.dispose();
       resolve({
         status,
         stdout:decodeSshOutput(stdout, connection?.terminal_encoding),
@@ -176,14 +179,21 @@ function runPersistentSshClientCommand(client, connection, command, timeoutMs, o
       try { channel?.close(); } catch {}
       finish(null, new Error("SSH command timed out"));
     }, timeoutMs);
+    limits = createSshCommandLimits(options, error => {
+      finish(null, error);
+      try {channel?.close();} catch {}
+    });
     client.exec(String(command || ""), (error, openedChannel) => {
       if (error) return finish(null, normalizeSshTransportError(error, connection));
+      if (settled) {openedChannel.close(); return;}
       channel = openedChannel;
       openedChannel.on("data", (chunk) => {
+        if (!limits.accept(chunk)) return;
         stdout = appendSshOutputTail(stdout, chunk);
         onChunk?.(chunk, "stdout");
       });
       openedChannel.stderr?.on("data", (chunk) => {
+        if (!limits.accept(chunk)) return;
         stderr = appendSshOutputTail(stderr, chunk);
         onChunk?.(chunk, "stderr");
       });
@@ -201,11 +211,13 @@ function persistentSshRetryable(error) {
 
 async function runPersistentSshCommand(connection, command, timeoutMs = 60000, onChunk = null, options: any = {}) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    options.signal?.throwIfAborted();
     const lease: any = await persistentSshCommandEntry(connection);
     try {
+      options.signal?.throwIfAborted();
       const result: any = await runPersistentSshClientCommand(lease.client, connection, command, timeoutMs, onChunk, options);
       if (isHostTrustError(result.error)) throw result.error;
-      if (attempt === 0 && result.error && persistentSshRetryable(result.error)) {
+      if (!options.signal?.aborted && attempt === 0 && result.error && persistentSshRetryable(result.error)) {
         lease.invalidate();
         continue;
       }
@@ -1430,15 +1442,17 @@ async function runSshCommandForConnection(connection, command, timeoutMs = 60000
 }
 
 async function runSshCommandForConnectionStreaming(connection, command, timeoutMs = 60000, onChunk = null, options: any = {}) {
+  options.signal?.throwIfAborted();
   const x11Mode = ["untrusted", "trusted"].includes(String(options.x11Mode || ""))
     ? String(options.x11Mode)
     : "";
   if (shouldUseBuiltinSsh(connection)) {
-    const result: any = await runPasswordCommand(connection, command, options.input ?? null, timeoutMs, onChunk, {x11Mode});
+    const result: any = await runPasswordCommand(connection, command, options.input ?? null, timeoutMs, onChunk, {...options,x11Mode});
     if (isHostTrustError(result.error)) throw result.error;
     return result;
   }
   await ensureConnectionHostTrusted(connection);
+  options.signal?.throwIfAborted();
   const args = ["-T", ...systemConnectionArgs(connection), "-o", "BatchMode=yes", "-p", String(connection.ssh_port || 22)];
   const xauthLocation = process.env.TERMA_XAUTH || process.env.TUNNELDESK_XAUTH;
   if (x11Mode && xauthLocation) args.push("-o", `XAuthLocation=${xauthLocation}`);
@@ -1455,10 +1469,12 @@ async function runSshCommandForConnectionStreaming(connection, command, timeoutM
     const stdout = [];
     const stderr = [];
     let settled = false;
+    let limits = null;
     const finish = (status, error = null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      limits?.dispose();
       resolve({
         status,
         stdout:decodeSshOutput(Buffer.concat(stdout).slice(-60000), connection.terminal_encoding),
@@ -1470,8 +1486,12 @@ async function runSshCommandForConnectionStreaming(connection, command, timeoutM
       try { child.kill("SIGKILL"); } catch {}
       finish(null, new Error("SSH command timed out"));
     }, timeoutMs);
-    child.stdout?.on("data", (chunk) => { stdout.push(Buffer.from(chunk)); onChunk?.(chunk, "stdout"); });
-    child.stderr?.on("data", (chunk) => { stderr.push(Buffer.from(chunk)); onChunk?.(chunk, "stderr"); });
+    limits = createSshCommandLimits(options, error => {
+      finish(null, error);
+      try {child.kill("SIGKILL");} catch {}
+    });
+    child.stdout?.on("data", (chunk) => { if(limits.accept(chunk)){stdout.push(Buffer.from(chunk)); onChunk?.(chunk, "stdout");} });
+    child.stderr?.on("data", (chunk) => { if(limits.accept(chunk)){stderr.push(Buffer.from(chunk)); onChunk?.(chunk, "stderr");} });
     child.stdin?.on("error", () => {});
     child.on("error", (error) => finish(null, error));
     child.on("close", (code) => finish(code));

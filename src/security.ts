@@ -8,7 +8,7 @@ const { LOGIN_PROTECTION_LIMITS, LoginRateLimiter, SessionStore } = require("./a
 const { localDirectDesktopIntegrationDecision, normalizeActualListenHosts } = require("./desktop-integration-policy");
 const { isFnosDistribution, assertDistributionSecurityOptions } = require("./infrastructure/distribution-policy");
 const { ensurePrivateDirectory, ensurePrivateFile } = require("./storage-permissions");
-const { requestOriginFailure } = require("./infrastructure/request-origin-policy");
+const { inspectRequestOrigin, validateFnosRelayOrigins, fnosRelayOriginAllowed } = require("./infrastructure/request-origin-policy");
 const { publicError } = require("./public-error");
 
 const SECURITY_FILE = path.join(DATA_DIR, "security.json");
@@ -93,6 +93,7 @@ function defaultSettings() {
     trusted_proxy_addresses: [],
     local_direct_desktop_integration_enabled: false,
     allowed_hosts: [],
+    fnos_relay_origins: [],
     session_ttl_minutes: DEFAULT_SESSION_TTL_MINUTES,
     session_max_sessions: DEFAULT_SESSION_MAX_SESSIONS,
     session_cleanup_minutes: DEFAULT_SESSION_CLEANUP_MINUTES,
@@ -219,6 +220,7 @@ function readSecuritySettings() {
       local_direct_desktop_integration_enabled: !isFnosDistribution() && stored?.local_direct_desktop_integration_enabled === true,
       trusted_proxy_addresses: normalizeTrustedProxyAddresses(stored?.trusted_proxy_addresses),
       allowed_hosts: normalizeAllowedHosts(stored?.allowed_hosts),
+      fnos_relay_origins: normalizeFnosRelayOrigins(stored?.fnos_relay_origins),
       session_ttl_minutes: normalizeBoundedInteger(stored?.session_ttl_minutes, DEFAULT_SESSION_TTL_MINUTES, SESSION_LIMITS.ttl_minutes),
       session_max_sessions: normalizeBoundedInteger(stored?.session_max_sessions, DEFAULT_SESSION_MAX_SESSIONS, SESSION_LIMITS.max_sessions),
       session_cleanup_minutes: normalizeBoundedInteger(stored?.session_cleanup_minutes, DEFAULT_SESSION_CLEANUP_MINUTES, SESSION_LIMITS.cleanup_minutes),
@@ -256,6 +258,7 @@ function publicSecuritySettings(req = null) {
     local_direct_desktop_integration_enabled: Boolean(settings.local_direct_desktop_integration_enabled),
     local_direct_desktop_integration: localDirectDesktopIntegrationStatus(req),
     allowed_hosts: settings.allowed_hosts,
+    fnos_relay_origins: settings.fnos_relay_origins,
     login_protection: {
       max_failures: loginLimiter.options.maxFailures,
       window_seconds: Math.floor(loginLimiter.options.windowMs / 1000),
@@ -367,6 +370,11 @@ function updateSecurityOptions(data) {
     next.local_direct_desktop_integration_enabled = Boolean(data.local_direct_desktop_integration_enabled);
   }
   if (typeof data.allowed_hosts !== "undefined") next.allowed_hosts = requireAllowedHosts(data.allowed_hosts);
+  if (typeof data.fnos_relay_origins !== "undefined") {
+    try { next.fnos_relay_origins = validateFnosRelayOrigins(data.fnos_relay_origins); }
+    catch { throw publicError("FNOS_RELAY_ORIGINS_INVALID", "Use relay domains or IPs without schemes, ports, paths or wildcards.", {}, 400); }
+    if (!isFnosDistribution() && next.fnos_relay_origins.length) throw publicError("FNOS_RELAY_ORIGINS_INVALID", "HTTPS relay origins require the fnOS distribution", {}, 400);
+  }
   if (typeof data.session_ttl_minutes !== "undefined") {
     next.session_ttl_minutes = requireBoundedInteger(data.session_ttl_minutes, "会话有效期", SESSION_LIMITS.ttl_minutes);
   }
@@ -410,6 +418,7 @@ function resetWebAccessSecurity() {
     trusted_proxy_addresses: [],
     local_direct_desktop_integration_enabled: false,
     allowed_hosts: [],
+    fnos_relay_origins: [],
     session_ttl_minutes: DEFAULT_SESSION_TTL_MINUTES,
     session_max_sessions: DEFAULT_SESSION_MAX_SESSIONS,
     session_cleanup_minutes: DEFAULT_SESSION_CLEANUP_MINUTES,
@@ -516,7 +525,7 @@ function isRequestSecure(req) {
   if (requestProtocol(req) === "https:") return true;
   // Keep HTTPS login cookies Secure when an administrator allows an HTTP
   // upstream without granting trust to forwarding headers or proxy addresses.
-  return settings.origin_protocol_check_enabled === false
+  return (settings.origin_protocol_check_enabled === false || isApprovedFnosRelay(req, settings))
     && typeof req.headers.origin === "string" && req.headers.origin.startsWith("https://")
     && originRejectionCode(req) === null;
 }
@@ -820,16 +829,34 @@ function hostAllowed(req) {
   return isLocalHostAuthority(req);
 }
 
-function originRejectionCode(req, options: any = {}) {
-  if (!hostAllowed(req)) return "request_origin_forbidden";
+function normalizeFnosRelayOrigins(value) {
+  try { return validateFnosRelayOrigins(value ?? []); }
+  catch { return []; } // A damaged persisted allowlist must fail closed.
+}
+
+function isApprovedFnosRelay(req, settings = readSecuritySettings()) {
+  if (!isFnosDistribution() || typeof req.headers.origin !== "string") return false;
+  const host = requestHost(req);
+  // Local-address fallback cannot turn this into a general cross-origin grant.
+  return Boolean(host && settings.allowed_hosts.some(item => hostMatchesAllowed(formatHostAuthority(host), item))
+    && fnosRelayOriginAllowed(req.headers.origin, settings.fnos_relay_origins));
+}
+
+function originRejection(req, options: any = {}) {
+  if (!hostAllowed(req)) return {code:"request_origin_forbidden", params:{reason:"host_not_allowed"}};
   const origin = req.headers.origin;
   if (!origin) {
-    return !options.websocket || isDirectLoopbackRequest(req) || hasExplicitCredential(req) ? null : "request_origin_forbidden";
+    return !options.websocket || isDirectLoopbackRequest(req) || hasExplicitCredential(req) ? null
+      : {code:"request_origin_forbidden", params:{reason:"missing_origin"}};
   }
-  return requestOriginFailure({origin, host:requestHost(req), protocol:requestProtocol(req),
+  if (isApprovedFnosRelay(req)) return null;
+  return inspectRequestOrigin({origin, host:requestHost(req), protocol:requestProtocol(req),
     checkProtocol:readSecuritySettings().origin_protocol_check_enabled, parseAuthority:parseHostAuthority});
 }
 
+function originRejectionCode(req, options: any = {}) {
+  return originRejection(req, options)?.code || null;
+}
 function sameOrigin(req, options: any = {}) {
   return originRejectionCode(req, options) === null;
 }
@@ -923,6 +950,7 @@ module.exports = {
   revokeDesktopBrowserGrant,
   sameOrigin,
   originRejectionCode,
+  originRejection,
   webSocketOriginAllowed,
   secureHeaders,
   securityDiagnostics,

@@ -7,7 +7,7 @@ export interface SftpDirectoryState {
   path: string; entries: SftpEntry[]; connectionId: number; selected: SftpSelection | null;
   query: string; recursiveSearch: boolean; recursiveSearchTruncated: boolean; sort: string; dir: string;
   page: number; pageSize: number; total: number; totalPages: number; unfilteredTotal: number; loading: boolean; requestSeq: number;
-  paged?:boolean;selectionAnchorPath?:string;
+  paged?:boolean;selectionAnchorPath?:string;listRevision?:number;
 }
 export interface SftpScrollState { scrollTop?: number; scrollLeft?: number; selectedPaths?: string[]; activePath?: string; anchorPath?: string; anchorOffset?: number }
 export interface SftpDirectoryPage { path: string; entries: SftpEntry[]; page?: number; page_size?: number; total?: number; total_pages?: number; unfiltered_total?: number; recursive_search_truncated?: boolean; recursive?: boolean;truncated?:boolean;paged?:boolean;sort?:string;dir?:string }

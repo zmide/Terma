@@ -2,9 +2,9 @@
 const groups = Object.freeze({
   base: ["base", "m8-efficiency", "m6-automations"],
   workspace: ["system-notification", "application-lifecycle", "ui-interaction",
-    "notification-presentation", "form-controls", "ssh-host-trust", "workspace-shell"],
+    "notification-presentation", "form-controls", "ssh-host-trust", "workspace-shell", "mobile-layout"],
   terminal: ["terminal-transport", "terminal-viewport", "terminal-persistence",
-    "terminal-startup", "terminal-settings", "terminal-toolbar", "terminal-image-paste"],
+    "terminal-startup", "terminal-settings", "terminal-toolbar", "terminal-image-paste", "terminal-panel"],
   files: ["tasks", "sftp-dialogs", "image-preview", "sftp-vue", "sftp-global-settings"],
   operations: ["m6-operations", "m6-running", "m6-forward-pages", "m6-batch",
     "m6-log-list", "m6-log-reader", "m6-exchange"],
@@ -15,7 +15,7 @@ const groups = Object.freeze({
 const offscreen = new Set([
   "m8-efficiency", "m6-automations", "system-notification", "application-lifecycle",
   "terminal-transport", "ui-interaction", "notification-presentation", "terminal-viewport",
-  "form-controls", "ssh-host-trust", "terminal-startup", "m6-operations", "m6-running",
+  "form-controls", "ssh-host-trust", "mobile-layout", "terminal-startup", "terminal-panel", "m6-operations", "m6-running",
   "m6-forward-pages", "m6-batch", "m6-log-list", "m6-log-reader", "m6-exchange",
   "m7-management", "m7-list", "m7-profile", "m7-x11", "m8-assistant",
   "m8-session-efficiency", "m8-snippets", "vnc-clipboard-flow"

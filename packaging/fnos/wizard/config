@@ -4,7 +4,7 @@
     "items": [
       {
         "type": "tips",
-        "helpText": "所有字段留空会保留当前设置。运行中的 Terma 会在保存后短暂重启，现有 Web 登录将失效。8088 端口和私有数据位置由应用包管理。 / Leave fields blank to keep their current values. Saving briefly restarts a running instance and ends existing Web sessions. The package manages port 8088 and private storage."
+        "helpText": "飞牛回显上次在此提交的值；空白或保持表示沿用 Terma 当前配置，不表示配置丢失。在 Terma 网页中修改的安全设置以网页显示为准。密码不提供回读。保存后会短暂重启并使现有登录失效。 / fnOS displays values last submitted here. Blank or Keep retains the active Terma configuration. Changes made in Terma Web are shown there. Passwords are not read back. Saving restarts Terma and ends existing sessions."
       },
       {
         "type": "password",
@@ -34,6 +34,13 @@
       },
       {
         "type": "text",
+        "field": "wizard_relay_origins",
+        "label": "允许的中继域名或 IP / Allowed relay domains or IPs",
+        "initValue": "",
+        "helpText": "填写你信任的中继域名或 IP，例如 relay.example.com；不用填写协议或端口，自动允许该主机变化的 HTTPS 端口，不允许 HTTP 或子域名通配。多个用逗号分隔；Terma 目标域名也必须在上方允许。旧完整 HTTPS 地址仍精确匹配原端口。留空保持，填写 - 清除。 / Enter trusted relay domains or IPs without a scheme or port. All HTTPS ports on that exact host are allowed; HTTP and subdomain wildcards are not. Separate with commas and allow the target Terma host above. Legacy HTTPS origins keep exact port matching. Blank keeps; - clears."
+      },
+      {
+        "type": "text",
         "field": "wizard_trusted_proxies",
         "label": "可信反向代理 IP / Trusted proxy IPs",
         "initValue": "",
@@ -56,7 +63,7 @@
         "field": "wizard_reset_network",
         "label": "恢复默认网络设置 / Reset network settings",
         "initValue": "false",
-        "helpText": "恢复监听全部 IPv4 网卡，清空允许域名和可信代理，并开启协议校验；本次选择和填写的值会在恢复后应用。 / Reset listeners, Allowed Hosts and trusted proxies, and enable protocol checking; then apply the choices and values above.",
+        "helpText": "恢复监听全部 IPv4 网卡，清空允许域名、中继来源和可信代理，并开启协议校验；本次选择和填写的值会在恢复后应用。 / Reset listeners, Allowed Hosts, relay origins and trusted proxies, and enable protocol checking; then apply the choices and values above.",
         "options": [
           {
             "label": "保持现有网络设置 / Keep current network settings",

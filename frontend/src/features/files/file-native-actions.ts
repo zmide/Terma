@@ -1,7 +1,7 @@
 import type {LocalFileState,LocalEntry,LoadOptions} from './local-file-service';
 type SelectionAction='open'|'rename'|'chmod'|'copy'|'delete';
 interface Port {
-  states:Map<string,LocalFileState>;desktop():boolean;selected(key:string):LocalEntry[];
+  states:Map<string,LocalFileState>;desktop():boolean;selected(key:string):LocalEntry[];listed?(key:string):LocalEntry[];
   load(key:string,options:LoadOptions):Promise<unknown>;hidePath(key:string):void;
   select(key:string,path:string):void;open(path:string):Promise<unknown>;locations():Promise<Record<string,string>>;
   mutate(key:string,action:'rename'|'chmod'|'delete',paths:string[]):unknown;
@@ -20,7 +20,7 @@ export function createFileNativeActions(port:Port){
     return port.load(key,{path,location:computer?'computer':'directory',page:1});
   }
   async function activate(key:string,path:string){
-    const source=context(key),item=source?.state.entries.find(item=>item.path===path);if(!source||!item)return false;
+    const source=context(key),item=(port.listed?.(key)||source?.state.entries)?.find(item=>item.path===path);if(!source||!item)return false;
     port.select(key,path);if(item.type!=='file')return navigate(key,item.path);
     try{if(source.valid())await port.open(item.path);return true;}
     catch(error){if(source.valid())port.notify(error instanceof Error?error.message:port.text('sftp:local_files.open_file_failed'),'error');return false;}

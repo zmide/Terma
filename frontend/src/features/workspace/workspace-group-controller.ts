@@ -132,7 +132,7 @@ export function createWorkspaceGroupController(port: GroupPort, state: ReturnTyp
     const validKeys = new Set(snapshot.tabs.map(tab => tab.key));
     for (const key of selected) if (!validKeys.has(key)) selected.delete(key);
     const canCombine = port.mobile() && snapshot.tabs.filter(tab => tab.kind !== 'welcome' && tab.viewName !== 'welcome').length >= 2;
-    const show = canCombine || snapshot.groups.length > 1 || selectionMode || selected.size > 0;
+    const show = snapshot.groups.length > 1 || selectionMode || selected.size > 0;
     bar.hidden = !show;
     document.body.classList.toggle('workspace-groups-visible', show);
     if (!show) {

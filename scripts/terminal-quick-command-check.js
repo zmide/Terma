@@ -30,8 +30,10 @@ const toolbarView = read('frontend/src/features/terminal/TerminalToolbarView.ts'
 assert.match(toolbarView, /terminal-action-quick-commands/);
 assert.match(toolbarView, /actionsPort\?\.quickCommands\(model\.key\)/);
 assert.match(read('frontend/src/features/terminal/terminal-toolbar-service.ts'), /quickCommands: key => efficiencyServices\.termaEfficiency\.quick\.toggle\(key\)/);
-assert.match(terminal, /data-terminal-quick-command-bar/);
-assert.match(terminal, /termaEfficiency\.quick\.mount\(key, terminalSurface\)/);
+const utilityPanel = read('frontend/src/features/terminal-panel/panel-contents.ts');
+assert.match(utilityPanel, /dataset\.terminalQuickCommandBar/);
+assert.match(utilityPanel, /termaEfficiency\.quick\.mount\(key, host\)/);
+assert.doesNotMatch(read('frontend/src/features/terminal/terminal-page.ts'), /data-terminal-quick-command-bar/);
 assert.doesNotMatch(index, /app-(?:command-snippets|terminal-quick-commands)\.js/);
 assert.match(toolbarView, /list-checks/);
 assert.doesNotMatch(quickCommands, /terminal-quick-command-head/);
@@ -124,3 +126,4 @@ assert.ok(quickView.includes('service.glyph(item)'));
 assert.match(migrations, /WHEN '服' THEN 'service'/);
 
 console.log("终端快速命令栏检查通过：独立模块、可调高度、事件委托、数据库兼容和展示字段白名单均已覆盖");
+require('./terminal-panel-check');

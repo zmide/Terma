@@ -5,7 +5,7 @@ interface Target {key?:string;kind?:string;id:number;title?:string;name?:string;
 interface Payload {sourceTabKey:string;paths:string[];entries:LocalEntry[]}
 type Action='open'|'system'|'rename'|'delete'|'permissions'|'file'|'dir'|'refresh'|'copy';
 interface Port {
-  context(key:string):FileMenuContext|null;selected(key:string):LocalEntry[];select(key:string,path:string):void;
+  context(key:string):FileMenuContext|null;selected(key:string):LocalEntry[];listed?(key:string):LocalEntry[];select(key:string,path:string):void;
   active():Target|undefined;connections():Array<{id:number;name?:string;ssh_host?:string}>;desktop():boolean;
   text(key:string,values?:Record<string,unknown>):string;
   run(action:Action,key:string,paths:string[]):unknown;
@@ -30,7 +30,7 @@ export function createFileMenus(port:Port){
   }
   function entry(event:SftpMenuEvent,key:string,path:string){
     event.preventDefault?.();event.stopPropagation?.();
-    const context=port.context(key),file=context?.state.entries.find(item=>item.path===path);if(!context||!file)return;
+    const context=port.context(key),file=(port.listed?.(key)||context?.state.entries)?.find(item=>item.path===path);if(!context||!file)return;
     if(file.type!=='drive'&&!port.selected(key).some(item=>item.path===path))port.select(key,path);
     const selected=port.selected(key),entries=file.type!=='drive'&&selected.some(item=>item.path===path)?selected.map(item=>({...item})):[{...file}];
     const paths=entries.map(item=>item.path),count=paths.length,web=!!context.state.fileSource;

@@ -11,6 +11,7 @@ const { readFrontendDomain } = require("./frontend-source");
 const root = path.resolve(__dirname, "..");
 const languages = ["zh-CN", "en-US"];
 assert.ok(fs.readFileSync(path.join(__dirname,'ui-smoke-electron.js'),'utf8').includes('runWorkspaceShellUiScenario(window)'), 'workspace shell browser matrix must remain available');
+assert.ok(fs.readFileSync(path.join(__dirname,'terminal-panel-content-ui-scenario.js'),'utf8').includes('return keeps terminal group'), 'dual panel docking language/theme matrix must remain available');
 const namespaces = ["common", "navigation", "settings", "connections", "terminal", "sftp", "tasks", "remote", "errors", "login"];
 
 function read(relative) {
@@ -789,6 +790,11 @@ for (const marker of ['[1200,390]', "['light','dark']", "['zh-CN','en-US']", 'op
 }
 assert.ok(uiSmoke.includes('runSshHostTrustUiScenario'), 'SSH host trust dialog matrix is registered');
 const hostTrustScenario = read('scripts/ssh-host-trust-ui-scenario.js');
+assert.ok(uiSmoke.includes('runMobileLayoutUiScenario'), 'Mobile headers and credential dialog acceptance is registered');
+const mobileLayoutScenario=read('scripts/mobile-layout-ui-scenario.js');
+for (const marker of ['[1200,390,320]', "['light','dark']", "['zh-CN','en-US']", 'live language retains credential draft and focus', 'buttonsReachable', 'translated']) {
+  assert.ok(mobileLayoutScenario.includes(marker), `Mobile layout acceptance is missing ${marker}`);
+}
 for (const marker of ['[1200,390]', "['light','dark']", "['zh-CN','en-US']", 'open dialog and attributes translate immediately', 'live language preserves dialog and focus', 'cancelled challenge never grants trust']) {
   assert.ok(hostTrustScenario.includes(marker), `SSH host trust acceptance is missing ${marker}`);
 }

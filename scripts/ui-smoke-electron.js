@@ -45,6 +45,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { runMobileScenario } = require("./ui-smoke-mobile-scenario");
 const { runMobileWorkspaceUiScenario } = require("./mobile-workspace-ui-scenario");
+const {runMobileLayoutUiScenario} = require('./mobile-layout-ui-scenario');
 const { runFnosUpdatesUiScenario } = require("./fnos-updates-ui-scenario");
 const {loadUpdateFixture} = require("./update-ui-fixture");
 const {verifyLanguageOnboarding} = require("./language-onboarding-ui-scenario");
@@ -90,6 +91,7 @@ const { runTerminalPersistenceUiScenario } = require("./terminal-persistence-ui-
 const { runTerminalSettingsUiScenario } = require("./terminal-settings-ui-scenario");
 const { runTerminalStartupUiScenario } = require("./terminal-startup-ui-scenario");
 const { runTerminalToolbarUiScenario } = require("./terminal-toolbar-ui-scenario");
+const { runTerminalPanelUiScenario } = require("./terminal-panel-ui-scenario");
 const { runTerminalZmodemUiScenario } = require("./terminal-zmodem-ui-scenario");
 const {runTerminalTextUiScenario}=require('./terminal-text-ui-scenario');
 const { runTerminalImagePasteUiScenario } = require("./terminal-image-paste-ui-scenario");
@@ -167,6 +169,12 @@ app.whenReady().then(async () => {
     }
   });
   smokeWindow = window;
+  if(process.env.TERMA_UI_SCENARIO==="terminal-panel"){
+    const local=require("../desktop/local-terminal").createLocalTerminals({ipcMain,allowed:event=>
+      event.sender===window.webContents&&event.senderFrame===window.webContents.mainFrame&&
+      new URL(event.sender.getURL()).origin===new URL(url).origin});
+    app.on("before-quit",()=>local.dispose());
+  }
   const evaluateForSmoke = window.webContents.executeJavaScript.bind(window.webContents);
   window.webContents.executeJavaScript = async (...args) => {
     const caller = new Error('Browser evaluation call site').stack;
@@ -207,6 +215,11 @@ app.whenReady().then(async () => {
     if(bootstrap.phase!=='ready')throw new Error(`TypeScript bootstrap did not complete: ${bootstrap.phase}`);
     console.log("[ui-smoke] typed bootstrap ready");
   await window.webContents.executeJavaScript(`(()=>{if(!window.sendTerminalData&&window.termaTerminalInputActions)window.sendTerminalData=(...args)=>window.termaTerminalInputActions.sendTerminalData(...args);if(!window.focusTerminalSession&&window.termaTerminalPage)window.focusTerminalSession=(...args)=>window.termaTerminalPage.focusTerminalSession(...args);return null})()`);
+  if(process.env.TERMA_UI_SCENARIO==='terminal-panel'){
+    console.log(await runTerminalPanelUiScenario(window));
+    if(errors.length)throw new Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
   if(process.env.TERMA_UI_SCENARIO==='terminal-text'){
     console.log(await runTerminalTextUiScenario(window));
     if(errors.length)throw new Error(errors.join('\n'));
@@ -442,6 +455,11 @@ app.whenReady().then(async () => {
     clearTimeout(smokeWatchdog);
     app.exit(0);
     return;
+  }
+  if (process.env.TERMA_UI_SCENARIO === 'mobile-layout') {
+    await runMobileLayoutUiScenario(window);
+    if(errors.length)throw Error(errors.join('\n'));
+    clearTimeout(smokeWatchdog);app.exit(0);return;
   }
   if(process.env.TERMA_UI_SCENARIO === 'web-files-real') {
     await runWebFilesRealUiScenario(window);clearTimeout(smokeWatchdog);app.exit(0);return;
@@ -3745,6 +3763,17 @@ app.whenReady().then(async () => {
         await loadUpdate(updateSettings);
         await new Promise(resolve => setTimeout(resolve, 30));
       };
+      const withUpdateUiTimeout = async (label, task, timeout = 8000) => {
+        let timer;
+        try {
+          return await Promise.race([
+            Promise.resolve().then(task),
+            new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(label + ' timed out')), timeout); })
+          ]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      };
       updateSettings = {
         current_version:'1.0.8',
         latest_version:'1.0.9',
@@ -3891,12 +3920,12 @@ app.whenReady().then(async () => {
         release_revision:2,
         download_status:{state:'idle'}
       };
-      await loadUpdate(updateSettings);
+      await withUpdateUiTimeout('update fixture load before republished confirmation', () => loadUpdate(updateSettings));
       let republishedConfirmation = '';
-      await window.termaUpdateDownloads.download(false, async message => {
+      await withUpdateUiTimeout('republished confirmation', () => window.termaUpdateDownloads.download(false, async message => {
         republishedConfirmation = String(typeof message === 'function' ? message() : message || '');
         return false;
-      });
+      }));
       const republishedConfirmationReady = republishedConfirmation.includes('v1.0.9')
         && !republishedConfirmation.includes('{{version}}');
       result.updateUiParts = {updateCardReady,probingStateReady,selectedRouteReady,verifyingStateReady,staleFailureCleared,portableActionsReady,installerActionsReady,republishedConfirmationReady,republishedConfirmation,portableButtons,installerButtons,text:updateArea.textContent.replace(/\s+/g,' ').trim()};
@@ -8316,9 +8345,9 @@ app.whenReady().then(async () => {
     fixtureRuntime.root = view;
 
     const checks = [...view.querySelectorAll('.sftp-check')];
-    checks[0].checked = true;
-    checks[1].checked = true;
-    window.termaSftpViews.updateSelection(fixtureTabKey);
+    window.termaSftpView.clearSelection(fixtureTabKey);
+    checks[0].click();
+    checks[1].click();
     const selectCheck = input => window.termaSftpViews.select(fixtureTabKey,1,{}, {path:input.value,name:input.dataset.name,type:input.dataset.type});
     selectCheck(checks[2]);
     const multiNameAddsSelection = checks.slice(0,3).every(input => input.checked);
@@ -8327,8 +8356,7 @@ app.whenReady().then(async () => {
     selectCheck(checks[1]);
     selectCheck(checks[2]);
     const singleNameReplacesSelection = !checks[0].checked && !checks[1].checked && checks[2].checked;
-    checks.forEach((input,index) => { input.checked = index < 2; });
-    window.termaSftpViews.updateSelection(fixtureTabKey);
+    checks.forEach((input,index) => { if (input.checked !== (index < 2)) input.click(); });
     const selectionBar = view.querySelector('#sftpSelectionBar');
     const selectionShown = !selectionBar.hidden && selectionBar.textContent.includes('已选择 2 项');
     const selectionActionsShown = getComputedStyle(document.querySelector('#sftpSelectionCompress')).display !== 'none' && getComputedStyle(document.querySelector('#sftpSelectionPermissions')).display !== 'none';
@@ -9215,9 +9243,9 @@ app.whenReady().then(async () => {
       await window.termaSftpTransfers.controller.download(1,'/tmp/second.txt');
       deliveryMode='browser';
       const downloadChecks=[...view.querySelectorAll('.sftp-check')];
-      downloadChecks[0].checked=true;
-      downloadChecks[1].checked=true;
-      window.termaSftpViews.updateSelection(activeTabKey);
+      window.termaSftpView.clearSelection(activeTabKey);
+      downloadChecks[0].click();
+      downloadChecks[1].click();
       document.documentElement.dataset.uiSmokeStage = 'sftp-download-browser-batch';
       const batchDownload = window.termaSftpTransfers.controller.selection(activeTabKey);
       noticeMessages.push((await clickSftpFixtureChoice(0)).dialog); noticeCalls += 1;

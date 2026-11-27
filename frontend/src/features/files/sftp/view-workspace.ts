@@ -20,6 +20,7 @@ import type { createSftpTabRuntime, SftpTabRuntime } from './tab-runtime';
 import type { createSftpViewState } from './view-state';
 
 import type { SftpClipboard } from './sftp-copy-service';
+import {embeddedSftpViews} from './embedded-views';
 interface ViewPort {
   tabs: ReturnType<typeof createSftpTabRuntime>;
   runtimes: Map<string, SftpTabRuntime>;
@@ -123,6 +124,7 @@ export function createSftpViewWorkspace({ tabs, runtimes, viewState, text, bytes
       extractEntry: (_event: Event, _entry: ViewEntry, path: string) => operations.extract(key, id, path),
       permissionsEntry: (_event: Event, _entry: ViewEntry, path: string) => operations.permissions(key, [path]),
       page: (value: number) => directory.page(key, value), pageSize: (size: number) => directory.pageSize(key, Number(size)), jumpPage: (value: unknown) => directory.jump(key, value),
+      scrollPage: (page: number) => filesServices.termaSftpDirectoryWorkspace.loader.load({tabKey: key, page, continuous: true, preserveView: true, keepContents: true}),
       entryMenu: (event: SftpMenuEvent, entry: ViewEntry, path: string) => menu.entry(event, key, id, { path, name: entry.name, type: entry.type }),
       primeDrag: (event: Parameters<typeof drag.prime>[0], entry: ViewEntry, path: string) => drag.prime(event, id, path, entry.name, entry.type, key),
       drag: (event: Parameters<typeof drag.begin>[0], entry: ViewEntry, path: string) => drag.begin(event, id, path, entry.name, entry.type, key),
@@ -145,6 +147,7 @@ export function createSftpViewWorkspace({ tabs, runtimes, viewState, text, bytes
       opening: path => viewState.isOpening(id, path),
       run(action, ...args) {
         if (!isCurrent() || !Object.hasOwn(handlers, action)) return;
+        embeddedSftpViews.get(key)?.beforeAction(action);
         return (handlers as Callbacks)[action]?.(...args as never[]);
       }
     };

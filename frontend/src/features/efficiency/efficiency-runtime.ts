@@ -8,6 +8,7 @@ import {createQuickCommandService,type QuickCommandPort} from './quick-command-s
 import {paintQuickCommands,releaseQuickCommands} from './QuickCommandView';
 import type { EventRegistry } from '@/shared/actions/event-registry';
 import '@/styles/efficiency.css';
+import {terminalPanel} from '../terminal-panel/panel-runtime';
 export interface EfficiencyPort extends Omit<PalettePort,'render'|'show'|'hide'|'frame'|'cancelFrame'>,Omit<QuickCommandPort,'paint'|'read'|'write'> {quickForwardIsActive:PaletteViewPort['quickForwardIsActive'];quickForwardAccessUrl:PaletteViewPort['quickForwardAccessUrl'];remoteProtocolAction:PaletteViewPort['remoteProtocolAction'];protocolMeta:PaletteViewPort['REMOTE_PROTOCOL_META'];refreshIcons():void;toolbar():void;edit(id:number,quick:boolean):unknown;manage():unknown;menu(event:Event,items:({label?:string;icon?:string;danger?:boolean;separator?:boolean;run?:()=>unknown})[]):void;keepKeyboard(event:Event):void;restore():unknown;broadcasting():boolean;stopBroadcast():void;retainsQuickBar(bar:HTMLElement):boolean}
 const barSelector='[data-terminal-quick-command-bar]';
 function createRuntime(){const port=createEfficiencyHost(),bars=new Map<HTMLElement,()=>void>();let dragOwner:HTMLElement|null=null,dragCleanup:(()=>void)|null=null,suppress={id:0,until:0},keyboard=false;
@@ -93,14 +94,16 @@ export function installEfficiency(registry: EventRegistry) {
   const get = () => feature ||= createRuntime();
   efficiencyServices.termaEfficiency = {
     get palette() { return get().palette; },
-    get quick() { return get().quick; },
+    get quick() { return Object.assign(get().quick, {toggle: (key = '') => terminalPanel.toggle(key), visible: terminalPanel.visible}); },
+    panel: terminalPanel,
     keyboard: () => get().keyboard()
   };
+  terminalPanel.install();
   registerPaletteActions(registry, () => get().palette);
-  window.addEventListener('beforeunload', () => feature?.dispose(), {once: true});
+  window.addEventListener('beforeunload', () => {terminalPanel.dispose(); feature?.dispose();}, {once: true});
 }
 
 
 export interface InstalledFeaturesEfficiencyEfficiencyRuntimeServices {
-  termaEfficiency:{palette:ReturnType<typeof createRuntime>['palette'];quick:ReturnType<typeof createRuntime>['quick'];keyboard():void}
+  termaEfficiency:{palette:ReturnType<typeof createRuntime>['palette'];quick:ReturnType<typeof createRuntime>['quick'];panel:typeof terminalPanel;keyboard():void}
 }

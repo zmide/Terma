@@ -97,6 +97,11 @@ async function main() {
           acceptPty?.();
         });
         session.on("exec", (acceptExec, _rejectExec, info) => {
+          if (info.command === "uname -s") {
+            const channel = acceptExec();
+            channel.exit(0); channel.end("Linux\n");
+            return;
+          }
           requests.push({ type:"exec", command:String(info.command || ""), pty:ptyRequested, env:{...environment} });
           const channel = acceptExec();
           channel.write("__TERMA_STARTUP_WS_OK__\r\n");

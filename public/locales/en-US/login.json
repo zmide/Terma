@@ -14,5 +14,9 @@
   "invalid": "The password or token is incorrect",
   "temporarily_locked": "The password or token is incorrect. Sign-in is locked for {{seconds}} seconds",
   "too_many_attempts": "Too many sign-in attempts. Try again in {{seconds}} seconds",
-  "switch_language": "Switch to Simplified Chinese"
+  "switch_language": "Switch to Simplified Chinese",
+  "host_not_allowed": "Access host {{host}} is not allowed. Your password has not been checked. Open a working address and add {{host}} to Allowed Hosts in Terma Settings > Security, or fnOS Application Settings. Enter only a domain or IP, optionally with a port; omit the scheme and path.",
+  "origin_host_mismatch": "The app or relay sent origin {{source_origin}}, but the service received host {{request_host}}. Your password has not been checked. Preserve the original host at the relay. On fnOS, use a working address to add the trusted relay domain or IP in Settings > Security or Terma runtime settings in App Center. Omit the scheme and port; changing HTTPS ports are supported. Only authorize an entry you trust.",
+  "origin_port_mismatch": "Origin {{source_origin}} and received host {{request_host}} use different ports. Your password has not been checked. Check whether the relay preserves the public port. You can open the same link in an external browser for now.",
+  "origin_invalid": "The app or browser did not send a valid HTTP/HTTPS origin. Your password has not been checked. Open the same link in an external browser, or check the embedded page’s origin restrictions."
 }

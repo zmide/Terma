@@ -2,7 +2,7 @@
 
 连接列表是 Terma 的入口。SSH 与其他协议分开组织，但连接、标签、主机信任和工作区可以互相跳转。
 
-![Terma 连接与工作区](/screenshots/desktop-overview.png)
+![Terma 连接与工作区](/screenshots/desktop-overview.png?v=20261127)
 
 ## SSH 连接
 

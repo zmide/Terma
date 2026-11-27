@@ -45,7 +45,14 @@ function localizedLoginError(value) {
   if (code === "auth_login_not_configured") return loginTr("not_configured", {}, source);
   if (code === "auth_login_invalid") return loginTr("invalid", {}, source);
   if (code === "auth_login_failed") return loginTr("failed", {}, source);
+  const params = data.error_params || {};
+  if (code === "host_not_allowed" && typeof params.host === "string") return loginTr("host_not_allowed", params, source);
   if (code === "request_origin_protocol_mismatch") return loginTr("protocol_mismatch", {}, source);
+  if (code === "request_origin_forbidden") {
+    if (params.reason === "hostname_mismatch") return loginTr("origin_host_mismatch", params, source);
+    if (params.reason === "port_mismatch") return loginTr("origin_port_mismatch", params, source);
+    if (params.reason === "invalid_origin") return loginTr("origin_invalid", {}, source);
+  }
   if (code === "request_origin_forbidden" || source === "Forbidden") return loginTr("origin_forbidden", {}, source);
   let match = source.match(/登录尝试过多，请在\s*(\d+)\s*秒后重试/);
   if (match) return loginTr("too_many_attempts", {seconds:match[1]}, source);

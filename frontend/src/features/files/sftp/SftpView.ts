@@ -7,7 +7,9 @@ import type { SftpScrollState } from './directory-state';
 import { sftpFilePresentation } from './file-kind';
 import { sftpSelection, type SftpSelectionEvent } from './selection';
 import { fitSftpRowActions } from './row-actions';
+import {createFileListWindow} from '../file-list-window';
 import '@/styles/sftp.css';
+import '@/styles/file-list-window.css';
 
 export interface SftpEntry {
   name: string; type: string; size: number; mtime?: number; mode?: string; owner?: string; group?: string;
@@ -17,7 +19,7 @@ export interface SftpEntry {
 interface SftpState {
   path: string; entries: SftpEntry[]; selected?: { path: string; id?: number; name?: string; type?: string } | null; selectionAnchorPath?: string; query: string; recursiveSearch: boolean;
   recursiveSearchTruncated: boolean; sort: string; dir: string; page: number; pageSize: number; total: number;
-  totalPages: number; unfilteredTotal: number; loading: boolean;
+  totalPages: number; unfilteredTotal: number; loading: boolean; listRevision?: number;
 }
 interface SftpModel {
   key: string; connectionId: number; quick: boolean; desktop: boolean; mobile: boolean; encoding: string;
@@ -40,7 +42,11 @@ export interface SftpOptions {
   run(action: string, ...args: unknown[]): unknown;
 }
 type ViewState = { pathEditing: boolean; pathDraft: string; searchOpen: boolean; searchDraft: string; searchBusy: boolean };
-type Entry = { shell: HTMLElement; hosts: Map<string, HTMLElement>; options: SftpOptions; rename: InlineRenameController; ui: ViewState };
+type Entry = {
+  shell: HTMLElement; hosts: Map<string, HTMLElement>; options: SftpOptions; rename: InlineRenameController; ui: ViewState;
+  window: ReturnType<typeof createFileListWindow<SftpEntry>>; selected: Map<string, SftpEntry>; selectionIdentity: string; listIdentity?: string;
+  frame: number; observer: ResizeObserver; requestedPage: number; blockedPage: number; listState?: {kind: string; detail?: string};
+};
 const views = new Map<string, Entry>();
 type UnavailableText = { title: string; message: string; hint: string };
 const unavailableViews = new Map<string, { target: HTMLElement; text: () => UnavailableText }>();
@@ -67,7 +73,7 @@ function paint(entry: Entry, part: SftpPart, state?: { kind: string; detail?: st
   const selection = active instanceof HTMLInputElement && !['checkbox', 'radio', 'file', 'number'].includes(active.type) ? {
     start: active.selectionStart, end: active.selectionEnd, direction: active.selectionDirection
   } : null;
-  const scrollTop = target.scrollTop;
+  let scrollTop = target.scrollTop;
   const o = entry.options, m = o.model, s = m.state;
   const t = (key: string, params?: Record<string, unknown>) => o.text(key.includes(':') ? key : `sftp:${key}`, params);
   const run = (action: string, ...args: unknown[]) => o.run(action, ...args);
@@ -172,16 +178,32 @@ function paint(entry: Entry, part: SftpPart, state?: { kind: string; detail?: st
     if (status === 'loading' || status === 'error') {
       content = h('div', { class: `ui-state ${status}`, role: status === 'error' ? 'alert' : 'status' }, [h('span', { class: 'ui-state-icon', 'aria-hidden': 'true' }), h('strong', null, t(status === 'error' ? 'auto.directory_load_failed' : 'auto.loading_directory')), h('span', null, state?.detail || s.path), status === 'error' ? button('refresh-cw', t('common:actions.retry'), () => run('refresh'), {}, t('common:actions.retry')) : null]);
     } else {
-      const selected = new Set(m.selectedPaths);
+      const selectionIdentity = `${m.connectionId}\0${s.path}\0${s.query}\0${s.recursiveSearch}`;
+      if (entry.selectionIdentity !== selectionIdentity) {entry.selected.clear(); entry.selectionIdentity = selectionIdentity;}
+      const listIdentity = `${selectionIdentity}\0${s.sort}\0${s.dir}`;
+      if (entry.listIdentity !== listIdentity) {scrollTop = 0; entry.blockedPage = 0; entry.listIdentity = listIdentity;}
+      const rowHeight = Number.parseFloat(getComputedStyle(target).getPropertyValue('--file-row-height')) || 36;
+      entry.window.sync(`${listIdentity}\0${s.listRevision || 0}`, s.page, s.pageSize, s.total, s.entries);
+      const window = entry.window.range(scrollTop, target.clientHeight || 400, rowHeight);
+      for (const file of entry.window.loaded()) {
+        const path = o.path(file.name);
+        if (entry.selected.has(path)) entry.selected.set(path, file);
+      }
+      const previousSelection = m.selectedPaths;
+      m.selectedPaths = selectedPaths(entry);
+      if (previousSelection.length !== m.selectedPaths.length || previousSelection.some((path, index) => path !== m.selectedPaths[index])) paint(entry, 'selection');
+      const selected = new Set(m.selectedPaths), loaded = entry.window.loaded();
+      const selectedLoaded = loaded.filter(file => selected.has(o.path(file.name))).length;
       const columnLabel = (key: string) => t(`auto.${({ name: 'name', size: 'size', mtime: 'modified', access: 'permissions_owner' } as Record<string, string>)[key]}`);
       const header = h('div', { class: 'sftp-head' }, [
-        h('label', { class: 'sftp-head-check' }, h('input', { id: 'sftpSelectAll', type: 'checkbox', 'aria-label': t('auto.select_page'), checked: !!s.entries.length && selected.size === s.entries.length, indeterminate: selected.size > 0 && selected.size < s.entries.length, onChange: (event: Event) => setAllSelected(entry, (event.target as HTMLInputElement).checked) })),
+        h('label', { class: 'sftp-head-check' }, h('input', { id: 'sftpSelectAll', type: 'checkbox', 'aria-label': t('auto.select_loaded'), checked: !!loaded.length && selectedLoaded === loaded.length, indeterminate: selectedLoaded > 0 && selectedLoaded < loaded.length, onChange: (event: Event) => setAllSelected(entry, (event.target as HTMLInputElement).checked) })),
         ...m.columns.map(key => h('div', { key, class: ['sftp-head-cell', `sftp-column-${key}`, ({ size: 'sftp-size', mtime: 'sftp-time', access: 'sftp-access' } as Record<string, string>)[key]], 'data-sftp-column': key, draggable: true }, [
           key !== 'access' ? h(TermaButton, { 'data-sftp-column-sort': key, 'data-sftp-tab-key': m.key }, () => [h('span', null, `${columnLabel(key)}${s.sort === key ? s.dir === 'asc' ? ' ↑' : ' ↓' : ''}`), key === 'name' ? h('small', { class: 'sftp-compact-column-labels' }, t('auto.compact_columns')) : null]) : h('span', null, columnLabel(key)),
           h('i', { class: 'sftp-column-resize', 'data-sftp-column-resize': key, role: 'separator', 'aria-orientation': 'vertical', 'aria-label': t('auto.resize_columns', { column: columnLabel(key) }), tabindex: 0 })
         ])), h('span', { class: 'sftp-head-actions' }, t('auto.actions')), h('div', { class: 'sftp-refresh-indicator', role: 'status' }, [settingsIcon('loader-circle'), h('span', null, t('auto.syncing'))])
       ]);
-      const rows = s.entries.map(file => {
+      const rows = window.items.map(({index, value: file}) => {
+        if (!file) return h('div', {key: `pending-${index}`, class: 'file-list-pending', 'aria-hidden': true});
         const path = o.path(file.name), dir = file.type === 'dir', known = file.metadata_known !== false, presentation = sftpFilePresentation(file.name, file.type), kind = presentation.kind, opening = o.opening(path), image = o.isImage(file.name);
         const principal = (value: string | undefined, type: 'owner' | 'group') => {
           const raw = String(value || '');
@@ -238,17 +260,25 @@ function paint(entry: Entry, part: SftpPart, state?: { kind: string; detail?: st
             button('ellipsis', t('auto.more'), event => { event.stopPropagation(); entryAction('entryMenu', event); }, { class: actionClass('more'), 'aria-label': t('auto.entry_more_actions', { name: file.name }) }, t('auto.more'))
           ])]);
       });
-      const page = Number(s.page || 1), pages = Number(s.totalPages || 1), total = Number(s.total || 0), first = total ? (page - 1) * Number(s.pageSize || 50) + 1 : 0, last = total ? Math.min(first + rows.length - 1, total) : 0;
-      const recursive = s.query && s.recursiveSearch ? `${t('auto.recursive_suffix')}${s.recursiveSearchTruncated ? ` ${t('auto.recursive_truncated')}` : ''}` : '';
-      const filter = s.query && s.unfilteredTotal !== total ? t('auto.range_total', { count: s.unfilteredTotal, recursive }) : recursive;
-      content = [header, ...rows, !rows.length ? h('div', { class: 'ui-state empty' }, [h('span', { class: 'ui-state-icon', 'aria-hidden': 'true' }), h('strong', null, t(s.query ? 'auto.no_matches' : 'auto.empty_directory')), h('span', null, t(s.query ? 'auto.try_another_search' : 'auto.empty_directory_hint'))]) : null,
-        h('div', { class: 'sftp-pager-dock' }, h('div', { class: 'pager sftp-pager' }, [
-          h('button', { type: 'button', disabled: page <= 1, onClick: () => run('page', page - 1) }, t('auto.previous_page')),
-          h('span', { class: 'pager-count' }, [h('span', { class: 'sftp-scroll-cue', title: t('auto.more_below'), 'aria-hidden': 'true' }, settingsIcon('chevron-down')), h('span', { class: 'sftp-page-summary' }, t(filter ? 'auto.page_summary_filtered' : 'auto.page_summary', { page, pages, first, last, total, filter })),
-            h('select', { 'aria-label': t('auto.page_size'), value: String(s.pageSize), onChange: (event: Event) => run('pageSize', (event.target as HTMLSelectElement).value) }, [25, 50, 100, 200].map(count => h('option', { value: String(count) }, t('auto.item_count', { count })))),
-            h('label', { class: 'sftp-page-jump' }, [h('span', null, t('auto.page_jump')), h('input', { type: 'number', min: 1, max: pages, value: page, 'aria-label': t('auto.page_jump'), onKeydown: (event: KeyboardEvent) => { if (event.key === 'Enter') { event.preventDefault(); run('jumpPage', event.currentTarget); } }, onChange: (event: Event) => run('jumpPage', event.currentTarget) })])]),
-          h('button', { type: 'button', disabled: page >= pages, onClick: () => run('page', page + 1) }, t('auto.next_page'))
-        ]))];
+      content = [header, h('div', {class: 'file-list-spacer', style: {height: `${window.top}px`}, 'aria-hidden': true}), ...rows,
+        h('div', {class: 'file-list-spacer', style: {height: `${window.bottom}px`}, 'aria-hidden': true}),
+        !s.total ? h('div', { class: 'ui-state empty' }, [h('span', { class: 'ui-state-icon', 'aria-hidden': 'true' }), h('strong', null, t(s.query ? 'auto.no_matches' : 'auto.empty_directory')), h('span', null, t(s.query ? 'auto.try_another_search' : 'auto.empty_directory_hint'))]) : null,
+        h('div', {class: 'file-list-status', role: 'status'}, [
+          h('span', null, t('auto.continuous_count', {first: s.total ? window.first + 1 : 0, last: window.last, total: s.total})),
+          s.recursiveSearchTruncated ? h('span', null, t('auto.recursive_truncated')) : null,
+          entry.blockedPage ? button('refresh-cw', t('common:actions.retry'), () => {entry.blockedPage = 0; scheduleList(entry);}) : null
+        ])];
+      if (window.missingPage && !s.loading && window.missingPage !== entry.blockedPage && !entry.requestedPage && target.isConnected && target.getClientRects().length) {
+        entry.requestedPage = window.missingPage;
+        queueMicrotask(() => {
+          if (entry.options.isCurrent?.() === false || !target.isConnected) {entry.requestedPage = 0; return;}
+          void Promise.resolve(run('scrollPage', window.missingPage)).then(result => {
+            if (result !== true) entry.blockedPage = window.missingPage;
+          }).catch(() => {entry.blockedPage = window.missingPage;}).finally(() => {
+            entry.requestedPage = 0; scheduleList(entry);
+          });
+        });
+      }
     }
   }
   target.dataset.theme = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
@@ -257,7 +287,7 @@ function paint(entry: Entry, part: SftpPart, state?: { kind: string; detail?: st
   target.scrollTop = scrollTop;
   if (active) {
     const nextFocusables = [...target.querySelectorAll<HTMLElement>('button,input,select,textarea,[tabindex]')].filter(node => !node.hasAttribute('disabled') && node.tabIndex >= 0);
-    const replacement = activeId ? target.querySelector<HTMLElement>(`#${CSS.escape(activeId)}`) : nextFocusables[activeIndex];
+    const replacement = activeId ? target.querySelector<HTMLElement>(`#${CSS.escape(activeId)}`) : part === 'list' ? (active.isConnected ? active : null) : nextFocusables[activeIndex];
     if (replacement && target.contains(replacement)) {
       replacement.focus({ preventScroll: true });
       if (selection && replacement instanceof HTMLInputElement && selection.start !== null && selection.end !== null) {
@@ -297,10 +327,20 @@ function clearSearch(entry: Entry) {
   searchVisibility(entry, false);
 }
 
+function scheduleList(entry: Entry) {
+  if (entry.frame || !entry.shell.parentNode) return;
+  entry.frame = requestAnimationFrame(() => {
+    entry.frame = 0;
+    if (entry.shell.parentNode && entry.options.isCurrent?.() !== false) paint(entry, 'list', entry.listState);
+  });
+}
+
 function release(key: string) {
   const entry = views.get(key);
   if (entry) {
     entry.rename.dispose();
+    entry.observer.disconnect();
+    if (entry.frame) cancelAnimationFrame(entry.frame);
     for (const host of entry.hosts.values()) {
       render(null, host);
       if (!entry.shell.contains(host)) host.remove();
@@ -331,29 +371,22 @@ function checkedInputs(entry: Entry) {
 }
 
 function selectedPaths(entry: Entry) {
-  return checkedInputs(entry).filter(input => input.checked).map(input => input.value);
+  return [...entry.selected.keys()];
 }
 
 function selectedEntries(entry: Entry) {
-  return checkedInputs(entry).filter(input => input.checked).map(input => ({
-    path:input.value,
-    name:input.dataset.name || input.value.split('/').pop() || input.value,
-    type:input.dataset.type || 'file',
-    mode:input.dataset.mode || '',
-    owner:input.dataset.owner || '',
-    group:input.dataset.group || '',
-    size:Math.max(0, Number(input.dataset.size || 0)),
-    mtime:Math.max(0, Number(input.dataset.mtime || 0)),
-    metadataKnown:input.dataset.metadataKnown === '1',
-    metadata_known:input.dataset.metadataKnown === '1',
-    pathBytesB64:input.dataset.pathBytes || '',
-    path_bytes_b64:input.dataset.pathBytes || ''
+  return [...entry.selected].map(([path, file]) => ({
+    path, name: file.name, type: file.type, mode: file.mode || '', owner: file.owner || '', group: file.group || '',
+    size: Math.max(0, Number(file.size || 0)), mtime: Math.max(0, Number(file.mtime || 0)),
+    metadataKnown: file.metadata_known !== false, metadata_known: file.metadata_known !== false,
+    pathBytesB64: file.path_bytes_b64 || '', path_bytes_b64: file.path_bytes_b64 || ''
   }));
 }
 
 function syncSelection(entry: Entry) {
-  const inputs = checkedInputs(entry), selected = inputs.filter(input => input.checked);
-  entry.options.model.selectedPaths = selected.map(input => input.value);
+  const inputs = checkedInputs(entry);
+  entry.options.model.selectedPaths = selectedPaths(entry);
+  inputs.forEach(input => {input.checked = entry.selected.has(input.value);});
   const list = entry.hosts.get('list');
   const chosen = new Set(entry.options.model.selectedPaths);
   list?.querySelectorAll<HTMLElement>('.sftp-row').forEach(row => {
@@ -362,8 +395,9 @@ function syncSelection(entry: Entry) {
   });
   const selectAll = list?.querySelector<HTMLInputElement>('#sftpSelectAll');
   if (selectAll) {
-    selectAll.checked = inputs.length > 0 && selected.length === inputs.length;
-    selectAll.indeterminate = selected.length > 0 && selected.length < inputs.length;
+    const loaded = entry.window.loaded(), count = loaded.filter(file => chosen.has(entry.options.path(file.name))).length;
+    selectAll.checked = loaded.length > 0 && count === loaded.length;
+    selectAll.indeterminate = count > 0 && count < loaded.length;
   }
   paint(entry, 'selection');
   return entry.options.model.selectedPaths;
@@ -373,14 +407,25 @@ type SelectableEntry = {path: string; name: string; type: string};
 
 function setAllSelected(entry: Entry, checked: boolean) {
   if (entry.options.isCurrent?.() === false) return [];
-  checkedInputs(entry).forEach(input => { input.checked = checked; });
+  for (const file of entry.window.loaded()) {
+    const path = entry.options.path(file.name);
+    if (checked) entry.selected.set(path, file); else entry.selected.delete(path);
+  }
   return syncSelection(entry);
 }
 
 function selectEntry(entry: Entry, event: SftpSelectionEvent, file: SelectableEntry, checkbox = false) {
   if (entry.options.isCurrent?.() === false) return [];
   const model = entry.options.model, inputs = checkedInputs(entry);
-  const selection = sftpSelection(inputs.map(input => input.value), selectedPaths(entry), model.state.selectionAnchorPath || '', file.path, event, checkbox);
+  const available = new Map(entry.window.loaded().map(item => [entry.options.path(item.name), item]));
+  for (const [path, item] of entry.selected) if (!available.has(path)) available.set(path, item);
+  if (checkbox) {
+    const input = inputs.find(input => input.value === file.path), item = available.get(file.path);
+    if (input?.checked && item) entry.selected.set(file.path, item); else entry.selected.delete(file.path);
+  }
+  const selection = sftpSelection([...available.keys()], selectedPaths(entry), model.state.selectionAnchorPath || '', file.path, event, checkbox);
+  entry.selected.clear();
+  for (const path of selection.paths) {const item = available.get(path); if (item) entry.selected.set(path, item);}
   model.state.selected = {id: model.connectionId, ...file};
   model.state.selectionAnchorPath = selection.anchor;
   const paths = new Set(selection.paths);
@@ -428,7 +473,10 @@ export function installSftpViews() {
         const target = shell.querySelector<HTMLElement>(`[data-sftp-vue-part="${part}"]`);
         if (target) hosts.set(part, target);
       }
-      const entry: Entry = { shell, hosts, options, rename: null as unknown as InlineRenameController, ui: {pathEditing:false, pathDraft:options.model.state.path, searchOpen:false, searchDraft:options.model.state.query, searchBusy:false} };
+      const entry: Entry = { shell, hosts, options, rename: null as unknown as InlineRenameController,
+        window: createFileListWindow<SftpEntry>(), selected: new Map(), selectionIdentity: '', frame: 0,
+        observer: new ResizeObserver(() => scheduleList(entry)), requestedPage: 0, blockedPage: 0,
+        ui: {pathEditing:false, pathDraft:options.model.state.path, searchOpen:false, searchDraft:options.model.state.query, searchBusy:false} };
       entry.rename = createSftpInlineRenameController({
         mobile: () => entry.options.model.mobile,
         isSelected: path => entry.options.model.state.selected?.path === path,
@@ -440,12 +488,18 @@ export function installSftpViews() {
         conflictName: () => entry.options.text('errors:backend.sftp_rename_exists')
       });
       views.set(options.model.key, entry);
+      const list = hosts.get('list');
+      if (list) {
+        list.addEventListener('scroll', () => {entry.blockedPage = 0; scheduleList(entry);}, {passive: true});
+        entry.observer.observe(list);
+      }
       for (const part of parts) paint(entry, part, part === 'list' ? { kind: 'loading' } : undefined);
       return true;
     },
     refresh(key, options, part, state) {
       const entry = mountedEntry(key); if (!entry) return false;
       entry.options = options;
+      if (!part || part === 'list') entry.listState = state;
       for (const name of part ? [part] : parts) paint(entry, name, name === 'list' ? state : undefined);
       return true;
     },
@@ -456,22 +510,25 @@ export function installSftpViews() {
       return {
         scrollTop:Number(list?.scrollTop || 0),
         scrollLeft:Number(list?.scrollLeft || 0),
-        selectedPaths:list ? [...list.querySelectorAll<HTMLInputElement>('.sftp-check:checked')].map(input => input.value) : [],
+        selectedPaths:selectedPaths(entry),
         activePath:entry.options.model.state.selected?.path || ''
       };
     },
     restore(key, state) {
       const entry = mountedEntry(key), list = entry?.hosts.get('list');
       if (!entry || !list || !state) return false;
-      const paths = new Set(entry.options.model.state.entries.map(file => entry.options.path(file.name)));
-      entry.options.model.selectedPaths = (state.selectedPaths || []).filter(path => paths.has(path));
-      if (state.activePath && !paths.has(state.activePath)) entry.options.model.state.selected = null;
+      const files = new Map(entry.window.loaded().map(file => [entry.options.path(file.name), file]));
+      for (const [path, file] of entry.selected) if (!files.has(path)) files.set(path, file);
+      entry.selected.clear();
+      for (const path of state.selectedPaths || []) {const file = files.get(path); if (file) entry.selected.set(path, file);}
+      entry.options.model.selectedPaths = selectedPaths(entry);
       paint(entry, 'selection');
       paint(entry, 'list');
       const restoreScroll = () => {
         list.scrollTop = Math.min(Number(state.scrollTop || 0), Math.max(0, list.scrollHeight - list.clientHeight));
         list.scrollLeft = Math.min(Number(state.scrollLeft || 0), Math.max(0, list.scrollWidth - list.clientWidth));
         list.classList.toggle('has-scroll-below', list.scrollHeight > list.scrollTop + list.clientHeight + 2);
+        scheduleList(entry);
       };
       restoreScroll();
       requestAnimationFrame(restoreScroll);
@@ -485,6 +542,11 @@ export function installSftpViews() {
       const entry = mountedEntry(key);
       return entry ? selectedEntries(entry) : [];
     },
+    listedEntry(key, path) {
+      const entry = mountedEntry(key);
+      return entry?.options.isCurrent?.() === false ? undefined :
+        entry?.window.loaded().find(file => entry.options.path(file.name) === path) || entry?.selected.get(path);
+    },
     updateSelection(key) {
       const entry = mountedEntry(key);
       return entry ? syncSelection(entry) : [];
@@ -492,7 +554,7 @@ export function installSftpViews() {
     clearSelection(key) {
       const entry = mountedEntry(key);
       if (!entry) return false;
-      checkedInputs(entry).forEach(input => { input.checked = false; });
+      entry.selected.clear();
       syncSelection(entry);
       return true;
     },
@@ -534,6 +596,7 @@ export interface InstalledFeaturesFilesSftpSftpViewServices {
       restore(key: string, state: SftpScrollState | null): boolean;
       selectedPaths(key: string): string[];
       selectedEntries(key: string): ReturnType<typeof selectedEntries>;
+      listedEntry(key: string, path: string): SftpEntry | undefined;
       updateSelection(key: string): string[];
       clearSelection(key: string): boolean;
       toggleAll(key: string, checked: boolean): string[];

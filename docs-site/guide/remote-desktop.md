@@ -1,6 +1,6 @@
 # 远程桌面与 X11
 
-![Terma 远程桌面工作区](/screenshots/desktop-remote.png)
+![Terma 远程桌面工作区](/screenshots/desktop-remote.png?v=20261127)
 
 Terma 将远程图形能力分成远程桌面协议和 SSH 图形转发两类，按平台选择合适的客户端。
 
@@ -20,6 +20,7 @@ TigerVNC Viewer 的文本剪贴板由远端 VNC 服务端提供。连接到 `x11
 
 - RDP 使用系统原生客户端。
 - Windows 桌面包内置并管理 X Server；macOS 使用 XQuartz；Linux 复用当前图形桌面并使用 Xephyr。
+- macOS 的 XDMCP 使用独立、可调整大小的桌面窗口，按当前 XQuartz 显示匹配授权并同步字符及修饰键映射。首次使用前先安装并打开 XQuartz；Terma 不关闭访问控制，也不改写本机桌面键盘布局。
 - XDMCP 支持直接查询、间接查询和局域网广播，但协议本身不加密，只应在可信局域网使用。
 - 远端桌面安装、卸载和修复操作会显示任务进度，管理员凭据只用于当前操作，不会保存。
 

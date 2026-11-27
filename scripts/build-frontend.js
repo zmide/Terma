@@ -51,4 +51,10 @@ const notices = [
   ["Tile UI f047bf2f17820d4c6a5525ff37de7f18a2148d1e", "third-party/tile-ui/LICENSE"],
   ["Tile UI styles and Cloudflare Kumo 7e0ff40546f08405d05bc9754f0ff0fd009ece0a", "src/styles/themes/LICENSE.kumo"]
 ].map(([name, file]) => `${name}\n${"=".repeat(name.length)}\n\n${fs.readFileSync(path.join(frontendRoot, file), "utf8")}\n`);
+for (const [name, file] of [
+  ["basic-ftp 6.2.6", "node_modules/basic-ftp/LICENSE.txt"],
+  ["DOMPurify 3.5.0", "node_modules/dompurify/LICENSE"]
+]) {
+  notices.push(`${name}\n${"=".repeat(name.length)}\n\n${fs.readFileSync(path.join(repositoryRoot, file), "utf8")}\n`);
+}
 fs.writeFileSync(path.join(frontendRoot, "dist", "THIRD_PARTY_NOTICES.txt"), notices.join("\n"), "utf8");

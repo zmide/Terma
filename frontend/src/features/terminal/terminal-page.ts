@@ -2,11 +2,9 @@ import {terminalServices} from '@/features/terminal/installed-services';
 import {workspaceServices} from '@/features/workspace/installed-services';
 import {connectionsServices} from '@/features/connections/installed-services';
 import {assistantServices} from '@/features/assistant/installed-services';
-import {efficiencyServices} from '@/features/efficiency/installed-services';
 import {sessionEfficiencyServices} from '@/features/session-efficiency/installed-services';
 import {showTerminalSessionText} from './terminal-text-dialogs';
 import {isMobileLayout,stateView} from '@/shared/browser-ui';
-import {esc,escAttr} from '@/shared/html-escape';
 import {showActionMenu} from '@/shared/action-menu';
 import {$} from '@/shared/workspace-dom';
 import {noteConnectionUsage} from '@/features/connections/connection-selection';
@@ -185,13 +183,11 @@ export function openTerminalConnection(value:unknown, updateTab=true, existingKe
     focusTerminalSession(key);
     return key;
   }
-  const quickCommandBar = `<section class="terminal-quick-command-bar" data-terminal-quick-command-bar data-terminal-key="${escAttr(key)}"></section>`;
   terminalServices.termaTerminalSurface!.park(terminalView);
   const terminalSurface = terminalServices.termaTerminalSurface!.build(terminalView, key, {
     assistant:assistantServices.termaAssistant!.placeholder(key),
-    quick:quickCommandBar
+    quick:''
   });
-  efficiencyServices.termaEfficiency!.quick.mount(key, terminalSurface);
   terminalServices.termaTerminalToolbarService?.status.set(key, "connecting");
   const persistedResumePolicy = (typeof workspaceTabByKey === "function" ? workspaceTabByKey(key) : applicationState.tabs.find(item => item.key === key))?.resumePolicy || "auto";
   setWorkspace(title, `${c.ssh_user}@${c.ssh_host}:${c.ssh_port}`, "terminal", key, updateTab, true, {kind:quick ? "quick-terminal" : "terminal", id:c.id, connectionStatus:"connecting", transient:quick, quick_connection:quick, sessionMode:c.terminal_session_mode || "none", sessionBackend:c.terminal_session_backend || "auto", persistentSessionId:c.terminal_session_id || "", resumePolicy:persistedResumePolicy});

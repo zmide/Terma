@@ -11,7 +11,7 @@ Terma 把远程连接、终端、文件、桌面和自动化运维放进同一�
 | 场景 | 主要能力 | 详细指南 |
 | --- | --- | --- |
 | 连接与工作区 | SSH、主机分组、指纹确认、跳板机、多标签、递归分屏、命名工作区 | [连接管理](/guide/connections.html) |
-| 终端 | PTY 回退、编码、ZMODEM、拖放上传、命令片段、会话保活与恢复 | [终端工作区](/guide/terminal.html) |
+| 终端 | PTY 回退、编码、ZMODEM、拖放上传、命令片段、会话保活、多功能面板与 Linux／macOS 性能 | [终端工作区](/guide/terminal.html) |
 | 文件 | SFTP、本地文件标签、拖拽传输、在线编辑、目录同步、跨主机复制 | [SFTP 文件管理](/guide/sftp.html) |
 | 自动化 | 定时上传/下载、双向同步、Cron、实时监控、任务级通知和运行记录 | [传输与同步任务](/guide/transfer-sync.html) |
 | 远程桌面 | RDP、TigerVNC、noVNC、XDMCP、X11、XQuartz、Linux 桌面管理 | [远程桌面与 X11](/guide/remote-desktop.html) |
@@ -21,15 +21,17 @@ Terma 把远程连接、终端、文件、桌面和自动化运维放进同一�
 
 ## 界面预览
 
-这些截图来自当前 Terma 桌面端，分别对应工作区、终端、SFTP、端口转发和远程桌面管理入口。传输与同步任务从工作区标题栏旁的入口打开，具体操作步骤见上表中的主题指南。
+截图更新于 2026 年 11 月 27 日，展示当前 Terma 的工作区、终端、SFTP、端口转发和远程桌面管理入口。连接、地址与文件使用示例数据；本机终端面板来自实际 Shell 会话。传输与同步任务从工作区标题栏旁的入口打开，具体操作步骤见上表中的主题指南。
 
 <div class="terma-screenshot-grid">
-  <figure><img src="/screenshots/desktop-terminal-sftp-split.png" alt="Terma 终端与 SFTP 分屏工作区"><figcaption>终端与 SFTP 分屏预览：一边观察输出，一边浏览和编辑远端文件。</figcaption></figure>
-  <figure><img src="/screenshots/desktop-overview.png" alt="Terma 工作区总览"><figcaption>工作区总览：连接、标签和活动入口集中管理。</figcaption></figure>
-  <figure><img src="/screenshots/desktop-terminal.png" alt="Terma 终端工作区"><figcaption>终端工作区：多标签、命令栏和终端输出。</figcaption></figure>
-  <figure><img src="/screenshots/desktop-sftp.png" alt="Terma SFTP 文件工作区"><figcaption>SFTP 文件工作区：远端文件浏览与传输。</figcaption></figure>
-  <figure><img src="/screenshots/desktop-forwarding.png" alt="Terma 端口转发"><figcaption>端口转发：规则、状态和访问地址。</figcaption></figure>
-  <figure><img src="/screenshots/desktop-remote.png" alt="Terma 远程桌面"><figcaption>远程桌面：RDP、VNC、XDMCP 和 X11 入口。</figcaption></figure>
+  <figure><img src="/screenshots/desktop-terminal-sftp-split.png?v=20261127" alt="Terma 终端与 SFTP 分屏工作区"><figcaption>同一窗口中的终端与 SFTP 分屏，使用示例连接和文件。</figcaption></figure>
+  <figure><img src="/screenshots/desktop-overview.png?v=20261127" alt="Terma 工作区总览"><figcaption>工作区总览：连接、标签和活动入口集中管理。</figcaption></figure>
+  <figure><img src="/screenshots/desktop-terminal.png?v=20261127" alt="Terma 终端工作区"><figcaption>终端工作区：多标签、命令栏和终端输出。</figcaption></figure>
+  <figure><img src="/screenshots/desktop-sftp.png?v=20261127" alt="Terma SFTP 文件工作区"><figcaption>SFTP 文件工作区：远端文件浏览与传输。</figcaption></figure>
+  <figure><img src="/screenshots/desktop-forwarding.png?v=20261127" alt="Terma 端口转发"><figcaption>端口转发：规则、状态和访问地址。</figcaption></figure>
+  <figure><img src="/screenshots/desktop-remote.png?v=20261127" alt="Terma 远程桌面"><figcaption>远程桌面：RDP、VNC、XDMCP 和 X11 入口。</figcaption></figure>
+  <figure><img src="/screenshots/desktop-linux-management.png?v=20261127" alt="Terma Linux 桌面管理"><figcaption>Linux 桌面管理：桌面环境、显示管理器与远程会话。</figcaption></figure>
+  <figure><img src="/screenshots/desktop-terminal-panel.png?v=20261127" alt="Terma 多功能面板与本机终端"><figcaption>多功能面板：紧凑工具标签、本机 Shell、多实例与拆分。</figcaption></figure>
 </div>
 
 ## SSH 与工作区
@@ -57,7 +59,8 @@ Terma 把远程连接、终端、文件、桌面和自动化运维放进同一�
 - 支持 UTF-8、GB18030/GBK、Big5、Shift_JIS、EUC-KR 和 ISO-8859-1 编码切换。
 - 字体、字号、行距和字重可以按连接保存；按住 `Ctrl` 滚动鼠标可以调整字号。
 - 最近命令、快捷键栏、终端快速命令栏、右键菜单、终端日志和交互延迟都可以查看。
-- 快速命令栏支持紧凑单行、独立滚动、中文徽标、单击执行和仅插入终端两种操作。
+- 多功能面板默认显示四种工具的扁平标签，操作控件位于同一栏右侧；可将工具拖到右侧，关闭后回到底部，并保留会话。支持排序、分屏及布局预设；远程工具自动跟随当前终端。
+- 快捷命令保留中文徽标、单击执行和仅插入终端两种操作；终端自动启动本机默认 Shell，支持检测已安装的 Shell、多实例与拆分。面板 SFTP 复用主文件管理器并跟随已确认目录；主机性能支持 Linux 和 macOS，可见时每两秒更新。
 - 输入缓冲会识别 Tab 补全、方向键历史、退格和光标中间编辑；支持 OSC 133 命令边界的 Shell，不支持时回退到活动/静默时间判断。
 - 桌面端粘贴本机图片时，优先通过 X11 与 `xclip` 写入远端图形剪贴板；无图形环境或写入失败时，使用受限的远端临时文件路径回退，不会把图片字节写入终端日志。
 
@@ -76,6 +79,7 @@ Terma 把远程连接、终端、文件、桌面和自动化运维放进同一�
 ## SFTP 与文件工作区
 
 - 支持文件和目录浏览、搜索、排序、分页、收藏、上传、下载和在线文本编辑；`Ctrl+F` 可快速搜索，并可按需包含子目录。
+- 文件路径栏与列表采用紧凑布局，弹窗可拖动和调整大小；OpenWrt 等精简系统的文本读写与保存前备份不依赖额外安装 Base64 工具。
 - SVG 预览可直接导出为矢量 PDF，支持在预览操作栏或文件右键菜单中下载，放大缩小不依赖截图；颜色模式可选择正色、黑白反转（只处理黑、白、灰，彩色保持不变）、黑白模式（白色画布、黑色前景，只有图形元素自身带深色实心填充时才保留白色细节）和全局反转，下载 SVG 和导出 PDF 都会跟随当前模式。切换模式不会重置缩放、滚动位置或当前搜索结果。部分字体或样式语法不兼容时会自动尝试兼容模式，桌面端生成结果会进入任务中心并显示保存位置，方便打开文件、打开目录或删除生成文件。
 - SVG 还支持仅预览、仅编辑和分栏预览；分栏比例可调，源码修改会实时更新图形且保留缩放，图形与源码可以双向定位。
 - 桌面端可以从终端或 SFTP 新建一个或多个本地文件标签，并按上、下、左、右或新标签分屏打开。

@@ -2968,7 +2968,7 @@ body.sftp-editor-split-resizing, body.sftp-editor-split-resizing * { cursor:ns-r
 .sftp-diff-cell.blank { background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--field) 64%,var(--panel)) 0 4px,var(--panel) 4px 8px); }
 .sftp-diff-collapsed { grid-column:1 / -1; padding:5px; border-bottom:1px solid var(--line); color:var(--muted); background:var(--field); text-align:center; font:10px/1.35 var(--font); }
 .sftp-diff-unavailable { min-height:72px; display:grid; place-items:center; padding:16px; color:var(--muted); background:var(--field); text-align:center; }
-.sftp-comparison-modal { width:min(1200px,100%); height:min(820px,calc(100vh - 28px)); max-height:none; display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; gap:0; overflow:hidden; padding:0; }
+.sftp-comparison-modal { width:min(1200px,100%); height:min(820px,calc(100dvh - 32px)); max-height:calc(100dvh - 32px); display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; gap:0; overflow:hidden; padding:0; }
 .sftp-comparison-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:17px 20px 12px; border-bottom:1px solid var(--line); }
 .sftp-comparison-head > div { min-width:0; }
 .sftp-comparison-head h2 { overflow:hidden; margin:0; font-size:18px; text-overflow:ellipsis; white-space:nowrap; }
@@ -4491,9 +4491,10 @@ details.advanced-settings > :not(summary) { margin-left:12px; margin-right:12px;
   border-bottom:1px solid var(--line);
   background:var(--panel);
 }
-.modal-card:not(.terminal-settings-modal,.terminal-startup-modal,.terminal-paste-modal,.terminal-session-text-modal,.sftp-editor-modal,.sftp-image-modal,.xserver-manager) > .actions:last-child {
+.modal-card:not(.terminal-settings-modal,.terminal-startup-modal,.terminal-paste-modal,.terminal-session-text-modal,.sftp-editor-modal,.sftp-image-modal,.xserver-manager) > .actions:not(:has(~ :not(.dialog-window-resize))) {
   position:sticky;
   bottom:calc(-1 * var(--modal-card-padding));
+  flex:0 0 auto;
   z-index:4;
   margin-right:calc(-1 * var(--modal-card-padding));
   margin-bottom:calc(-1 * var(--modal-card-padding));
@@ -4534,9 +4535,15 @@ details.advanced-settings > :not(summary) { margin-left:12px; margin-right:12px;
 .vnc-connection-help-panel > .actions,
 .vnc-connection-help-panel > .remote-service-actions { justify-content:flex-start; align-items:stretch; }
 @media (max-width:760px), (hover:none) and (pointer:coarse) {
+  .modal {
+    inset:var(--visible-viewport-top,0px) 0 auto;
+    height:var(--visible-viewport-height,100dvh);
+    box-sizing:border-box;
+    padding:max(6px,env(safe-area-inset-top)) 6px max(6px,env(safe-area-inset-bottom));
+  }
   .modal-card {
     --modal-card-padding:16px;
-    max-height:calc(100dvh - max(12px,env(safe-area-inset-top)) - max(12px,env(safe-area-inset-bottom)));
+    max-height:calc(var(--visible-viewport-height,100dvh) - max(6px,env(safe-area-inset-top)) - max(6px,env(safe-area-inset-bottom))) !important;
     scrollbar-gutter:auto;
   }
   .remote-diagnostic-status { grid-template-columns:30px minmax(0,1fr); align-items:center; }
@@ -4900,6 +4907,11 @@ html[data-theme="dark"] body button.primary:hover:not(:disabled) {
   bottom:auto !important;
   z-index:2;
   margin:0 !important;
+  padding-inline:18px !important;
+}
+.sftp-comparison-modal > .sftp-comparison-actions {
+  margin:0 !important;
+  padding-inline:18px !important;
 }
 .modal-card .terminal-settings-head h2 {
   margin:0 0 3px;

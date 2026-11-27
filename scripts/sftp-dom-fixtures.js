@@ -1,6 +1,7 @@
 // Static markup retained only for legacy CSS/adapter probes in the base smoke.
 // Product SFTP surfaces use the Vue view, dialog and diff owners.
 function installSftpDomFixtures(){
+const escAttr = esc;
 globalThis.sftpBreadcrumbHtml = function sftpBreadcrumbHtml(id, remotePath, tabKey=activeTabKey) {
   const raw = String(remotePath || ".").replace(/\\/g, "/");
   const clean = raw === "/" ? "/" : (raw.replace(/\/+$/,"") || ".");

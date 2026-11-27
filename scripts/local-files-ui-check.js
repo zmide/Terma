@@ -465,11 +465,9 @@ async function main() {
 
   Object.assign(runtime, {page:1, pageSize:50, total:75, totalPages:2});
   model.renderLocalFiles("local-main");
-  assert.match(localViewSource, /class: 'sftp-pager-dock'/);
-  assert.match(localViewSource, /class: 'pager sftp-pager'/);
-  assert.match(localViewSource, /class: 'pager-count'[\s\S]*h\('select',[\s\S]*page_size/);
-  assert.match(localViewSource, /25, 50, 100, 200/);
-  assert.match(localViewSource, /class: 'sftp-scroll-cue'/);
+  assert.match(localViewSource, /class: 'file-list-status'/);
+  assert.doesNotMatch(localViewSource, /class: 'sftp-pager-dock'/);
+  assert.match(localViewSource, /window\.range\(scroll/);
   assert.equal(list.classList.contains("has-scroll-below"), true);
   list.scrollTop = list.scrollHeight - list.clientHeight;
   model.syncLocalFilesScrollCue(list);
@@ -511,7 +509,8 @@ async function main() {
   assert.match(sftpUiSource,/tab\(key\) \{\s*const tab = workspaceTabByKey\(key\)/,'分屏目标从完整工作区模型解析');
   const terminalDropOwner=fs.readFileSync(path.join(root,"frontend/src/features/terminal/terminal-drop-service.ts"),"utf8");
   assert.match(terminalDropOwner, /session\.currentDirectoryKnown[\s\S]*?port\.initialize\(/);
-  assert.match(sftpVueViewSource, /h\('span', \{ class: 'pager-count' \}[\s\S]*?h\('select', \{ 'aria-label': t\('auto\.page_size'\)[\s\S]*?run\('pageSize'/, "SFTP 分页器应由 Vue 视图渲染并连接分页大小操作");
+  assert.match(sftpVueViewSource, /class: 'file-list-status'/, "SFTP 使用紧凑连续滚动状态条");
+  assert.match(sftpVueViewSource, /run\('scrollPage', window\.missingPage\)/, "滚动只请求缺失的数据页");
 
   assert.match(css, /\.local-files-list > \.sftp-pager-dock \{[^}]*position:sticky;[^}]*bottom:0;/);
   assert.match(css, /\.local-files-column-resize::before \{[^}]*background:var\(--column-divider/, "本地文件列调整竖线必须使用统一分隔线颜色");

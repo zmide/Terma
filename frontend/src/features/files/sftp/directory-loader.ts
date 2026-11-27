@@ -5,7 +5,7 @@ export interface DirectoryRuntime {
 }
 export interface DirectoryLoadOptions {
   tabKey?:string;connectionId?:number;path?:string;page?:number;keepContents?:boolean;preserveView?:boolean;refresh?:boolean;
-  silent?:boolean;renderIfChangedOnly?:boolean;historyNavigation?:boolean;paneId?:string;
+  silent?:boolean;renderIfChangedOnly?:boolean;historyNavigation?:boolean;paneId?:string;continuous?:boolean;
 }
 interface LoaderPort {
   active():string;tab(key:string):{id:number;path?:string}|null;
@@ -46,7 +46,8 @@ export function createDirectoryLoader(port:LoaderPort){
       if(tab)tab.path=data.path;
       const next:SftpDirectoryState={...runtime.state,connectionId:id,path:data.path,entries:(data.entries||[]).map(e=>({...e})),selected:preserve?runtime.state.selected:null,
         page:Number(data.page||1),pageSize:Number(data.page_size||pageSize),total:Number(data.total||0),totalPages:Number(data.total_pages||1),unfilteredTotal:Number(data.unfiltered_total||0),recursiveSearch:!!previous.recursiveSearch,recursiveSearchTruncated:!!data.truncated,paged:!!data.paged,
-        sort:data.sort&&['name','size','mtime'].includes(data.sort)?data.sort:sort,dir:data.dir==='desc'?'desc':dir,loading:false,requestSeq:sequence};
+        sort:data.sort&&['name','size','mtime'].includes(data.sort)?data.sort:sort,dir:data.dir==='desc'?'desc':dir,loading:false,requestSeq:sequence,
+        listRevision:(previous.listRevision||0)+(options.continuous?0:1)};
       const changed=!options.renderIfChangedOnly||directorySignature(runtime.state)!==directorySignature(next);
       runtime.state=next;runtime.vueListState=null;if(!changed)runtime.renderedRequestSeq=sequence;
       port.connected(id,'connected');port.history(key,data.path,!!options.historyNavigation);

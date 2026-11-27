@@ -236,10 +236,10 @@ async function runVisualRegression(window) {
     const view = root?.closest('#view-local-files');
     const list = root?.querySelector('.local-files-list');
     const top = root?.querySelector('.local-files-top');
-    const pager = root?.querySelector('.sftp-pager-dock');
+    const status = root?.querySelector('.file-list-status');
     const breadcrumb = root?.querySelector('.local-files-breadcrumb');
     const listRect = list?.getBoundingClientRect();
-    const pagerRect = pager?.getBoundingClientRect();
+    const statusRect = status?.getBoundingClientRect();
     const toolbarHost = document.createElement('div');
     const shortcut = document.createElement('button');
     shortcut.className = 'icon-button local-files-open-button';
@@ -257,9 +257,9 @@ async function runVisualRegression(window) {
     if (view) view.style.cssText += ';width:500px;max-width:500px;flex:0 0 500px';
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const narrowToolbar = root?.querySelector('.local-files-toolbar-actions');
-    const narrowPager = root?.querySelector('.sftp-pager');
     const narrowToolbarGrid = getComputedStyle(narrowToolbar).display === 'grid';
-    const narrowPagerRows = getComputedStyle(narrowPager).gridTemplateColumns.split(' ').length === 2;
+    const continuousStatusCompact = Boolean(status && status.getBoundingClientRect().height <= 28
+      && !root.querySelector('.sftp-pager-dock, .sftp-pager'));
     await window.termaLocalFileRuntime.files.reload(localKey,{path:'C:/fixture',location:'directory',page:1});
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const directoryRoot = document.querySelector('[data-local-files-tab-key="visual-local-files"]');
@@ -300,16 +300,16 @@ async function runVisualRegression(window) {
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     return {
       localKey,
-      found:Boolean(root && view && list && top && pager && breadcrumb),
+      found:Boolean(root && view && list && top && status && breadcrumb),
       iconOnly:Boolean(toolbarButton && !toolbarButton.textContent.trim() && toolbarButton.querySelector('svg') && toolbarButton.title === localFilesToolbarLabel),
       stickyTop:getComputedStyle(top).position === 'sticky',
       breadcrumbComputer,
       driveRows,
       searchClear:Boolean([...(root?.querySelectorAll('.local-files-search button') || [])].some(button => button.getAttribute('aria-label') === clearSearchLabel)),
-      pagerDocked:Boolean(listRect && pagerRect && pagerRect.bottom <= listRect.bottom + 1 && pagerRect.bottom >= listRect.bottom - 100),
+      statusDocked:Boolean(listRect && statusRect && statusRect.bottom <= listRect.bottom + 1 && statusRect.bottom >= listRect.bottom - 28),
       noOverflow:document.body.scrollWidth <= window.innerWidth + 1,
       narrowToolbarGrid,
-      narrowPagerRows,
+      continuousStatusCompact,
       narrowHeaderVisible,
       narrowDividerResizable,
       unselectedDragSynchronizes

@@ -31,6 +31,32 @@
 .terma-quick-root .terma-button.xserver-quick-button.ready { color:var(--accent); }
 .terma-quick-root .terma-button.xserver-quick-button.warning { color:var(--warn); }
 .terma-quick-root .terma-button.xserver-quick-button.error { color:var(--danger); }
+#workspaceQuickActions .terma-button.icon-button,
+.topbar #sftpTaskCenterButton {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  flex:0 0 34px;
+  width:34px;
+  min-width:34px;
+  height:34px;
+  min-height:34px;
+  padding:0;
+  border:0;
+  border-radius:0;
+  background:transparent;
+  box-shadow:none;
+}
+#workspaceQuickActions .terma-button.icon-button:hover,
+.topbar #sftpTaskCenterButton:hover,
+.topbar #sftpTaskCenterButton[aria-expanded="true"] { background:color-mix(in srgb,var(--accent2) 10%,var(--panel)); }
+.topbar > #sftpTaskCenter { align-self:center; }
+@media (max-width:760px) {
+  .content > .topbar { align-items:center; gap:2px; padding:6px 8px; }
+  .topbar #workspaceQuickActions { display:flex; align-items:center; gap:2px; }
+  .topbar > .workspace-heading { min-width:0; flex:1 1 auto; }
+  .topbar .workspace-heading-title { min-width:0; }
+}
 .terma-quick-root .terma-button.primary { color: #fff; background: var(--accent2); border-color: var(--accent2); }
 .terma-quick-root .terma-button.danger { color: var(--danger); }
 .terma-quick-root .terma-button:disabled { opacity: .55; }

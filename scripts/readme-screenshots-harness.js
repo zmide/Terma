@@ -49,7 +49,9 @@ function verifyScreenshots(output) {
     "desktop-remote.png",
     "desktop-sftp.png",
     "desktop-linux-management.png",
-    "desktop-forwarding.png"
+    "desktop-forwarding.png",
+    "desktop-terminal-sftp-split.png",
+    "mobile-terminal.jpg"
   ];
   const hashes = names.map(name => {
     const filename = path.join(output, name);

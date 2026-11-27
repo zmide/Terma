@@ -16,8 +16,9 @@ async function runSftpEntrypointUiScenario({execute,check,shot}) {
         if(e.mode==='error'){const error=new Error('Directory denied');error.code='SFTP_DIRECTORY_PERMISSION_DENIED';throw error;}
         const entries=[{name:'entry.txt',type:'file',size:7,mtime:1}];
         if(e.mode==='activation')entries.push({name:'folder',type:'dir',size:0},{name:'photo.png',type:'file',size:2});
-        const size=Number(params.get('page_size'))||50,total=e.mode==='activation'?size*2+entries.length:entries.length;
-        return {path:params.get('path'),entries,page:Number(params.get('page'))||1,page_size:size,total,total_pages:Math.ceil(total/size),unfiltered_total:total};
+        const size=Number(params.get('page_size'))||50,page=Number(params.get('page'))||1,total=e.mode==='continuous'?size*3:entries.length;
+        if(e.mode==='continuous')entries.splice(0,entries.length,...Array.from({length:size},(_,index)=>({name:'entry-'+((page-1)*size+index)+'.txt',type:'file',size:7,mtime:1})));
+        return {path:params.get('path'),entries,page,page_size:size,total,total_pages:Math.ceil(total/size),unfiltered_total:total};
       }
       return e.api(url,options);
     };
@@ -84,9 +85,9 @@ async function runSftpEntrypointUiScenario({execute,check,shot}) {
     } finally {({previewSftpText:window.termaSftpPreviewRuntime.text,previewSftpImage:window.termaSftpPreviewRuntime.image,openEditor:window.termaSftpWorkflow.openEditor,runtimeSettings: window.termaRuntimeSettingsModel.snapshot}=old);}
   `);
   await check('formal row activation preserves checkbox, text, image, desktop preference and directory routing', `(()=>{const e=window.__sftpVueFixture.entrypoint;return e.opens.map(x=>x.type).join()===('text,image'+(window.termaDesktop?',external':''))&&e.opens.every(x=>x.id===e.id)&&e.opens[0].path==='/next/entry.txt'&&e.opens[1].path==='/next/photo.png'&&e.requests.at(-1).path==='/next/folder'})()`);
-  await execute(`const e=window.__sftpVueFixture.entrypoint, input=e.root.querySelector('.sftp-page-jump input');input.value='3';input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));await new Promise(resolve=>setTimeout(resolve,60));`);
-  await check('formal page jump stays in the current directory', `(()=>{const e=window.__sftpVueFixture.entrypoint;return e.requests.at(-1).path==='/next/folder'&&e.requests.at(-1).page==='3'&&e.runtime.state.page===3})()`);
-  await shot('formal-entry-page-jump');
+  await execute(`const e=window.__sftpVueFixture.entrypoint;e.mode='continuous';await window.termaSftpDirectoryWorkspace.loader.load({path:'/next/folder',tabKey:e.key,page:1,refresh:true});const list=e.root.querySelector('.sftp-list'),height=parseFloat(getComputedStyle(list).getPropertyValue('--file-row-height'))||36;list.scrollTop=height*110;list.dispatchEvent(new Event('scroll'));await new Promise(resolve=>setTimeout(resolve,160));`);
+  await check('formal continuous scrolling stays in the current directory and bounds the DOM', `(()=>{const e=window.__sftpVueFixture.entrypoint;return e.requests.at(-1).path==='/next/folder'&&e.requests.at(-1).page==='3'&&e.runtime.state.page===3&&e.root.querySelectorAll('.sftp-row').length<50&&e.root.querySelector('.file-list-status')&&!e.root.querySelector('.sftp-page-jump')})()`);
+  await shot('formal-entry-continuous-scroll');
   await execute(`const e=window.__sftpVueFixture.entrypoint;e.mode='error';e.runtime.state.entries=[];window.termaSftpViews.release(e.key);window.termaSftpView.mount(e.root,e.key);await window.termaSftpDirectoryWorkspace.loader.load({connectionId:e.id,path:'/denied',tabKey:e.key,keepContents:false});await setTermaLanguage(document.documentElement.lang==='zh-CN'?'en-US':'zh-CN');`);
   await check('formal first-load failure keeps the Vue error on language refresh', `(()=>{const e=window.__sftpVueFixture.entrypoint;return e.root.querySelector('.ui-state.error')?.textContent.includes('Directory denied')&&e.runtime.vueListState?.kind==='error'})()`);
   await shot('formal-entry-error');

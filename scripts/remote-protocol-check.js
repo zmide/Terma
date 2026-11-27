@@ -130,6 +130,16 @@ try {
   assert.equal(ftpName("report.txt"), "report.txt");
   assert.throws(() => ftpName("../report.txt"), /无效/);
 
+  const {parseList} = require("basic-ftp");
+  for (const fact of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+    const listing = parseList(`type=file;size=42;${fact}=untrusted; report.txt\r\n`);
+    assert.equal(listing.length, 1, `Unexpected FTP fact ${fact} must not abort directory listing`);
+    assert.equal(listing[0].name, "report.txt");
+    assert.equal(listing[0].size, 42);
+    assert.equal(listing[0].isFile, true);
+  }
+  assert.equal(Object.prototype.untrusted, undefined);
+
   const { serialRuntime } = require("../dist/remote-terminal");
   assert.equal(typeof serialRuntime().available, "boolean");
   const remoteHost = require("../dist/remote-host");
