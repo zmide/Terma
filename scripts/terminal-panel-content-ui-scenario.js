@@ -129,6 +129,7 @@ async function runPanelContentMatrix(driver) {
     for(const type of ['mouseMove','mouseDown'])browser.webContents.sendInputEvent({type,...from,button:'left',clickCount:1});
     browser.webContents.sendInputEvent({type:'mouseMove',x:from.x+45,y:from.y,button:'left'});
     browser.webContents.sendInputEvent({type:'mouseUp',x:from.x+45,y:from.y,button:'left',clickCount:1});
+    await wait("Number(document.querySelector('.panel-terminal-divider').getAttribute('aria-valuenow'))>50");
     await check(prefix+' pointer resizes terminal group',"Number(document.querySelector('.panel-terminal-divider').getAttribute('aria-valuenow'))>50");
   }
   await click('[data-panel-action=dock_right]');
@@ -168,7 +169,7 @@ async function runPanelContentMatrix(driver) {
   await check(prefix+' global panel toggle sits beside task center without overlapping',`(()=>{
     const button=document.querySelector('#terminalPanelToggleButton'),task=document.querySelector('#sftpTaskCenterButton');
     const b=button.getBoundingClientRect(),t=task.getBoundingClientRect(),s=getComputedStyle(button);
-    return button.checkVisibility()&&b.left>=t.right&&Math.abs(b.top-t.top)<2&&b.right<=innerWidth&&
+    return button.checkVisibility()&&b.left>=0&&b.right<=t.left&&t.left-b.right<=12&&Math.abs(b.top-t.top)<2&&t.right<=innerWidth&&
       s.borderWidth==='0px'&&s.boxShadow==='none'&&button.getAttribute('aria-pressed')==='true'&&
       !document.querySelector('[data-terminal-quick-command-toggle]');})()`);
   await shot(prefix+'-settings-terminal-context');

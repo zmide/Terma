@@ -77,7 +77,6 @@ jobs:
         with:
           digest-mismatch: error
           artifact-ids: ${{ steps.roundtrip-upload.outputs.artifact-id }}
-          github-token: ${{ github.token }}
           path: data/actions-node24-roundtrip
 
       - name: Verify artifact round-trip digest

@@ -66,7 +66,7 @@ assert.ok(visibilityArtifactStep.includes("TERMA_ARTIFACT_ID: ${{ steps.roundtri
 assert.ok(regressionWorkflow.indexOf(visibilityArtifactStep) < regressionWorkflow.indexOf(downloadArtifactStep), "artifact 可见性检查必须先于下载");
 assert.match(downloadArtifactStep, new RegExp(`uses: actions/download-artifact@${node24Pins.get("actions/download-artifact")}`), "artifact 下载步骤未使用已审核 action");
 assert.ok(downloadArtifactStep.includes("artifact-ids: ${{ steps.roundtrip-upload.outputs.artifact-id }}"), "artifact 下载必须使用本次上传返回的 ID");
-assert.ok(downloadArtifactStep.includes("github-token: ${{ github.token }}"), "artifact 下载必须通过当前工作流的只读 API 权限访问");
+assert.doesNotMatch(downloadArtifactStep, /^\s+(?:github-token|repository|run-id):/m, "当前 run 的 artifact 必须使用内部存储下载，避免公共列表缓存延迟或跨 run 查找");
 assert.doesNotMatch(downloadArtifactStep, /^\s+name: terma-actions-/m, "artifact ID 和名称不能同时指定");
 assert.match(regressionWorkflow, /name: Ubuntu \/ Node\.js 22[\s\S]*?permissions:\s+contents: read\s+actions: read/, "artifact 回读只需要 contents/actions 只读权限");
 assert.match(downloadArtifactStep, /digest-mismatch: error/, "artifact 下载步骤必须在摘要不匹配时失败");
