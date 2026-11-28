@@ -65,9 +65,9 @@ assert.match(visibilityArtifactStep, /timeout-minutes: 2/, "artifact 可见性�
 assert.ok(visibilityArtifactStep.includes("TERMA_ARTIFACT_ID: ${{ steps.roundtrip-upload.outputs.artifact-id }}"), "可见性等待必须核对实际上传 ID");
 assert.ok(regressionWorkflow.indexOf(visibilityArtifactStep) < regressionWorkflow.indexOf(downloadArtifactStep), "artifact 可见性检查必须先于下载");
 assert.match(downloadArtifactStep, new RegExp(`uses: actions/download-artifact@${node24Pins.get("actions/download-artifact")}`), "artifact 下载步骤未使用已审核 action");
-assert.ok(downloadArtifactStep.includes("artifact-ids: ${{ steps.roundtrip-upload.outputs.artifact-id }}"), "artifact 下载必须使用本次上传返回的 ID");
+assert.ok(downloadArtifactStep.includes(`name: ${artifactName}`), "artifact 下载必须按本次 run/attempt 的唯一名称查询，避免全量列表索引延迟");
 assert.doesNotMatch(downloadArtifactStep, /^\s+(?:github-token|repository|run-id):/m, "当前 run 的 artifact 必须使用内部存储下载，避免公共列表缓存延迟或跨 run 查找");
-assert.doesNotMatch(downloadArtifactStep, /^\s+name: terma-actions-/m, "artifact ID 和名称不能同时指定");
+assert.doesNotMatch(downloadArtifactStep, /^\s+artifact-ids:/m, "按 ID 下载会先查询全量列表，不能替代服务端名称过滤");
 assert.match(regressionWorkflow, /name: Ubuntu \/ Node\.js 22[\s\S]*?permissions:\s+contents: read\s+actions: read/, "artifact 回读只需要 contents/actions 只读权限");
 assert.match(downloadArtifactStep, /digest-mismatch: error/, "artifact 下载步骤必须在摘要不匹配时失败");
 assert.match(downloadArtifactStep, /path: data\/actions-node24-roundtrip/, "artifact 下载步骤路径不一致");
