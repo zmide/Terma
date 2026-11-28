@@ -18,7 +18,8 @@ export function createPanelTerminal(tabKey: string, changed: () => void) {
   let host: HTMLElement | null = null, disposed = false, initialized = false, failed = false;
   let cancelResize: (() => void) | null = null;
   let listWidth = 180;
-  let profiles: LocalProfile[] = [{id: windows ? 'powershell' : 'shell', label: windows ? 'PowerShell' : text('local_shell')}];
+  let profiles: LocalProfile[] = [{id: windows ? 'powershell' : 'shell', label: windows ? 'PowerShell' : ''}];
+  const profileLabel = (profile: LocalProfile) => profile.label || text('local_shell');
   const selected = () => sessions.get(groups.focused);
   function update() {if (!disposed) {paint(); changed();}}
   function create(profile = profiles[0], split: 'row' | 'column' | null = null, elevated = false) {
@@ -31,7 +32,7 @@ export function createPanelTerminal(tabKey: string, changed: () => void) {
     const session = sessions.get(key); if (!session) return;
     if (session.state.running || session.state.pending) {
       const modal = document.getElementById('modal'); if (!modal) return;
-      if (!await confirmWorkspaceClose(modal, [{title: session.state.profile.label, status: 'connected', persistent: false}], tr)) return;
+      if (!await confirmWorkspaceClose(modal, [{title: profileLabel(session.state.profile), status: 'connected', persistent: false}], tr)) return;
     }
     if (disposed || sessions.get(key) !== session) return;
     try {await session.dispose(); sessions.delete(key); groups.remove(key);}
@@ -113,9 +114,9 @@ export function createPanelTerminal(tabKey: string, changed: () => void) {
           const session = sessions.get(key)!;
           return h('div', {key, role: 'listitem', class: ['panel-terminal-instance', {active: key === groups.focused, nested: index > 0}],
             'data-local-instance': key}, [h('button', {type: 'button', 'aria-pressed': key === groups.focused,
-              title: session.state.profile.label, onClick: () => {groups.select(key); update(); session.focus();}},
+              title: profileLabel(session.state.profile), onClick: () => {groups.select(key); update(); session.focus();}},
               [icon(session.state.profile.id === 'git-bash' ? 'git-branch' : session.state.profile.id === 'cmd' ? 'terminal' : 'square-terminal'),
-                h('span', null, session.state.profile.label), session.state.elevated ? icon('shield') : null]),
+                h('span', null, profileLabel(session.state.profile)), session.state.elevated ? icon('shield') : null]),
               h(TermaButton, {class: 'icon-button', title: text('split_terminal'), 'aria-label': text('split_terminal'),
                 onClick: () => {groups.select(key); create(session.state.profile, 'row');}}, () => icon('columns-2')),
               h(TermaButton, {class: 'icon-button', title: text('close_terminal'), 'aria-label': text('close_terminal'),
@@ -132,11 +133,11 @@ export function createPanelTerminal(tabKey: string, changed: () => void) {
     return h('div', {class: 'panel-terminal-tools'}, [
       button('new_terminal', 'plus', () => create(), sessions.size >= 12),
       button('terminal_profiles', 'chevron-down', event => showActionMenu(event, [
-        ...profiles.map(profile => ({label: profile.label, icon: 'square-terminal', run: () => create(profile)})),
+        ...profiles.map(profile => ({label: profileLabel(profile), icon: 'square-terminal', run: () => create(profile)})),
         ...(windows ? [{separator: true as const}, {label: text('administrator'), icon: 'shield', run: () => create(profiles[0], null, true)}] : [])
       ])),
-      sessions.size === 1 && session ? h('span', {class: 'panel-terminal-profile', title: session.state.profile.label},
-        [icon('square-terminal'), session.state.profile.label]) : null,
+      sessions.size === 1 && session ? h('span', {class: 'panel-terminal-profile', title: profileLabel(session.state.profile)},
+        [icon('square-terminal'), profileLabel(session.state.profile)]) : null,
       button('split_terminal', 'columns-2', () => create(session?.state.profile, 'row'), !session || sessions.size >= 12),
       button('close_terminal', 'trash-2', () => {if (session) void remove(session.state.key);}, !session)
     ]);
@@ -155,7 +156,14 @@ export function createPanelTerminal(tabKey: string, changed: () => void) {
       if (host && visible && available && !initialized) {
         initialized = true; create();
         void bridge!.localTerminalProfiles?.().then(result => {
-          if (!disposed && Array.isArray(result) && result.length) {profiles = result.slice(0, 20); update();}
+          if (!disposed && Array.isArray(result) && result.length) {
+            profiles = result.slice(0, 20);
+            for (const session of sessions.values()) {
+              const detected = profiles.find(profile => profile.id === session.state.profile.id);
+              if (detected) session.state.profile = detected;
+            }
+            update();
+          }
         }).catch(() => {failed = true; update();});
       }
     },

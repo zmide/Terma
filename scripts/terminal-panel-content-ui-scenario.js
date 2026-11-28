@@ -212,6 +212,23 @@ async function runPanelContentMatrix(driver) {
   await click('#workspaceCloseTabsConfirm');
   await wait("document.querySelectorAll('[data-local-instance]').length===2");
   await check(prefix+' closing split retains sibling and other group',"document.querySelectorAll('[data-local-pane]').length===1&&window.__panelFixture.closed.length>=1");
+  await execute(`const f=window.__panelFixture,p=window.termaEfficiency.panel;p.dispose();
+    f.localStarts=[];f.macLanguage=document.documentElement.lang;
+    window.termaDesktop.capabilities.platform='darwin';
+    window.termaDesktop.localTerminalProfiles=()=>new Promise(resolve=>{f.resolveMacProfiles=resolve;});
+    p.install();p.model.restore({});p.model.add('terminal');`);
+  await wait("window.__panelFixture.localStarts.length===1&&document.querySelector('.panel-local-terminal .xterm-screen')");
+  await check(prefix+' pending Mac shell name uses the current translation',
+    "document.querySelector('.panel-terminal-profile').textContent===tr('terminal:panel.local_shell')");
+  await execute(`await setTermaLanguage(window.__panelFixture.macLanguage==='zh-CN'?'en-US':'zh-CN',{persist:false});`);
+  await wait("document.querySelector('.panel-terminal-profile').textContent===tr('terminal:panel.local_shell')");
+  await execute(`const f=window.__panelFixture;f.macShell=document.querySelector('.panel-local-terminal .xterm-screen');
+    f.resolveMacProfiles([{id:'shell',label:'zsh'},{id:'bash',label:'bash'}]);`);
+  await wait("document.querySelector('.panel-terminal-profile').textContent==='zsh'");
+  await check(prefix+' detected Mac shell updates its name without restarting',
+    "window.__panelFixture.localStarts.length===1&&document.querySelector('.panel-local-terminal .xterm-screen')===window.__panelFixture.macShell");
+  await execute(`await setTermaLanguage(window.__panelFixture.macLanguage,{persist:false});`);
+  await shot(prefix+'-mac-shell-name');
   await execute(`const f=window.__panelFixture;api=f.contentApi;const p=window.termaEfficiency.panel;p.dispose();
     window.termaDesktop=f.bridge;p.install();p.model.restore({});`);
 }
