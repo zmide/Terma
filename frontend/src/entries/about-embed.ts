@@ -643,6 +643,7 @@ function paintSftpConnection(id: number, status = 'disconnected', error = '') {
     sftpView.refresh(key, 'toolbar');
     sftpView.refresh(key, 'banner');
   }
+  window.dispatchEvent(new CustomEvent('terma:workspace-target-changed'));
 }
 const sftpRepair = createSftpCredentialRepair({
   tab: sftpTab,

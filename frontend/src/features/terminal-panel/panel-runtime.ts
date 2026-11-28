@@ -3,13 +3,14 @@ import {tr} from '@/shared/i18n/workspace-bootstrap';
 import {terminalSessions, type TerminalSession} from '../terminal/terminal-session-state';
 import {terminalViewport} from '../terminal/terminal-viewport-service';
 import {paintPanel, releasePanel, type PanelTarget, type PanelViewPort} from './PanelView';
-import {bounded, cleanPanelPreferences, createPanelModel, panelLayout, panelLimits, type PanelRegion, type PanelTab} from './panel-model';
+import {bounded, cleanPanelPreferences, createPanelModel, panelKindsForContext, panelLayout, panelLimits, projectPanelLayout, type PanelRegion, type PanelTab} from './panel-model';
 import {createPanelContents} from './panel-contents';
 import {terminalDirectory} from '../terminal/terminal-directory-workspace';
 import '@/styles/terminal-panel.css';
 import {createPanelDrag} from './panel-drag';
 import {filesServices} from '../files/installed-services';
-import {focusWorkspacePane} from '../workspace/workspace-dock-runtime';
+import {activateTab, focusWorkspacePane} from '../workspace/workspace-dock-runtime';
+import {openTerminal} from '../terminal/terminal-page';
 import {notify} from '../efficiency/notification-actions';
 
 const storageKey = 'termaTerminalPanelV1';
@@ -29,9 +30,10 @@ export function createTerminalPanelRuntime() {
   let host: HTMLElement | null = null, shell: HTMLElement | null = null, divider: HTMLElement | null = null;
   let rightHost: HTMLElement | null = null, rightDivider: HTMLElement | null = null;
   let frame = 0, disposed = false, dragging: (() => void) | null = null, contextKey = '';
+  const activeTab = () => applicationState.tabs.find(item => item.key === applicationState.activeTabKey);
   const model = createPanelModel(readPreferences(), changed);
   const current = model.current;
-  const contents = createPanelContents(refresh, text);
+  const contents = createPanelContents(refresh, text, openRemoteTerminal);
   const fileTarget = (key: string) => {
     const tab = current().tabs.find(tab => tab.key === key && tab.kind === 'files');
     return tab ? target(tab) : null;
@@ -54,7 +56,14 @@ export function createTerminalPanelRuntime() {
     const title = applicationState.tabs.find(item => item.key === key)?.title || text('terminal');
     return title === name ? name : `${name} · ${title}`;
   }
+  const visibleKinds = () => panelKindsForContext(activeTab()?.kind);
+  const visibleLayout = (region: PanelRegion) => projectPanelLayout(model.layout(region), current().tabs, visibleKinds());
   function target(_tab: PanelTab): PanelTarget | null {
+    const tab = activeTab();
+    if (tab?.kind === 'sftp' && Number(tab.id)) {
+      return {key: tab.key, connectionId: Number(tab.id), connected: tab.connectionStatus === 'connected', label: tab.title || text('files')};
+    }
+    if (!tab || !['terminal', 'quick-terminal'].includes(tab.kind || '')) return null;
     const key = contextKey;
     const session = terminalSessions.get(key);
     if (session) {
@@ -62,6 +71,12 @@ export function createTerminalPanelRuntime() {
         label: sessionLabel(key, session)};
     }
     return null;
+  }
+  function openRemoteTerminal(connectionId: number) {
+    const existing = applicationState.tabs.find(tab => ['terminal', 'quick-terminal'].includes(tab.kind || '')
+      && Number(tab.id) === connectionId);
+    if (existing) return activateTab(existing.key);
+    return openTerminal(connectionId);
   }
 
   function ensure() {
@@ -108,10 +123,22 @@ export function createTerminalPanelRuntime() {
   function release(key: string, element: HTMLElement) {
     contents.release(key, element);
   }
+  function focus(tab: PanelTab, paneId: string, region: PanelRegion) {
+    requestAnimationFrame(() => {
+      if (disposed) return;
+      const pane = panelLayout.findPane(paneId, visibleLayout(region));
+      if (pane?.activeTabKey !== tab.key || region === 'right' && model.state.collapsedRight.has(tab.key)) return;
+      const element = (region === 'bottom' ? host : rightHost)?.querySelector<HTMLElement>(
+        `[data-panel-content="${CSS.escape(tab.key)}"]`
+      );
+      if (element?.checkVisibility()) contents.focus(tab);
+    });
+  }
   function content(tab: PanelTab, element: HTMLElement) {
-    const pane = model.findPaneForTab(tab.key), region = pane ? model.regionForPane(pane.id) : 'bottom';
-    const focused = panelLayout.leaves(model.layout(region)).find(item => item.id === current().focusedPaneId)
-      || panelLayout.leaves(model.layout(region))[0];
+    const savedPane = model.findPaneForTab(tab.key), region = savedPane ? model.regionForPane(savedPane.id) : 'bottom';
+    const layout = visibleLayout(region), pane = panelLayout.findPaneForTab(tab.key, layout);
+    const focused = panelLayout.leaves(layout).find(item => item.id === current().focusedPaneId)
+      || panelLayout.leaves(layout)[0];
     const shown = !document.hidden && model.state.preferences.visible
       && (!model.state.maximized || model.state.maximizedRegion === region)
       && (region === 'right' ? !model.state.collapsedRight.has(tab.key)
@@ -122,6 +149,7 @@ export function createTerminalPanelRuntime() {
   function paint() {
     if (disposed || !ensure() || !shell || !host || !divider || !rightHost || !rightDivider) return;
     const visible = model.state.preferences.visible;
+    if (!visibleLayout(model.state.maximizedRegion)) model.state.maximized = false;
     shell.dataset.panelPosition = current().position;
     shell.classList.toggle('panel-open', visible);
     shell.classList.toggle('panel-maximized', visible && model.state.maximized);
@@ -131,25 +159,26 @@ export function createTerminalPanelRuntime() {
     shell.style.setProperty('--terminal-panel-width', `${current().width}px`);
     for (const region of ['bottom', 'right'] as const) {
       const element = region === 'bottom' ? host : rightHost, handle = region === 'bottom' ? divider : rightDivider;
-      element.hidden = !visible || !model.layout(region) || model.state.maximized && model.state.maximizedRegion !== region;
+      element.hidden = !visible || !visibleLayout(region) || model.state.maximized && model.state.maximizedRegion !== region;
       handle.hidden = element.hidden || model.state.maximized;
       handle.setAttribute('aria-label', text('resize'));
       handle.setAttribute('aria-orientation', region === 'right' && innerWidth > 760 ? 'vertical' : 'horizontal');
       element.setAttribute('aria-label', text(region === 'bottom' ? 'title' : 'right_title'));
       element.dataset.theme = document.documentElement.dataset.theme;
-      const port: PanelViewPort = {text, target, content, release, tools: contents.controls, resize: (event, id) => resize(event, id, region),
+      const port: PanelViewPort = {text, target, visibleKinds, content, focus, release, tools: contents.controls, resize: (event, id) => resize(event, id, region),
         toggle: region === 'right' ? model.returnRight : () => toggle(), restore: model.restore,
         drag: tabDrag.begin, suppressClick: tabDrag.suppressClick,
         dock: () => {
-          const pane = panelLayout.leaves(model.layout(region)).find(item => item.id === current().focusedPaneId)
-            || panelLayout.leaves(model.layout(region))[0];
+          const pane = panelLayout.leaves(visibleLayout(region)).find(item => item.id === current().focusedPaneId)
+            || panelLayout.leaves(visibleLayout(region))[0];
           if (pane) model.dock(pane.activeTabKey, region === 'bottom' ? 'right' : 'bottom');
         }, close: key => {model.close(key);}};
       paintPanel(element, model, port, region);
     }
-    for (const button of document.querySelectorAll<HTMLElement>('[data-terminal-quick-command-toggle]')) {
+    for (const button of document.querySelectorAll<HTMLElement>('[data-terminal-quick-command-toggle],#terminalPanelToggleButton')) {
       button.classList.toggle('active', visible); button.setAttribute('aria-pressed', String(visible));
       button.title = text(visible ? 'hide' : 'show'); button.setAttribute('aria-label', button.title);
+      button.setAttribute('aria-controls', 'terminalPanelWorkspace');
     }
   }
 
@@ -193,13 +222,14 @@ export function createTerminalPanelRuntime() {
     window.addEventListener('pointercancel', finish, true);
   }
   function context() {
-    const tab = applicationState.tabs.find(item => item.key === applicationState.activeTabKey);
-    if (tab && ['terminal', 'quick-terminal'].includes(tab.kind || '')) contextKey = tab.key;
-    else if (!terminalSessions.has(contextKey)) contextKey = '';
+    const tab = activeTab();
+    contextKey = tab && ['terminal', 'quick-terminal'].includes(tab.kind || '') ? tab.key : '';
+    contents.reconcile(current().tabs);
     refresh();
   }
   function toggle(key = '') {
-    if (key && terminalSessions.has(key)) contextKey = key;
+    context();
+    if (key && key === applicationState.activeTabKey && terminalSessions.has(key)) contextKey = key;
     model.state.preferences.visible = !model.state.preferences.visible;
     model.publish();
   }

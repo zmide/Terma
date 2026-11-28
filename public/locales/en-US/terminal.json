@@ -8,6 +8,8 @@
     "hide": "Hide utility panel",
     "commands": "Quick commands",
     "files": "SFTP",
+    "remote-terminal": "Remote terminal",
+    "remote_terminal_open": "Open remote terminal in the workspace",
     "terminal": "Terminal",
     "new_terminal": "New terminal",
     "terminal_profiles": "Terminal profiles",

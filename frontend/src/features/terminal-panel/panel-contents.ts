@@ -6,14 +6,16 @@ import type {PanelTab} from './panel-model';
 import {api} from '@/shared/api/workspace-request';
 import {createPerformanceSampler} from './performance-sampler';
 import {createPanelPerformance} from './panel-performance';
+import {createPanelRemoteTerminal} from './panel-remote-terminal';
 
-export function createPanelContents(changed: () => void, text: (key: string) => string) {
+export function createPanelContents(changed: () => void, text: (key: string) => string, openRemoteTerminal: (connectionId: number) => void) {
   const hosts = new Map<string, HTMLElement>();
   const kinds = new Map<string, PanelTab['kind']>();
   const quick = new Map<string, {host: HTMLElement; target: string}>();
   const files = new Map<string, ReturnType<typeof createPanelFiles>>();
   const terminals = new Map<string, ReturnType<typeof createPanelTerminal>>();
   const performance = new Map<string, ReturnType<typeof createPanelPerformance>>();
+  const remoteTerminals = new Map<string, ReturnType<typeof createPanelRemoteTerminal>>();
   const sampler = createPerformanceSampler({request: (id, signal) => api(`/api/connections/${id}/host-performance`, {signal})});
   function release(key: string, expectedHost?: HTMLElement) {
     const host = hosts.get(key);
@@ -22,11 +24,13 @@ export function createPanelContents(changed: () => void, text: (key: string) => 
     hosts.delete(key); quick.delete(key);
     files.get(key)?.unmount(); terminals.get(key)?.sync(null, null);
     performance.get(key)?.unmount();
+    remoteTerminals.get(key)?.sync(null, null, false);
   }
   function disposeTab(key: string) {
     release(key); files.get(key)?.dispose(); files.delete(key);
     terminals.get(key)?.dispose(); terminals.delete(key);
     performance.get(key)?.dispose(); performance.delete(key);
+    remoteTerminals.get(key)?.dispose(); remoteTerminals.delete(key);
     kinds.delete(key);
   }
   function mount(tab: PanelTab, host: HTMLElement, target: PanelTarget | null, visible: boolean) {
@@ -45,6 +49,10 @@ export function createPanelContents(changed: () => void, text: (key: string) => 
       if (!terminals.has(tab.key)) terminals.set(tab.key, createPanelTerminal(tab.key, changed));
       terminals.get(tab.key)!.sync(host, target, visible); return;
     }
+    if (tab.kind === 'remote-terminal') {
+      if (!remoteTerminals.has(tab.key)) remoteTerminals.set(tab.key, createPanelRemoteTerminal(changed, text, openRemoteTerminal));
+      remoteTerminals.get(tab.key)!.sync(host, target, visible); return;
+    }
     const key = target?.connected ? target.key : '', previous = quick.get(tab.key);
     if (previous?.host === host && previous.target === key) {
       const empty = host.querySelector('[data-panel-empty]'); if (empty) empty.textContent = text('no_session');
@@ -62,11 +70,30 @@ export function createPanelContents(changed: () => void, text: (key: string) => 
       empty.dataset.panelEmpty = ''; empty.textContent = text('no_session'); host.appendChild(empty);
     }
   }
-  return {mount, release, disposeTab, controls: (tab: PanelTab) => terminals.get(tab.key)?.controls() || files.get(tab.key)?.controls() || null,
+  function focus(tab: PanelTab) {
+    const focused = tab.kind === 'terminal' ? terminals.get(tab.key)?.focus()
+      : tab.kind === 'remote-terminal' ? remoteTerminals.get(tab.key)?.focus()
+        : tab.kind === 'files' ? files.get(tab.key)?.focus()
+          : tab.kind === 'commands' ? focusCommands(tab.key)
+            : false;
+    if (focused) return true;
+    const host = hosts.get(tab.key);
+    host?.focus({preventScroll: true});
+    return Boolean(host);
+  }
+  function focusCommands(key: string) {
+    const control = hosts.get(key)?.querySelector<HTMLElement>(
+      '[data-terminal-quick-command-id], [data-terminal-quick-command-manage]'
+    );
+    control?.focus({preventScroll: true});
+    return Boolean(control && document.activeElement === control);
+  }
+  return {mount, release, focus, disposeTab, controls: (tab: PanelTab) => terminals.get(tab.key)?.controls() || remoteTerminals.get(tab.key)?.controls() || files.get(tab.key)?.controls() || null,
     reconcile(tabs: PanelTab[]) {
+      for (const terminal of remoteTerminals.values()) terminal.reconcile();
       const keys = new Set(tabs.map(tab => tab.key));
       for (const key of kinds.keys()) if (!keys.has(key) || tabs.find(tab => tab.key === key)?.kind !== kinds.get(key)) disposeTab(key);
     },
-    dispose() {for (const key of new Set([...hosts.keys(), ...files.keys(), ...terminals.keys(), ...performance.keys()])) disposeTab(key); sampler.dispose();}
+    dispose() {for (const key of new Set([...hosts.keys(), ...files.keys(), ...terminals.keys(), ...performance.keys(), ...remoteTerminals.keys()])) disposeTab(key); sampler.dispose();}
   };
 }

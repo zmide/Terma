@@ -62,7 +62,7 @@ export function createLocalTerminalSession(bridge: LocalBridge, profile: LocalPr
     catch (error) {if (!String(error).includes('LOCAL_TERMINAL_NOT_FOUND')) throw error;}
   }
   return {state, element, start, refit,
-    focus() {refit(); term?.focus();},
+    focus() {refit(); term?.focus(); return Boolean(term);},
     theme() {
       const settings = terminalServices.termaTerminalSettings?.current();
       if (term && settings) term.options.theme = terminalServices.termaTerminalSettingsModel!.theme(settings);

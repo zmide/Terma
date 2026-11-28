@@ -51,6 +51,13 @@ export function createPanelFiles(key: string, changed: () => void) {
       }, !state.confirmed)
     ]);
   }
+  function focus() {
+    const control = root.querySelector<HTMLElement>('.sftp-row.active .sftp-name, .sftp-row.is-selected .sftp-name')
+      || root.querySelector<HTMLElement>('.sftp-row .sftp-name')
+      || root.querySelector<HTMLElement>('#sftpBreadcrumb [aria-current="page"]');
+    control?.focus({preventScroll: true});
+    return Boolean(control && document.activeElement === control);
+  }
   function sync(element: HTMLElement | null, next: PanelTarget | null, shown: boolean) {
     host = element;
     if (host && container.parentElement !== host) host.replaceChildren(container);
@@ -88,7 +95,7 @@ export function createPanelFiles(key: string, changed: () => void) {
       void browse(state.following && confirmed ? confirmed : current?.state.path || '.', false);
     }
   }
-  return {sync, state, controls, browse,
+  return {sync, state, controls, browse, focus,
     unmount() {invalidate(); visible = false; host = null;},
     dispose() {invalidate(); release(); container.remove(); host = null; visible = false;}
   };

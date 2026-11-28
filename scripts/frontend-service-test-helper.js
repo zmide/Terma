@@ -55,7 +55,7 @@ function loadFrontendService(relative, globals = {}, cache = new Map()) {
     cache.set(pageFile,Object.fromEntries(pageFields.filter(name=>typeof globals[name]==='function').map(name=>[name,(...args)=>globals[name](...args)])));
   }
   const stateFile=path.resolve(__dirname,'../frontend/src/features/terminal/terminal-session-state.ts');
-  const stateFields=['terminalSessions','terminalSurfaceCache','terminalCounts'];
+  const stateFields=['terminalSessions','terminalSurfaceCache','terminalCounts','auxiliaryTerminalOwners'];
   if(filename!==stateFile&&!cache.has(stateFile)&&stateFields.some(name=>name in globals)){
     const fixture={};
     for(const name of stateFields){

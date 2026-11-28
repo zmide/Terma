@@ -69,7 +69,9 @@ export function createPanelDrag(model: ReturnType<typeof createPanelModel>, text
       const tabRect = tabs.getBoundingClientRect(), rect = pane.getBoundingClientRect();
       if (y <= tabRect.bottom) {
         const insertion = workspaceTabInsertion(tabs, x, '.terminal-panel-tab:not(.tab-dragging)');
-        target = {paneId: pane.dataset.panelPane, zone: 'tabs', index: insertion.index};
+        const before = insertion.before?.dataset.panelTabShell;
+        const keys = model.findPane(pane.dataset.panelPane || '')?.tabs.filter(key => key !== sourceKey) || [];
+        target = {paneId: pane.dataset.panelPane, zone: 'tabs', index: before ? keys.indexOf(before) : keys.length};
         const marker = pane.querySelector<HTMLElement>('[data-panel-insert]')!;
         const end = insertion.before?.getBoundingClientRect().left
           ?? [...tabs.querySelectorAll<HTMLElement>('.terminal-panel-tab')].at(-1)?.getBoundingClientRect().right ?? tabRect.left;

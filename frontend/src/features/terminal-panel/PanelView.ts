@@ -2,18 +2,20 @@ import {h, render, type VNode, type VNodeChild} from 'vue';
 import {TermaButton} from '@/shared/ui/TermaButton';
 import {showActionMenu} from '@/shared/action-menu';
 import {settingsIcon as icon} from '../settings/settings-icon';
-import {panelLayout, type PanelRegion, type PanelTab, type createPanelModel} from './panel-model';
+import {panelLayout, projectPanelLayout, type PanelKind, type PanelRegion, type PanelTab, type createPanelModel} from './panel-model';
 import type {WorkspaceLayoutNode} from '../workspace/workspace-layout-service';
 
 export interface PanelTarget {key: string; connectionId: number; label: string; connected: boolean}
 export interface PanelViewPort {
   text(key: string, params?: Record<string, unknown>): string;
   target(tab: PanelTab): PanelTarget | null;
+  visibleKinds(): readonly PanelKind[];
   toggle(): void;
   dock(): void;
   resize(event: PointerEvent | KeyboardEvent, splitId?: string): void;
   close(key: string): void;
   content(tab: PanelTab, host: HTMLElement): void;
+  focus(tab: PanelTab, paneId: string, region: PanelRegion): void;
   release(key: string, host: HTMLElement): void;
   restore(value: unknown): void;
   drag(event: PointerEvent, key: string): void;
@@ -23,7 +25,7 @@ export interface PanelViewPort {
 
 export function paintPanel(host: HTMLElement, model: ReturnType<typeof createPanelModel>, port: PanelViewPort, region: PanelRegion = 'bottom') {
   const {state} = model, current = model.current(), t = port.text;
-  const layout = model.layout(region), panes = panelLayout.leaves(layout);
+  const layout = projectPanelLayout(model.layout(region), current.tabs, port.visibleKinds()), panes = panelLayout.leaves(layout);
   const focused = panes.find(pane => pane.id === current.focusedPaneId) || panes[0];
   const button = (action: string, glyph: string, run: () => unknown, disabled = false, secondary = false) =>
     h(TermaButton, {class: ['icon-button', {'terminal-panel-action-secondary': secondary}], title: t(action), 'aria-label': t(action), 'data-panel-action': action,
@@ -39,7 +41,7 @@ export function paintPanel(host: HTMLElement, model: ReturnType<typeof createPan
   const actions = () => h('div', {class: 'terminal-panel-header-actions'}, [
     panes.length > 1 ? h('select', {class: 'terminal-panel-pane-switch',
       'aria-label': t('switch_pane'), value: focused?.id, onChange: (event: Event) => {
-        const pane = model.findPane((event.target as HTMLSelectElement).value);
+        const pane = panelLayout.findPane((event.target as HTMLSelectElement).value, layout);
         if (pane) model.activate(pane.id, pane.activeTabKey);
       }}, panes.map((pane, index) => h('option', {value: pane.id}, t('pane_number', {number: index + 1})))) : null,
     ...extraActions.map(action => button(action.key, action.glyph, action.run, action.disabled, true)),
@@ -60,17 +62,22 @@ export function paintPanel(host: HTMLElement, model: ReturnType<typeof createPan
         'aria-expanded': region === 'right' ? !state.collapsedRight.has(tab.key) : undefined,
         'data-panel-tab': tab.key, title: t(tab.kind), onClick: () => {
           if (!port.suppressClick()) {
-            if (region === 'right') model.toggleSection(paneId, tab.key);
-            else model.activate(paneId, tab.key);
+            if (region === 'right') {
+              model.toggleSection(paneId, tab.key);
+              if (!state.collapsedRight.has(tab.key)) port.focus(tab, paneId, region);
+            } else {
+              model.activate(paneId, tab.key);
+              port.focus(tab, paneId, region);
+            }
           }
         },
         onKeydown: (event: KeyboardEvent) => {
           if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-          const pane = model.findPane(paneId)!;
+          const pane = panelLayout.findPane(paneId, layout)!;
           const index = pane.tabs.indexOf(tab.key), next = event.key === 'Home' ? 0 : event.key === 'End'
             ? pane.tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + pane.tabs.length) % pane.tabs.length;
           event.preventDefault(); model.activate(paneId, pane.tabs[next]);
-          requestAnimationFrame(() => host.querySelector<HTMLButtonElement>(`[data-panel-tab="${pane.tabs[next]}"]`)?.focus());
+          requestAnimationFrame(() => host.querySelector<HTMLButtonElement>(`[data-panel-tab="${CSS.escape(pane.tabs[next])}"]`)?.focus());
         }}, [region === 'right' ? icon(state.collapsedRight.has(tab.key) ? 'chevron-right' : 'chevron-down') : null,
           h('span', {class: 'terminal-panel-tab-name'}, t(tab.kind))]),
       region === 'right' ? h('span', {class: 'tab-close'}, button('return_bottom', 'x', () => port.close(tab.key))) : null
@@ -78,7 +85,7 @@ export function paintPanel(host: HTMLElement, model: ReturnType<typeof createPan
   }
   const contentView = (tab: PanelTab, hidden: boolean) =>
     h('div', {key: tab.key, class: 'terminal-panel-content', hidden,
-      role: 'tabpanel', 'aria-label': t(tab.kind), 'data-panel-content': tab.key,
+      role: 'tabpanel', tabindex: -1, 'aria-label': t(tab.kind), 'data-panel-content': tab.key,
       onVnodeMounted: (vnode: VNode) => {if (vnode.el instanceof HTMLElement) port.content(tab, vnode.el);},
       onVnodeUpdated: (vnode: VNode) => {if (vnode.el instanceof HTMLElement) port.content(tab, vnode.el);},
       onVnodeBeforeUnmount: (vnode: VNode) => {if (vnode.el instanceof HTMLElement) port.release(tab.key, vnode.el);}});
