@@ -57,7 +57,7 @@ assert.match(regressionWorkflow, /name:\s*macOS \/ Node\.js 22[\s\S]*runs-on:\s*
 assert.match(prepareArtifactStep, /mkdir -p data\/actions-node24-smoke/, "artifact 准备步骤缺少源目录");
 assert.match(prepareArtifactStep, /TERMA_ACTIONS_SMOKE_SHA=.*sha256sum data\/actions-node24-smoke\/payload\.txt/, "artifact 准备步骤缺少源文件 SHA-256 记录");
 assert.match(uploadArtifactStep, new RegExp(`uses: actions/upload-artifact@${node24Pins.get("actions/upload-artifact")}`), "artifact 上传步骤未使用已审核 action");
-assert.ok(uploadArtifactStep.includes(`name: ${artifactName}`), "artifact 上传步骤名称不一致");
+assert.equal(uploadArtifactStep.match(/^          name:\s*(.+)$/m)?.[1].trim(), artifactName, "artifact 上传步骤名称不一致");
 assert.match(uploadArtifactStep, /id: roundtrip-upload/, "artifact 上传步骤必须提供本次实际上传 ID");
 assert.match(uploadArtifactStep, /if-no-files-found: error/, "artifact 上传步骤必须在文件缺失时失败");
 assert.match(uploadArtifactStep, /path: data\/actions-node24-smoke\/payload\.txt/, "artifact 上传步骤路径不一致");
@@ -65,7 +65,7 @@ assert.match(visibilityArtifactStep, /timeout-minutes: 2/, "artifact 可见性�
 assert.ok(visibilityArtifactStep.includes("TERMA_ARTIFACT_ID: ${{ steps.roundtrip-upload.outputs.artifact-id }}"), "可见性等待必须核对实际上传 ID");
 assert.ok(regressionWorkflow.indexOf(visibilityArtifactStep) < regressionWorkflow.indexOf(downloadArtifactStep), "artifact 可见性检查必须先于下载");
 assert.match(downloadArtifactStep, new RegExp(`uses: actions/download-artifact@${node24Pins.get("actions/download-artifact")}`), "artifact 下载步骤未使用已审核 action");
-assert.ok(downloadArtifactStep.includes(`name: ${artifactName}`), "artifact 下载必须按本次 run/attempt 的唯一名称查询，避免全量列表索引延迟");
+assert.equal(downloadArtifactStep.match(/^          name:\s*(.+)$/m)?.[1].trim(), artifactName, "artifact 下载必须按本次 run/attempt 的唯一名称查询，避免全量列表索引延迟");
 assert.doesNotMatch(downloadArtifactStep, /^\s+(?:github-token|repository|run-id):/m, "当前 run 的 artifact 必须使用内部存储下载，避免公共列表缓存延迟或跨 run 查找");
 assert.doesNotMatch(downloadArtifactStep, /^\s+artifact-ids:/m, "按 ID 下载会先查询全量列表，不能替代服务端名称过滤");
 assert.match(regressionWorkflow, /name: Ubuntu \/ Node\.js 22[\s\S]*?permissions:\s+contents: read\s+actions: read/, "artifact 回读只需要 contents/actions 只读权限");
