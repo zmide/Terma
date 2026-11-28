@@ -74,13 +74,13 @@ async function runPanelContentMatrix(driver) {
   browser.webContents.sendInputEvent({type:'mouseUp',...destination,button:'left',clickCount:1});
   await wait("tabs.some(t=>t.kind==='sftp'&&t.id===9971&&t.path==='/latest')");
   await wait("document.querySelector('#workspaceDock #view-sftp .sftp-row')");
-  await check(prefix+' dragging SFTP copies into main workspace and retains panel',`document.querySelector('[data-panel-tab="'+window.__panelFixture.files+'"]')&&
-    document.querySelector('.sftp-embedded #sftpList')===window.__panelFixture.embeddedList&&
-    (innerWidth<=760||document.querySelector('.sftp-embedded #sftpSearchToggle')?.checkVisibility())&&
+  await check(prefix+' dragging SFTP copies into main workspace and switches contextual tools',`!document.querySelector('[data-panel-tab="'+window.__panelFixture.files+'"]')&&
+    [...document.querySelectorAll('[data-panel-tab]')].map(n=>n.textContent).includes(tr('terminal:panel.remote-terminal'))&&
     document.querySelector('#workspaceDock #view-sftp .sftp-row')&&
     !document.querySelector('.panel-sftp-copy-target')`);
   await shot(prefix+'-sftp-copy-workspace');
   await execute("closeTabsByKey(tabs.filter(t=>t.kind==='sftp'&&t.id===9971).map(t=>t.key));activeTabKey='terminal-panel-review-0';window.dispatchEvent(new CustomEvent('terma:workspace-target-changed'))");
+  await wait("document.querySelector('.sftp-embedded #sftpList')===window.__panelFixture.embeddedList");
   }
   await execute(`const f=window.__panelFixture;f.bridge=window.termaDesktop;window.termaDesktop=undefined;
     const p=window.termaEfficiency.panel;p.dispose();p.install();p.model.restore({});p.model.add('terminal');`);
@@ -143,6 +143,8 @@ async function runPanelContentMatrix(driver) {
   await shot(prefix+'-right-accordion');
   await click('#terminalPanelRight [data-panel-tab="'+await execute("return window.__panelFixture.terminal")+'"]');
   await wait("document.querySelector('#terminalPanelRight .panel-local-terminal')?.checkVisibility()");
+  await check(prefix+' expanding a terminal section focuses the selected shell',
+    "document.activeElement?.matches('.panel-terminal-pane.focused .xterm-helper-textarea')");
   await resizeList(170);
   await shot(prefix+'-right-terminal-icons');
   await check(prefix+' right accordion expands without replacing terminal engines',"window.__panelFixture.localStarts.length===3&&window.__panelFixture.terminalNodes.every(n=>[...document.querySelectorAll('#terminalPanelRight .xterm-screen')].includes(n))");
@@ -150,6 +152,59 @@ async function runPanelContentMatrix(driver) {
   await click('#terminalPanelRight [data-panel-action=return_bottom]');
   await wait("document.querySelector('#terminalPanel .panel-local-terminal')?.checkVisibility()");
   await check(prefix+' return keeps terminal group',"window.__panelFixture.localStarts.length===3&&document.querySelectorAll('[data-local-pane]').length===2");
+  await execute(`const f=window.__panelFixture,m=window.termaEfficiency.panel.model;
+    f.layoutShape=node=>!node?null:node.type==='pane'?{type:node.type,id:node.id,tabs:node.tabs}:
+      {type:node.type,id:node.id,direction:node.direction,ratio:node.ratio,first:f.layoutShape(node.first),second:f.layoutShape(node.second)};
+    f.contextLayout=JSON.stringify({tabs:m.current().tabs,layout:f.layoutShape(m.current().layout),rightLayout:f.layoutShape(m.current().rightLayout)});
+    await window.termaSettingsViews.open();window.termaSettingsNavigation.show('settings-general',{moveToWorkspace:false});`);
+  await wait("document.querySelectorAll('[data-panel-tab]').length===1");
+  await check(prefix+' settings exposes only the persistent local terminal',`document.querySelectorAll('[data-panel-tab]').length===1&&
+    document.querySelector('[data-panel-tab]').textContent===tr('terminal:panel.terminal')&&
+    !document.querySelector('[data-remote-terminal-action]')&&!document.querySelector('.panel-performance')&&!document.querySelector('.sftp-embedded')`);
+  await check(prefix+' settings preserves running local terminal instances',`window.__panelFixture.localStarts.length===3&&
+    window.__panelFixture.terminalNodes.every(n=>n.isConnected)`);
+  await check(prefix+' settings leaves saved panel tab and split structure intact',`(()=>{const f=window.__panelFixture,m=window.termaEfficiency.panel.model;
+    return JSON.stringify({tabs:m.current().tabs,layout:f.layoutShape(m.current().layout),rightLayout:f.layoutShape(m.current().rightLayout)})===f.contextLayout;})()`);
+  await check(prefix+' global panel toggle sits beside task center without overlapping',`(()=>{
+    const button=document.querySelector('#terminalPanelToggleButton'),task=document.querySelector('#sftpTaskCenterButton');
+    const b=button.getBoundingClientRect(),t=task.getBoundingClientRect(),s=getComputedStyle(button);
+    return button.checkVisibility()&&b.left>=t.right&&Math.abs(b.top-t.top)<2&&b.right<=innerWidth&&
+      s.borderWidth==='0px'&&s.boxShadow==='none'&&button.getAttribute('aria-pressed')==='true'&&
+      !document.querySelector('[data-terminal-quick-command-toggle]');})()`);
+  await shot(prefix+'-settings-terminal-context');
+  await click('#terminalPanelToggleButton');
+  await wait("!window.termaEfficiency.panel.visible()&&document.querySelector('#terminalPanelToggleButton').getAttribute('aria-pressed')==='false'");
+  await click('#terminalPanelToggleButton');
+  await wait("document.querySelector('.panel-local-terminal')?.checkVisibility()");
+  await execute(`await window.termaSftpPage.open(9972,'.',true);window.__panelFixture.contextSftp=activeTabKey;`);
+  await wait("document.querySelectorAll('[data-panel-tab]').length===3");
+  await check(prefix+' SFTP context offers remote terminal, local terminal and host performance',`[...document.querySelectorAll('[data-panel-tab]')].map(n=>n.textContent).sort().join('|')===
+    ['remote-terminal','terminal','performance'].map(k=>tr('terminal:panel.'+k)).sort().join('|')&&
+    window.__panelFixture.localStarts.length===3&&window.__panelFixture.terminalNodes.every(n=>n.isConnected)`);
+  await click('[data-panel-tab][title="'+await execute("return tr('terminal:panel.remote-terminal')")+'"]');
+  await wait("document.querySelector('[data-remote-terminal-action=remote_terminal_open]')");
+  await check(prefix+' SFTP remote terminal action uses the current connection',"!document.querySelector('[data-remote-terminal-action=remote_terminal_open]').disabled");
+  await check(prefix+' clicking remote terminal focuses its content',`document.activeElement?.closest('[data-panel-content]')?.dataset.panelContent===
+    document.querySelector('[data-panel-tab][aria-selected=true]')?.dataset.panelTab`);
+  await click('[data-panel-tab][title="'+await execute("return tr('terminal:panel.performance')")+'"]');
+  await wait("document.querySelector('.panel-performance [data-panel-performance-status]')");
+  await check(prefix+' SFTP performance targets the current connection',
+    "document.querySelector('.panel-performance [data-panel-performance-status]').textContent!==tr('terminal:panel.performance_saved_target')");
+  await check(prefix+' clicking performance focuses its content',`document.activeElement?.closest('[data-panel-content]')?.dataset.panelContent===
+    document.querySelector('[data-panel-tab][aria-selected=true]')?.dataset.panelTab`);
+  await shot(prefix+'-sftp-terminal-context');
+  await execute(`activateTab('terminal-panel-review-0');closeTabsByKey(['settings',window.__panelFixture.contextSftp]);`);
+  await wait("document.querySelectorAll('[data-panel-tab]').length===4");
+  await check(prefix+' switching context restores tools without changing engines or layout',`window.__panelFixture.localStarts.length===3&&
+    window.__panelFixture.terminalNodes.every(n=>n.isConnected)&&(()=>{const f=window.__panelFixture,m=window.termaEfficiency.panel.model;
+      return JSON.stringify({tabs:m.current().tabs,layout:f.layoutShape(m.current().layout),rightLayout:f.layoutShape(m.current().rightLayout)})===f.contextLayout;})()`);
+  await click('[data-panel-tab][title="'+await execute("return tr('terminal:panel.terminal')")+'"]');
+  await wait("document.querySelector('.panel-local-terminal')?.checkVisibility()");
+  await check(prefix+' clicking Terminal focuses the selected shell',
+    "document.activeElement?.matches('.panel-terminal-pane.focused .xterm-helper-textarea')");
+  await execute("window.__panelFixture.contentFocus=document.activeElement;window.termaEfficiency.panel.refresh()");
+  await delay(80);
+  await check(prefix+' background refresh preserves content focus',"document.activeElement===window.__panelFixture.contentFocus");
   await click('[data-local-action=close_terminal]');
   await wait("document.querySelector('#workspaceCloseTabsConfirm')");
   await shot(prefix+'-terminal-close-confirm');

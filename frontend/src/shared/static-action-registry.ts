@@ -10,6 +10,7 @@ import {closeModal} from '@/features/workspace/workspace-modal-host';
 import {toggleTheme} from '@/shared/theme-runtime';
 import {updateFilePicker} from '@/shared/form-controls';
 import {applicationState} from '@/shared/application-state';
+import {efficiencyServices} from '@/features/efficiency/installed-services';
 import {openTerminal} from '@/features/terminal/terminal-page';
 import { workspaceShell } from '@/features/workspace/workspace-shell-controller';
 import type {createTaskRuntime} from '../features/files/sftp/task-runtime';
@@ -134,6 +135,7 @@ const actions: Record<string, Record<string, StaticActionHandler>> = {
   },
   'task-center': {
     'static-task-center-toggle': ({event}, tasks) => tasks.runtime.toggle(event),
+    'static-terminal-panel-toggle': () => efficiencyServices.termaEfficiency.quick.toggle(),
     'static-task-center-close': (_context, tasks) => tasks.runtime.close(),
     'static-task-center-view': ({dataset}, tasks) => tasks.runtime.view(dataset.taskView ?? ''),
     'static-task-center-clear': ({event, element}, tasks) => {

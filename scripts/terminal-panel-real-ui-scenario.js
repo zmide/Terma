@@ -48,9 +48,31 @@ async function runPanelRealSsh(driver){
       await wait("document.querySelector('.panel-performance time')&&document.querySelectorAll('[data-panel-process]').length>0",1600);
       await check(machine.name+' samples automatically',"!document.querySelector('[data-panel-performance-toggle]')&&document.querySelector('.panel-performance-metrics').textContent.includes('MB')");
       await shot('real-'+machine.name+'-performance');
+      await execute(`const f=window.__panelFixture;await window.termaSftpPage.open(f.realId,${JSON.stringify(machine.home)},true);
+        f.realSftp=activeTabKey;window.termaEfficiency.panel.model.restore({});`);
+      await wait("window.termaTerminalState.terminalSessions.get('panel-remote-'+window.__panelFixture.realSftp)?.connected",1600);
+      await execute(`const f=window.__panelFixture;f.panelRemote=window.termaTerminalState.terminalSessions.get('panel-remote-'+f.realSftp);`);
+      await click('[data-panel-tab][title="'+await execute("return tr('terminal:panel.remote-terminal')")+'"]');
+      await check(machine.name+' remote panel tab focuses the SSH input',"document.activeElement?.matches('.panel-remote-terminal .xterm-helper-textarea')");
+      browser.webContents.focus();browser.webContents.insertText('echo TERMA_REMOTE_PANEL_OK');
+      await delay(100);
+      for(const type of ['keyDown','keyUp'])browser.webContents.sendInputEvent({type,keyCode:'Enter'});
+      await wait(`(()=>{const b=window.__panelFixture.panelRemote.term.buffer.active;let n=0;
+        for(let i=0;i<b.length;i++)if(b.getLine(i)?.translateToString().includes('TERMA_REMOTE_PANEL_OK'))n++;return n>=2})()`,1200);
+      await shot('real-'+machine.name+'-sftp-remote-terminal');
+      await execute(`const f=window.__panelFixture;activateTab(f.realKey);activateTab(f.realSftp);`);
+      await wait("document.querySelector('.panel-remote-terminal .xterm-screen')?.checkVisibility()");
+      await check(machine.name+' SFTP remote shell survives context changes',"window.termaTerminalState.terminalSessions.get('panel-remote-'+window.__panelFixture.realSftp)===window.__panelFixture.panelRemote");
+      await execute(`const f=window.__panelFixture;const m=window.termaEfficiency.panel.model;m.add('performance');`);
+      await wait("document.querySelector('.panel-performance time')&&document.querySelectorAll('[data-panel-process]').length>0",1600);
+      await shot('real-'+machine.name+'-sftp-performance');
+      await execute(`closeTabsByKey([window.__panelFixture.realSftp]);`);
+      await wait("!window.termaTerminalState.terminalSessions.has('panel-remote-'+window.__panelFixture.realSftp)");
+      await check(machine.name+' closing SFTP releases its remote panel shell',"!window.termaTerminalState.terminalSessions.has('panel-remote-'+window.__panelFixture.realSftp)");
     }finally{
       await execute(`window.termaEfficiency.panel.model.restore({});if(window.__panelFixture.realKey)void window.termaWorkspaceTabActions.requestClose([window.__panelFixture.realKey],window.__panelFixture.realKey)`);
-      await wait("document.querySelector('#workspaceCloseTabsConfirm')");await click('#workspaceCloseTabsConfirm');
+      if(await execute("return !!document.querySelector('#workspaceCloseTabsConfirm')"))await click('#workspaceCloseTabsConfirm');
+      await wait("!window.__panelFixture.realKey||!tabs.some(tab=>tab.key===window.__panelFixture.realKey)");
       await execute(`const f=window.__panelFixture;if(f.realId)await f.originalApi('/api/connections/'+f.realId,{method:'DELETE'});connections=connections.filter(c=>c.id!==f.realId)`);
     }
   }
@@ -67,7 +89,9 @@ async function runPanelRealLocal(driver){
     await wait("window.__panelFixture.localEvents.some(e=>e.type==='ready')&&document.querySelector('.panel-local-terminal .xterm-screen')",1200);
     await check('native default terminal uses PTY',"window.__panelFixture.localEvents.find(e=>e.type==='ready').pty===true");
     const command=async marker=>{
-      await execute("document.querySelector('.panel-local-terminal .xterm-helper-textarea').focus()");browser.webContents.focus();
+      await click('[data-panel-tab][title="'+await execute("return tr('terminal:panel.terminal')")+'"]');
+      await check(marker+' panel tab focuses the native shell',"document.activeElement?.matches('.panel-local-terminal .xterm-helper-textarea')");
+      browser.webContents.focus();
       browser.webContents.insertText('echo '+marker);await delay(100);
       browser.webContents.sendInputEvent({type:'keyDown',keyCode:'Enter'});browser.webContents.sendInputEvent({type:'keyUp',keyCode:'Enter'});
       await wait(`window.__panelFixture.localOutput.split('${marker}').length>=3`,1200);

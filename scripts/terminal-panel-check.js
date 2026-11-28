@@ -1,7 +1,11 @@
 "use strict";
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const {loadFrontendService} = require("./frontend-service-test-helper");
-const {freshPanelLayout, cleanPanelLayout, cleanPanelPreferences, createPanelModel, panelLayout} =
+const {registerAuxiliaryTerminalSession,releaseAuxiliaryTerminalSession,auxiliaryTerminalOwner,terminalSessionHasWorkspaceOwner} =
+  loadFrontendService("frontend/src/features/terminal/terminal-session-state.ts");
+const {freshPanelLayout, cleanPanelLayout, cleanPanelPreferences, createPanelModel, panelLayout, panelKinds, panelKindsForContext, projectPanelLayout} =
   loadFrontendService("frontend/src/features/terminal-panel/panel-model.ts", {window:{}});
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -22,8 +26,8 @@ duplicated.tabs.push({key:"panel-tab-duplicate-files",kind:"files"});
 duplicated.layout.tabs.push("missing", duplicated.tabs[0].key, "panel-tab-duplicate-files");
 duplicated.rightLayout={type:"pane",id:duplicated.layout.id,tabs:[duplicated.tabs[0].key],activeTabKey:duplicated.tabs[0].key};
 const restored = cleanPanelLayout(duplicated);
-assert.equal(restored.tabs.length, 4);
-assert.equal(new Set(panelLayout.leaves(restored.layout).flatMap(pane => pane.tabs)).size, 4);
+assert.equal(restored.tabs.length, panelKinds.length);
+assert.equal(new Set(panelLayout.leaves(restored.layout).flatMap(pane => pane.tabs)).size, panelKinds.length);
 assert.equal(restored.rightLayout, null);
 
 const cycle = {type:"split", id:"cycle", direction:"row", ratio:0.5};
@@ -55,7 +59,7 @@ assert.equal(model.move(added,{paneId:firstPane.id,zone:"center"}),true);
 assert.equal(panelLayout.leaves(model.current().layout).length,1);
 assert.equal(model.move(added,{paneId:firstPane.id,zone:"bottom"}),true);
 assert.equal(panelLayout.leaves(model.current().layout).length,2);
-assert.equal(new Set(panelLayout.leaves(model.current().layout).flatMap(p=>p.tabs)).size,4);
+assert.equal(new Set(panelLayout.leaves(model.current().layout).flatMap(p=>p.tabs)).size,panelKinds.length);
 assert.equal(cleanPanelLayout({...model.current(),height:0}).height,28);
 assert.equal(model.dock(added, "right"), true);
 assert.equal(model.findPaneForTab(added).id, model.current().rightLayout.id);
@@ -70,10 +74,10 @@ assert.equal(model.state.collapsedRight.has(added), false);
 assert.equal(model.close(added), true);
 assert.equal(model.current().rightLayout, null);
 assert.ok(model.findPaneForTab(added).tabs.includes(added));
-assert.equal(model.current().tabs.length, 4);
+assert.equal(model.current().tabs.length, panelKinds.length);
 assert.equal(model.close(model.current().tabs[0].key), false);
 for (let index = 0; index < 20; index++) model.add("commands");
-assert.equal(model.current().tabs.length, 4);
+assert.equal(model.current().tabs.length, panelKinds.length);
 const keys = model.current().tabs.map(tab=>tab.key);
 model.restore(freshPanelLayout(["terminal"]));
 assert.deepEqual([...model.current().tabs.map(tab=>tab.key)].sort(), [...keys].sort(), "presets preserve controller identities");
@@ -88,13 +92,41 @@ model.state.maximized=true;model.state.maximizedRegion="right";
 model.returnRight();
 assert.equal(model.current().rightLayout,null);
 assert.equal(model.state.maximized,false);
-assert.equal(new Set(model.leaves().flatMap(p=>p.tabs)).size,4);
+assert.equal(new Set(model.leaves().flatMap(p=>p.tabs)).size,panelKinds.length);
 const legacy = {version:1,position:"right",tabs:[{key:"panel-tab-old",kind:"terminal"}],
   layout:{type:"pane",id:"old",tabs:["panel-tab-old"],activeTabKey:"panel-tab-old"}};
 const upgraded = cleanPanelLayout(legacy);
 assert.equal(upgraded.rightLayout.activeTabKey,"panel-tab-old");
-assert.equal(upgraded.tabs.length,4);
-assert.equal(panelLayout.leaves(upgraded.layout)[0].tabs.length,3);
+assert.equal(upgraded.tabs.length,panelKinds.length);
+assert.equal(panelLayout.leaves(upgraded.layout)[0].tabs.length,panelKinds.length-1);
+assert.deepEqual(plain(panelKindsForContext('terminal')),['commands','files','terminal','performance']);
+assert.deepEqual(plain(panelKindsForContext('quick-terminal')),plain(panelKindsForContext('terminal')));
+assert.deepEqual(plain(panelKindsForContext('sftp')),['remote-terminal','terminal','performance']);
+for (const kind of ['settings','local-files','forward-list','logs',undefined])
+  assert.deepEqual(plain(panelKindsForContext(kind)),['terminal']);
+assert.equal(registerAuxiliaryTerminalSession('panel-remote-sftp-1','sftp-1'),true);
+assert.equal(auxiliaryTerminalOwner('panel-remote-sftp-1'),'sftp-1');
+assert.equal(registerAuxiliaryTerminalSession('sftp-1','sftp-1'),false,'an auxiliary session cannot shadow its workspace owner');
+assert.equal(terminalSessionHasWorkspaceOwner('panel-remote-sftp-1',key=>key==='sftp-1'),true);
+assert.equal(terminalSessionHasWorkspaceOwner('panel-remote-sftp-1',key=>key==='other'),false,'orphaned panel sessions cannot keep a transport alive');
+assert.equal(terminalSessionHasWorkspaceOwner('terminal-1',key=>key==='terminal-1'),true,'ordinary terminal ownership remains unchanged');
+releaseAuxiliaryTerminalSession('panel-remote-sftp-1');
+assert.equal(auxiliaryTerminalOwner('panel-remote-sftp-1'),'','released panel sessions have no transport owner');
+const sftpEntry=fs.readFileSync(path.join(__dirname,'../frontend/src/entries/about-embed.ts'),'utf8');
+assert.match(sftpEntry,/sftpView\.refresh\(key, 'banner'\);\s*}\s*window\.dispatchEvent\(new CustomEvent\('terma:workspace-target-changed'\)\);/,
+  'SFTP connection state changes refresh the contextual panel target');
+const projectionModel=createPanelModel(cleanPanelPreferences(null),()=>{});
+const local=projectionModel.current().tabs.find(tab=>tab.kind==='terminal').key;
+projectionModel.add('files','row');
+const beforeProjection=JSON.stringify(projectionModel.current());
+const projected=projectPanelLayout(projectionModel.current().layout,projectionModel.current().tabs,panelKindsForContext('settings'));
+assert.equal(projected.type,'pane','empty context branches are pruned');
+assert.deepEqual(plain(projected.tabs),[local]);
+assert.equal(projected.activeTabKey,local,'hidden selected tool falls back to the local terminal');
+assert.equal(JSON.stringify(projectionModel.current()),beforeProjection,'context projection must not mutate saved layout');
+projectionModel.dock(projectionModel.current().tabs.find(tab=>tab.kind==='files').key,'right');
+assert.equal(projectPanelLayout(projectionModel.current().rightLayout,projectionModel.current().tabs,panelKindsForContext('sftp')),null);
+assert.ok(projectPanelLayout(projectionModel.current().rightLayout,projectionModel.current().tabs,panelKindsForContext('terminal')));
 model.deletePreset(id);
 assert.equal(model.state.preferences.defaultId, "");
 assert.ok(changes > 10);
@@ -125,4 +157,4 @@ const end = window.range(50000*36,400,36);
 assert.equal(end.items.at(-1).value.index,49999);assert.equal(end.bottom,0);
 window.sync("other-host/path",1,50,1,[{index:0}]);
 assert.equal(window.loaded().length,1,"changing ownership clears every cached page");
-console.log("Utility panel checks passed: four singleton tools, dual docks, return/split, legacy migration, stable identities and secret whitelist.");
+console.log("Utility panel checks passed: contextual tools, nonmutating layout projection, dual docks, migration, stable identities and secret whitelist.");

@@ -23,9 +23,30 @@ export function createTerminalSessionState() {
     terminalSessions: new Map<string, TerminalSession>(),
     terminalSurfaceCache: new Map<string, HTMLElement>(),
     terminalCounts: new Map<number, number>(),
+    auxiliaryTerminalOwners: new Map<string, string>(),
   };
 }
 
-export const {terminalSessions, terminalSurfaceCache, terminalCounts} = createTerminalSessionState();
+export const {terminalSessions, terminalSurfaceCache, terminalCounts, auxiliaryTerminalOwners} = createTerminalSessionState();
+
+export function registerAuxiliaryTerminalSession(key: string, ownerKey: string) {
+  if (!key || !ownerKey || key === ownerKey) return false;
+  auxiliaryTerminalOwners.set(key, ownerKey);
+  return true;
+}
+
+export function releaseAuxiliaryTerminalSession(key: string) {
+  auxiliaryTerminalOwners.delete(key);
+}
+
+export function auxiliaryTerminalOwner(key: string) {
+  return auxiliaryTerminalOwners.get(key) || '';
+}
+
+export function terminalSessionHasWorkspaceOwner(key: string, hasWorkspaceTab: (key: string) => boolean) {
+  if (hasWorkspaceTab(key)) return true;
+  const owner = auxiliaryTerminalOwner(key);
+  return Boolean(owner) && hasWorkspaceTab(owner);
+}
 
 

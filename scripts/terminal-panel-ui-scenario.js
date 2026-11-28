@@ -35,7 +35,7 @@ async function runTerminalPanelUiScenario(browser) {
   const check = async (name, expression) => {
     const passed=await execute(`return !!(${expression});`);
     if(!passed)fs.writeFileSync(path.join(directory,'failure.png'),(await browser.webContents.capturePage()).toPNG());
-    if(!passed)console.error("Panel bounds diagnostic",await execute(`const root=document.querySelector('#terminalPanelWorkspace'),r=root.getBoundingClientRect();return [...root.querySelectorAll('.terminal-panel button,.terminal-panel input,.terminal-panel select')].filter(n=>n.checkVisibility()).flatMap(n=>{const b=n.getBoundingClientRect(),s=getComputedStyle(n);return b.left<r.left-1||b.right>r.right+1||s.boxShadow!=='none'||s.backgroundImage!=='none'||s.transform!=='none'?[{html:n.outerHTML.slice(0,220),left:b.left,right:b.right,shadow:s.boxShadow,bg:s.backgroundImage,transform:s.transform}]:[]})`));
+    if(!passed)console.error("Panel bounds diagnostic",await execute(`const root=document.querySelector('#terminalPanelWorkspace'),r=root.getBoundingClientRect();return [...root.querySelectorAll('.terminal-panel button,.terminal-panel input,.terminal-panel select')].filter(n=>n.checkVisibility()).flatMap(n=>{const b=n.getBoundingClientRect(),s=getComputedStyle(n),strip=n.closest('.terminal-panel-tabs'),sr=strip?.getBoundingClientRect();return b.left<r.left-1||b.right>r.right+1||s.boxShadow!=='none'||s.backgroundImage!=='none'||s.transform!=='none'?[{html:n.outerHTML.slice(0,220),left:b.left,right:b.right,strip:sr&&{left:sr.left,right:sr.right,scrollLeft:strip.scrollLeft,scrollWidth:strip.scrollWidth},shadow:s.boxShadow,bg:s.backgroundImage,transform:s.transform}]:[]})`));
     assert.equal(passed, true, name);
     reports.push({name, passed:true});
   };
@@ -73,7 +73,7 @@ async function runTerminalPanelUiScenario(browser) {
       return root.checkVisibility()&&r.left>=0&&r.right<=innerWidth+1&&r.top>=0&&r.bottom<=innerHeight+1&&
         document.documentElement.scrollWidth<=innerWidth+1&&
         [...root.querySelectorAll('.terminal-panel button,.terminal-panel input,.terminal-panel select')].filter(n=>n.checkVisibility()).every(n=>{
-          const b=n.getBoundingClientRect(),s=getComputedStyle(n);return b.left>=r.left-1&&b.right<=r.right+1&&
+          const b=n.getBoundingClientRect(),s=getComputedStyle(n),scrollTab=n.matches('[role=tab]')&&n.closest('.terminal-panel-tabs');return (scrollTab||b.left>=r.left-1&&b.right<=r.right+1)&&
             s.boxShadow==='none'&&s.backgroundImage==='none'&&s.transform==='none';})})()`);
     await check(name + " English attributes and DOM", `document.documentElement.lang!=='en-US'||(()=>{
       const host=document.createElement('div');for(const panel of document.querySelectorAll('.terminal-panel'))host.append(panel.cloneNode(true));
@@ -108,7 +108,8 @@ async function runTerminalPanelUiScenario(browser) {
       for (const theme of ["light","dark"]) for (const language of ["zh-CN","en-US"]) {
         const prefix = `${width}-${language}-${theme}`;
         console.log("[terminal-panel] " + prefix);
-        await execute(`applyTheme('${theme}');await setTermaLanguage('${language}',{persist:false});
+        await execute(`activeTabKey='terminal-panel-review-0';window.dispatchEvent(new CustomEvent('terma:workspace-target-changed'));
+          applyTheme('${theme}');await setTermaLanguage('${language}',{persist:false});
           const p=window.termaEfficiency.panel,m=p.model;m.restore({});m.state.preferences.presets=[];m.state.preferences.defaultId='';
           if(!p.visible())p.toggle();m.current().height=260;m.publish();`);
         await wait("document.querySelector('#terminalPanel [data-terminal-quick-command-id]')");
@@ -119,6 +120,15 @@ async function runTerminalPanelUiScenario(browser) {
         await shot(prefix + "-commands");
         await check(prefix+" four default flat text tabs without add", `document.querySelectorAll('[data-panel-tab]').length===4&&!document.querySelector('[data-panel-action=add]')&&
           [...document.querySelectorAll('[data-panel-tab]')].every(n=>!n.querySelector('svg')&&getComputedStyle(n.parentElement).borderRightWidth==='0px')`);
+        const commandsTab = '[data-panel-tab][title="'+await execute("return tr('terminal:panel.commands')")+'"]';
+        const filesTab = '[data-panel-tab][title="'+await execute("return tr('terminal:panel.files')")+'"]';
+        await click(commandsTab);
+        await check(prefix+" clicking commands focuses its content",`document.activeElement?.closest('[data-panel-content]')?.dataset.panelContent===
+          document.querySelector('[data-panel-tab][aria-selected=true]')?.dataset.panelTab`);
+        await click(filesTab);
+        await check(prefix+" clicking SFTP focuses its content",`document.activeElement?.closest('[data-panel-content]')?.dataset.panelContent===
+          document.querySelector('[data-panel-tab][aria-selected=true]')?.dataset.panelTab`);
+        await click(commandsTab);
         await execute("document.querySelector('[data-panel-tab][aria-selected=true]').focus()");
         browser.webContents.focus();
         browser.webContents.sendInputEvent({type:"keyDown",keyCode:"Right"});

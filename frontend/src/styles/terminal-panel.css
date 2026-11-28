@@ -1,8 +1,8 @@
 .terminal-panel-workspace{display:flex;flex:1 1 0;flex-direction:row;min-width:0;min-height:0;overflow:hidden;position:relative}
 .terminal-panel-primary{display:flex;flex:1 1 0;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
 .terminal-panel-primary>#workspaceDock{flex:1 1 0;min-width:0;min-height:0}
-.terminal-panel{flex:0 0 min(var(--terminal-panel-height),65%);min-height:0;min-width:0;overflow:hidden;background:var(--panel);color:var(--text);border-top:1px solid var(--line)}
-.terminal-panel-right{flex-basis:min(var(--terminal-panel-width),60%);border-top:0;border-left:1px solid var(--line)}
+.terminal-panel{flex:0 0 min(var(--terminal-panel-height),65%);min-height:0;min-width:0;overflow:hidden;background:var(--panel);color:var(--text);border:0}
+.terminal-panel-right{flex-basis:min(var(--terminal-panel-width),60%)}
 .terminal-panel[hidden],.terminal-panel-resizer[hidden]{display:none!important}
 .terminal-panel-workspace.panel-maximized #workspaceDock{display:none}
 .terminal-panel-workspace.panel-maximized[data-panel-maximized-region=right]>.terminal-panel-primary{display:none}
@@ -41,6 +41,10 @@
 .terminal-panel-right .terminal-panel-tabs{gap:0;padding-inline:3px}
 .panel-sftp-copy-target{outline:1px solid var(--accent2);outline-offset:-1px;background:color-mix(in srgb,var(--accent2) 10%,var(--panel))}
 .terminal-panel-empty{margin:0;padding:16px;font-size:12px;color:var(--muted)}
+.panel-remote-terminal{display:flex;min-width:0;min-height:0;height:100%;overflow:hidden}
+.panel-remote-terminal>.terminal-tab-surface{flex:1 1 0;min-width:0;min-height:0}
+.panel-remote-terminal #terminalToolbarMount,.panel-remote-terminal .terminal-toolbar{display:none}
+.terminal-panel-content:has(>.panel-remote-terminal){overflow:hidden}
 .terminal-panel-split{display:flex;flex:1 1 0;min-width:0;min-height:0;overflow:hidden}
 .terminal-panel-split.column{flex-direction:column}
 .terminal-panel-split>:first-child{flex:0 0 calc(var(--panel-ratio) - 2px)}
@@ -94,7 +98,6 @@
 .panel-terminal-body{flex-direction:row}
 .panel-terminal-pane,.panel-terminal-groups{flex-direction:column}
 .panel-terminal-pane{position:relative}
-.panel-terminal-pane.focused:after{content:"";position:absolute;inset:0;pointer-events:none;border:1px solid var(--line)}
 .panel-terminal-mount>.panel-local-terminal{height:100%;box-sizing:border-box}
 .panel-terminal-split{display:flex;flex:1 1 0;min-height:0;min-width:0;overflow:hidden}
 .panel-terminal-split.column{flex-direction:column}
@@ -147,7 +150,7 @@
 .terminal-panel .panel-performance th button{padding:0;min-height:20px;border:0;border-radius:0;background:transparent;color:var(--text);font-size:11px;text-align:left}
 @media(max-width:760px){
   .terminal-panel-workspace{flex-direction:column}
-  .terminal-panel-right{flex-basis:min(var(--terminal-panel-height),40%);border-left:0;border-top:1px solid var(--line)}
+  .terminal-panel-right{flex-basis:min(var(--terminal-panel-height),40%)}
   .terminal-panel-resizer.right{cursor:row-resize}
   .terminal-panel-resizer.right:after{inset:1px 0 auto;width:auto;height:1px}
   .terminal-panel-layout>.terminal-panel-split{display:contents}

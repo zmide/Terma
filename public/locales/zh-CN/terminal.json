@@ -8,6 +8,8 @@
     "hide": "收起多功能面板",
     "commands": "快捷命令",
     "files": "SFTP",
+    "remote-terminal": "远程终端",
+    "remote_terminal_open": "在主工作区打开远程终端",
     "terminal": "终端",
     "new_terminal": "新建终端",
     "terminal_profiles": "终端配置",

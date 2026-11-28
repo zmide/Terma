@@ -1,6 +1,5 @@
 import {terminalServices} from '@/features/terminal/installed-services';
 import {assistantServices} from '@/features/assistant/installed-services';
-import {efficiencyServices} from '@/features/efficiency/installed-services';
 import {remoteServices} from '@/features/remote/installed-services';
 import {filesServices} from '@/features/files/installed-services';
 import {x11Services} from '@/features/x11/installed-services';
@@ -54,7 +53,6 @@ export interface TerminalToolbarActions {
   x11(event: MouseEvent, id: number, key: string): unknown;
   settings(key: string): unknown;
   keys(key: string): unknown;
-  quickCommands(key: string): unknown;
   recent(key: string): unknown;
   connection(id: number, key: string): unknown;
   forwards(id: number): unknown;
@@ -73,7 +71,6 @@ export interface TerminalToolbarPort {
   temporaryStartup(key: string): boolean;
   aiOpen(key: string): boolean;
   openState: number;
-  quickCommandsVisible(): boolean;
   remoteProfiles(id: number): readonly { id?: unknown }[];
   localFiles(): boolean;
   fontSize(connection: Connection): number;
@@ -120,7 +117,6 @@ export function createTerminalToolbarService(port: TerminalToolbarPort) {
     const reconnecting = state === 'reconnecting' || Boolean(session?.autoReconnectPending);
     const connecting = reconnecting || ['connecting', 'authentication', 'authorization'].includes(state);
     const connected = state === 'connected' || Boolean(session?.connected && session.socket?.readyState === port.openState);
-    const quickCommandsVisible = port.quickCommandsVisible();
     const remoteProfiles = !quick ? port.remoteProfiles(connection.id) : [];
 
     return {
@@ -166,9 +162,6 @@ export function createTerminalToolbarService(port: TerminalToolbarPort) {
       keysVisible: Boolean(port.keysVisible()),
       keysTitle: tr(port.keysVisible() ? 'terminal:toolbar.hide_shortcuts' : 'terminal:toolbar.show_shortcuts', { defaultValue: port.keysVisible() ? '隐藏快捷键' : '显示快捷键' }),
       keysLabel: tr(port.keysVisible() ? 'terminal:toolbar.hide_shortcuts_short' : 'terminal:toolbar.shortcuts', { defaultValue: port.keysVisible() ? '隐藏快捷键' : '快捷键' }),
-      quickCommandsVisible,
-      quickCommandsTitle: tr(quickCommandsVisible ? 'terminal:quick_commands.hide' : 'terminal:quick_commands.show'),
-      quickCommandsLabel: tr('terminal:quick_commands.toolbar'),
       recentTitle: tr('terminal:toolbar.recent_commands', { defaultValue: '最近命令' }),
       recentLabel: tr('terminal:toolbar.recent_commands', { defaultValue: '最近命令' }),
       forwardListLabel: tr('terminal:toolbar.forward_list', { defaultValue: '转发列表' }),
@@ -215,7 +208,6 @@ export function installTerminalToolbarService() {
     temporaryStartup: key => terminalStartupOverrides.has(key),
     aiOpen: key => Boolean(assistantServices.termaAssistant.service.state(key).open),
     get openState() { return WebSocket.OPEN; },
-    quickCommandsVisible: () => efficiencyServices.termaEfficiency?.quick.visible() ?? false,
     remoteProfiles: id => remoteServices.termaRemoteDesktop.relations.desktopsForSsh(id),
     localFiles: () => true,
     fontSize: connection => terminalFontSizeForCurrentLayout(connection),
@@ -234,7 +226,6 @@ export function installTerminalToolbarService() {
       x11: (event, id, key) => x11Services.termaX11TerminalMenu?.open(event, id, key),
       settings: key => terminalServices.termaTerminalSettings?.open(key),
       keys: key => terminalServices.termaTerminalKeysService?.toggle(key),
-      quickCommands: key => efficiencyServices.termaEfficiency.quick.toggle(key),
       recent: key => showRecentTerminalCommands(key),
       connection: (id, key) => toggleTerminalConnection(id, key),
       forwards: id => forwardsServices.termaForwardWorkspace.openConnection(id)

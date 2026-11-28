@@ -141,7 +141,14 @@ export function createPanelTerminal(tabKey: string, changed: () => void) {
       button('close_terminal', 'trash-2', () => {if (session) void remove(session.state.key);}, !session)
     ]);
   }
-  return {key: tabKey, controls,
+  function focus() {
+    const session = selected();
+    if (session?.focus()) return true;
+    const startButton = host?.querySelector<HTMLElement>(`[data-panel-start-terminal="${CSS.escape(tabKey)}"]`);
+    startButton?.focus({preventScroll: true});
+    return Boolean(startButton && document.activeElement === startButton);
+  }
+  return {key: tabKey, controls, focus,
     sync(element: HTMLElement | null, _next: PanelTarget | null, visible = true) {
       host = element; for (const session of sessions.values()) session.theme();
       paint();

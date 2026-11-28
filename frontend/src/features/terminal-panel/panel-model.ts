@@ -1,7 +1,7 @@
 import {createWorkspaceLayoutService, type WorkspaceLayoutNode} from '../workspace/workspace-layout-service';
 import {applyTabDrop, type WorkspaceDropTarget} from '../workspace/workspace-drag-service';
 
-export type PanelKind = 'commands' | 'files' | 'terminal' | 'performance';
+export type PanelKind = 'commands' | 'files' | 'remote-terminal' | 'terminal' | 'performance';
 export type PanelRegion = 'bottom' | 'right';
 export interface PanelTab {key: string; kind: PanelKind}
 export interface PanelLayout {
@@ -17,7 +17,7 @@ export interface PanelLayout {
 export interface PanelPreset {id: string; name: string; value: PanelLayout}
 export interface PanelPreferences {version: 1; visible: boolean; current: PanelLayout; presets: PanelPreset[]; defaultId: string}
 export const panelLayout = createWorkspaceLayoutService();
-export const panelKinds: PanelKind[] = ['commands', 'files', 'terminal', 'performance'];
+export const panelKinds: PanelKind[] = ['commands', 'files', 'remote-terminal', 'terminal', 'performance'];
 export const panelLimits = {tabs: 12, presets: 16, height: [28, 700], width: [260, 1000]} as const;
 export const bounded = (value: unknown, min: number, max: number, fallback: number) =>
   Number.isFinite(Number(value)) ? Math.round(Math.max(min, Math.min(max, Number(value)))) : fallback;
@@ -86,6 +86,18 @@ export function cleanPanelPreferences(input: unknown, legacy: {visible?: string 
   if (value.version !== 1 && legacy.height) current.height = bounded(Number(legacy.height) + 64, ...panelLimits.height, 220);
   return {version: 1, visible: value.version === 1 ? value.visible === true : legacy.visible === '1',
     current, presets, defaultId: typeof value.defaultId === 'string' && ids.has(value.defaultId) ? value.defaultId : ''};
+}
+
+/** Projects saved layouts for a workspace context without changing user layout state. */
+export function projectPanelLayout(node: WorkspaceLayoutNode | null, tabs: PanelTab[], visibleKinds: readonly PanelKind[]): WorkspaceLayoutNode | null {
+  const visible = new Set(visibleKinds);
+  return panelLayout.filter(node, new Set(tabs.filter(tab => visible.has(tab.kind)).map(tab => tab.key)));
+}
+
+export function panelKindsForContext(kind?: string): readonly PanelKind[] {
+  if (kind === 'terminal' || kind === 'quick-terminal') return ['commands', 'files', 'terminal', 'performance'];
+  if (kind === 'sftp') return ['remote-terminal', 'terminal', 'performance'];
+  return ['terminal'];
 }
 
 export function createPanelModel(preferences: PanelPreferences, changed: () => void) {

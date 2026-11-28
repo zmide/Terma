@@ -28,7 +28,7 @@ html.flat-ui .left-pane :is(.brand,.sidebar,.explorer-tools) {
 
 html.flat-ui :is(.brand .side-actions,.terminal-actions-scroll-shell,.terminal-actions,.workspace-quick-actions) button:hover:not(:disabled),
 html.flat-ui :is(.brand > .operation-pane-expand,.workspace-quick-connect-button,.workspace-quick-actions-more-button):hover:not(:disabled),
-html.flat-ui .sftp-task-center-button:hover:not(:disabled,[aria-expanded="true"]) {
+html.flat-ui :is(.sftp-task-center-button,.terminal-panel-toggle-button):hover:not(:disabled,[aria-expanded="true"]) {
   background-color:var(--chrome-hover);
   border-color:transparent;
 }
@@ -69,6 +69,7 @@ html.flat-ui .topbar #sftpTaskCenterButton[aria-expanded="true"] {
 }
 
 html.flat-ui .sftp-task-center .sftp-task-center-button.is-failed[aria-expanded="true"] { color:var(--danger); }
+html.flat-ui .terminal-panel-toggle-button[aria-pressed="true"] { color:var(--accent2); }
 
 html.flat-ui .sftp-task-center:has(.sftp-task-center-button[aria-expanded="true"])::after {
   content:"";
@@ -482,7 +483,7 @@ html.flat-ui .sidebar .explorer-tools .explorer-action-strip button.icon-button 
   html.flat-ui :is(.topbar,.workspace-pane-chrome) .terminal-actions > .icon-button {
     border-color:transparent;
   }
-  html.flat-ui .topbar :is(.workspace-quick-actions > button,.sftp-task-center-button,.workspace-quick-connect-button):not(:hover,:focus-visible,[aria-expanded="true"],[aria-pressed="true"],.is-failed) {
+  html.flat-ui .topbar :is(.workspace-quick-actions > button,.sftp-task-center-button,.terminal-panel-toggle-button,.workspace-quick-connect-button):not(:hover,:focus-visible,[aria-expanded="true"],[aria-pressed="true"],.is-failed) {
     border-color:transparent;
   }
   html.flat-ui .sidebar {

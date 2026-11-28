@@ -10,7 +10,7 @@ import {applicationState} from '@/shared/application-state';
 import {terminalReconnectInput} from '@/features/terminal/terminal-input-actions';
 import {updateTerminalConnectionStatus,reconnectTerminal} from '@/features/terminal/terminal-connection-runtime';
 import {terminalAuthentication} from './terminal-authentication-workspace';
-import {terminalSessions} from './terminal-session-state';
+import {terminalSessionHasWorkspaceOwner, terminalSessions} from './terminal-session-state';
 import type {TerminalSession} from './terminal-session-state';
 import type {TerminalConnectionPort} from './terminal-connection-service';
 import type {TerminalTransportPort} from './terminal-transport-service';
@@ -33,7 +33,7 @@ function applySession(candidate:object,action:(session:TerminalSession)=>unknown
 
 export const terminalTransportPort:TerminalTransportPort={
   openState:WebSocket.OPEN,
-  isCurrent:(key,session)=>terminalSessions.get(key)===session&&workspaceHasTabKey(key),
+  isCurrent:(key,session)=>terminalSessions.get(key)===session&&terminalSessionHasWorkspaceOwner(key,workspaceHasTabKey),
   tr:key=>tr(key),
   markConnected:session=>terminalServices.termaTerminalSessionCore!.markConnected(session),
   syncOutput:session=>applySession(session,owned=>terminalServices.termaTerminalOutputFlow!.sync(owned)),

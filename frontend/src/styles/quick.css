@@ -32,7 +32,8 @@
 .terma-quick-root .terma-button.xserver-quick-button.warning { color:var(--warn); }
 .terma-quick-root .terma-button.xserver-quick-button.error { color:var(--danger); }
 #workspaceQuickActions .terma-button.icon-button,
-.topbar #sftpTaskCenterButton {
+.topbar #sftpTaskCenterButton,
+.topbar #terminalPanelToggleButton {
   display:inline-flex;
   align-items:center;
   justify-content:center;
@@ -49,7 +50,10 @@
 }
 #workspaceQuickActions .terma-button.icon-button:hover,
 .topbar #sftpTaskCenterButton:hover,
+.topbar #terminalPanelToggleButton:hover,
 .topbar #sftpTaskCenterButton[aria-expanded="true"] { background:color-mix(in srgb,var(--accent2) 10%,var(--panel)); }
+.topbar #terminalPanelToggleButton[aria-pressed="true"] { color:var(--accent2); }
+.terminal-panel-toggle-button[aria-pressed="false"] .terminal-panel-toggle-fill { display:none; }
 .topbar > #sftpTaskCenter { align-self:center; }
 @media (max-width:760px) {
   .content > .topbar { align-items:center; gap:2px; padding:6px 8px; }

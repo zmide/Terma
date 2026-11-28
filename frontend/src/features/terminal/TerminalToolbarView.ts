@@ -46,9 +46,6 @@ export interface TerminalToolbarModel {
   keysVisible: boolean;
   keysTitle: string;
   keysLabel: string;
-  quickCommandsVisible: boolean;
-  quickCommandsTitle: string;
-  quickCommandsLabel: string;
   recentTitle: string;
   recentLabel: string;
   forwardListLabel: string;
@@ -130,10 +127,6 @@ export const TerminalToolbarView = defineComponent({
         button(model, 'icon-button terminal-global-settings-button', 'settings', '', model.globalSettingsTitle, () => actionsPort?.settings(model.key)),
         button(model, 'terminal-action-keys', 'keyboard', model.keysLabel, model.keysTitle, () => actionsPort?.keys(model.key), {
           class: ['terminal-action-keys', model.keysVisible ? 'active' : ''], 'aria-pressed': String(model.keysVisible)
-        }),
-        button(model, `terminal-action-quick-commands${model.quickCommandsVisible ? ' active' : ''}`, 'list-checks', model.quickCommandsLabel, model.quickCommandsTitle, () => actionsPort?.quickCommands(model.key), {
-          'data-terminal-quick-command-toggle': '', 'data-terminal-key': model.key,
-          'aria-pressed': String(model.quickCommandsVisible)
         }),
         button(model, 'terminal-action-recent', 'history', model.recentLabel, model.recentTitle, () => actionsPort?.recent(model.key)),
         button(model, `terminal-action-reconnect${model.connected ? ' is-connected' : ''}`, model.connected ? 'link-2-off' : model.connecting || model.reconnecting ? 'loader-circle' : 'link-2', model.reconnectLabel, model.reconnectTitle, () => actionsPort?.connection(model.connectionId, model.key), {
